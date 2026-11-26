@@ -3,16 +3,16 @@
 """
 title: ECHO Session GC
 author: ECHO Framework
-version: 6.18.23.1
+version: 6.21.12.1
 description: Purge des branches mortes, filtrage RAG par branche active et provenance des productions (stdlib-only).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.12.1: Élagage des bornes context_checkpoint via prune_checkpoint_payload(dead_msg_ids) sous SAVEPOINT echo_purge_dead dans purge_dead_set.
 # 6.18.23.1: Ajout de load_owui_live_parent_map et sync_shadow_parent_ids dans gc_session_db pour resynchroniser les parent_id lors des re-parentages Open WebUI.
 # 5.237.20.2: Auto-migration ensure_db en amont de gc_session_db (hors dry_run) pour la maintenance nocturne admin-manager.
 # 5.237.20.1: Simplification de compute_dead_set et purge_dead_set sur le schéma v2 (message_shadows, call_bridge, rag_index_state).
 # 5.235.5.3: Normalisation timestamp dans is_point_in_branch et flexibilité CLI (alias --backfill-rag et défaut gc).
-# 5.235.5.2: Garbage collection arborescent des branches mortes (SAVEPOINT echo_purge_dead, compute_dead_set, build_branch_rag_filter, provenance).
 
 import argparse
 from dataclasses import dataclass
@@ -32,6 +32,7 @@ from echo_constants import (
     ECHO_QDRANT_URL,
     ECHO_USERS_ROOT,
     SESSION_RAG_CONVERSATION_SOURCE_ID,
+    prune_checkpoint_payload,
 )
 from echo_db_schema import (
     DB_KIND_SESSION,
@@ -366,6 +367,26 @@ def purge_dead_set(
         cb_del_calls = _chunked_delete(session_conn, "call_bridge", "call_id", dead.call_ids)
         cb_del_msgs = _chunked_delete(session_conn, "call_bridge", "message_id", dead.message_ids)
         counts["call_bridge"] = cb_del_calls + cb_del_msgs
+
+        ckpt_cur = session_conn.execute(
+            "SELECT value FROM echo_settings WHERE key = 'context_checkpoint'"
+        )
+        ckpt_row = ckpt_cur.fetchone()
+        if ckpt_row is not None and ckpt_row[0]:
+            pruned_ckpt = prune_checkpoint_payload(
+                ckpt_row[0], dead_msg_ids=dead.message_ids
+            )
+            if pruned_ckpt is None:
+                session_conn.execute(
+                    "DELETE FROM echo_settings WHERE key = 'context_checkpoint'"
+                )
+            else:
+                new_ckpt_val = json.dumps(pruned_ckpt)
+                if new_ckpt_val != ckpt_row[0]:
+                    session_conn.execute(
+                        "UPDATE echo_settings SET value = ? WHERE key = 'context_checkpoint'",
+                        (new_ckpt_val,),
+                    )
 
         if dry_run:
             session_conn.execute("ROLLBACK TO SAVEPOINT echo_purge_dead")

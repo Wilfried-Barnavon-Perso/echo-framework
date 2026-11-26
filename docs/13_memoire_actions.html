@@ -183,6 +183,7 @@
         captures de navigation conservées et fragments vectoriels de la branche active) sans contamination entre la
         copie et l'original. Lors d'une migration depuis le menu de la conversation (« Poursuivre dans un nouveau chat »),
         si la copie vectorielle est incomplète, une fenêtre de confirmation vous en informe avant toute redirection.
+        Par ailleurs, Écho peut retrouver et parcourir à la demande vos autres conversations (par dossier, étiquette ou état d'exécution) via l'accès unifié aux conversations.
       </p>
     </div>
 
@@ -194,21 +195,22 @@
         <li><strong>Vectorisation &amp; Outils (<code>memory_and_rag_tool.py</code> v6.5.2.1)</strong> : Stockage dans Qdrant (<code>qdrant/qdrant:v1.19.1</code>, vecteurs <strong>1024 dimensions</strong> produits par <code>30-docker-embedding-worker</code> / <code>microsoft/Harrier-OSS-v1-0.6B</code>).</li>
         <li><strong>Protocole <code>PACP</code> / <code>PRAC</code></strong> : <code>update_meta_artifact(artifact_name, fact, importance)</code> impose <code>artifact_name</code> parmi <code>"Profil d'Alignement"</code> ou <code>"Hypothèses d'Apprentissage"</code> et <code>importance: Literal["1", "2", "3", "4", "5"]</code> obligatoire ; lors d'une fusion sémantique, préserve <code>max(imp_val, existing_imp)</code> et formate via <code>MEMORY_IMPORTANCE_LABELS</code>. La consolidation nocturne (<code>20-docker-admin-manager</code>) regroupe Lvl1 &rarr; Lvl2 par centroïde L2-normalisé.</li>
         <li><strong>Recherche &amp; Suppression</strong> : <code>search_meta_artifacts</code> applique reranking pondéré et schéma contraint <code>response_schema=RagDistillOutput</code> ; <code>delete_meta_artifact_item</code> supprime par <code>memory_id</code>. Ces deux mutations sont interdites aux sous-agents headless (<code>DELEGATE_AGENT_BLACKLIST</code>).</li>
-        <li><strong>Gestion UI</strong> : Routeur souverain <code>routers/meta_artifacts.py</code> (v6.2.0.1) et composant <code>EchoMetaArtifacts.svelte</code> (scroll, recherche, filtre cumulable <code>Axiomes (Niveau 5)</code>, modale de création 1..5).</li>
+        <li><strong>Gestion UI</strong> : Routeur souverain <code>routers/meta_artifacts.py</code> (v6.21.9.1) et composant <code>EchoMetaArtifacts.svelte</code> (scroll, recherche, filtre cumulable <code>Axiomes (Niveau 5)</code>, modale de création 1..5).</li>
       </ul>
 
       <h3>2. Mémoire Épisodique de Session (<code>echo_session_rag</code>) &amp; Garbage Collection</h3>
       <ul>
         <li><strong>Indexation &amp; Recherche (<code>search_sessions_context</code>)</strong> : Collection <code>COLLECTION_SESSION_RAG</code> dotée de 4 index payload <code>keyword</code> (<code>user_id</code>, <code>chat_id</code>, <code>source_id</code>, <code>message_id</code>). Trois modes exclusifs : <code>inventory</code> (en-têtes légers agrégés sans <code>text</code>), <code>chronological</code> (<code>newest_first</code> / <code>oldest_first</code>, hydratation <code>POST /points</code>) et <code>semantic</code> (paliers <code>BROAD = 0.34</code>, <code>STANDARD = 0.52</code>, <code>STRICT = 0.63</code>, <code>EXACT = 0.81</code> ou <code>certainty_level="COSINE"</code> avec <code>cosine_threshold</code> dans <code>[0.0, 1.0]</code>).</li>
-        <li><strong>Étanchéité de Branche &amp; Provenance</strong> : En recherche locale (<code>global_search=False</code>), filtre déterministe sur la branche vivante via <code>build_branch_rag_filter(active_ids)</code> (<code>echo_session_gc.py</code> v6.18.23.1). Le GC exécute <code>compute_dead_set</code> / <code>purge_dead_set</code> sous <code>SAVEPOINT echo_purge_dead</code> tout en conservant les productions disque qualifiées <code>hors_branche</code> dans <code>query_registry_tool.py</code> (v6.13.1.1). En contexte sous-agent headless, la recherche est restreinte au <code>sub_sid</code> courant.</li>
+        <li><strong>Étanchéité de Branche &amp; Provenance</strong> : En recherche locale (<code>global_search=False</code>), filtre déterministe sur la branche vivante via <code>build_branch_rag_filter(active_ids)</code> (<code>echo_session_gc.py</code> v6.21.12.1). Le GC exécute <code>compute_dead_set</code> / <code>purge_dead_set</code> sous <code>SAVEPOINT echo_purge_dead</code> tout en conservant les productions disque qualifiées <code>hors_branche</code> dans <code>query_registry_tool.py</code> (v6.13.1.1). En contexte sous-agent headless, la recherche est restreinte au <code>sub_sid</code> courant.</li>
         <li><strong>Écriture / Purge</strong> : <code>save_session_context</code> et <code>delete_session_context_source</code> (un sous-agent ne peut purger que ses propres sources).</li>
       </ul>
 
       <h3>3. Action (<code>13-owui-actions/</code>), Reprise Distillée &amp; Événementiel (<code>15-owui-events/</code>)</h3>
       <ul>
         <li><strong><code>print_pdf_action.py</code> (v6.18.23.1, Priorité 100)</strong> : Déclenche l'impression et l'export PDF ciblé sur le message sélectionné via <code>EchoEvents.call_execute</code> (UCTP Socket.IO + SSE/RPC).</li>
-        <li><strong><code>echo_session_resume.py</code> (v6.18.23.1) &amp; <code>routers/chat_actions.py</code> (v6.18.23.1)</strong> : Exécutent la reprise distillée en deux passes sur la branche active (<code>POST /echo/v1/chats/{chat_id}/resume</code>) déclenchée depuis <code>ChatMenu.svelte</code> (remplaçant l'ancienne action de bas de message).</li>
-        <li><strong><code>echo_chat_cloned_event.py</code> (v5.235.5.1) &amp; <code>echo_session_clone.py</code> (v6.18.23.1)</strong> : Réagit à l'événement <code>chat.cloned</code> avec HUD <code>#echo-clone-hud</code>, verrou <code>get_chat_clone_lock</code>, copie SQLite <code>sqlite3.Connection.backup()</code> et durcissement <code>echo_db_schema.open_db</code>, élagage causal de fork partiel (<code>prune_forked_history</code> avec tolérance <code>+1s</code>), restauration temporelle Git <code>CodexRepo.restore_repo_to_timestamp(cutoff_ts)</code> sur <code>main</code>/<code>plans</code>/<code>generated</code> avant réécriture du frontmatter des plans, filtrage exclusif des <code>browserviews</code> au statut <code>retained</code>, réécriture <code>reassign_session_ids</code> et duplication vectorielle <code>duplicate_session_rag</code> bornée à <code>cutoff_ts</code> et <code>live_ids</code>.</li>
+        <li><strong><code>echo_session_resume.py</code> (v6.18.23.1) &amp; <code>routers/chat_actions.py</code> (v6.22.0.1)</strong> : Exécutent la reprise distillée en deux passes sur la branche active (<code>POST /echo/v1/chats/{chat_id}/resume</code>) déclenchée depuis <code>ChatMenu.svelte</code> (remplaçant l'ancienne action de bas de message).</li>
+        <li><strong><code>echo_chat_cloned_event.py</code> (v5.235.5.1) &amp; <code>echo_session_clone.py</code> (v6.21.12.1)</strong> : Réagit à l'événement <code>chat.cloned</code> avec HUD <code>#echo-clone-hud</code>, verrou <code>get_chat_clone_lock</code>, copie SQLite <code>sqlite3.Connection.backup()</code> et durcissement <code>echo_db_schema.open_db</code>, élagage causal de fork partiel (<code>prune_forked_history</code> avec tolérance <code>+1s</code>), restauration temporelle Git <code>CodexRepo.restore_repo_to_timestamp(cutoff_ts)</code> sur <code>main</code>/<code>plans</code>/<code>generated</code> avant réécriture du frontmatter des plans, filtrage exclusif des <code>browserviews</code> au statut <code>retained</code>, réécriture <code>reassign_session_ids</code> et duplication vectorielle <code>duplicate_session_rag</code> bornée à <code>cutoff_ts</code> et <code>live_ids</code>.</li>
+        <li><strong>Accès unifié aux conversations (<code>echo_chats.py</code> v6.23.11.1 &amp; guide <code>ui_conversations.md</code>)</strong> : Expose via <code>generalist_tools.py</code> la découverte SQL filtrée (<code>list_ui_chats</code> avec état d'exécution temps réel <code>running</code>, <code>pending_approval</code>, <code>queued</code>, <code>error</code>, <code>idle</code>) et la lecture paginée et assainie des transcripts (<code>read_ui_chat_transcript</code>).</li>
       </ul>
     </details>
 
@@ -218,7 +220,7 @@
       <a href="14_agents_automatisation.html">14. Agents &amp; Automatisation &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 6.6.10.1
+version: 6.21.10.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.10.1: Chiffrement AEAD AES-256-GCM des clés secrètes auth_data (SECRET_AUTH_DATA_KEYS) via echo_crypto avec politique Fail-Closed.
+# 6.21.8.1: Validation des clés API AI Studio via /models?pageSize=1000 et en-têtes x-goog-api-key, User-Agent et x-goog-api-client (ECHO_AISTUDIO_API_CLIENT).
 # 6.6.10.1: Filtrage strict des modèles Code Assist sur ECHO_MODELS_REGISTRY et unification de la jauge Gemini.
 # 6.5.1.1: Mise à jour du modèle de repli HUD par défaut vers gemini-4-hydrogen-high dans get_ui_quota_snapshot.
 # 6.5.0.2: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
-# 6.5.0.1: Commande SSH interactive sans flag -N, propagation du statut final d'authentification au serveur tunnel SSH éphémère et extinction propre.
-# 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
 import os
 import time
 from contextlib import closing
@@ -28,11 +28,12 @@ import orjson as std_json
 import base64
 import httpx
 from echo_state_manager import EchoStateManager
+from echo_crypto import decrypt_auth_data_payload, encrypt_auth_data_payload
 from echo_db_schema import EchoDbMissingError, open_db
-from echo_paths import get_echo_identity_db_path
+from echo_paths import get_echo_identity_db_path, sanitize_echo_id
 
 from echo_constants import (
-    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_AGY_USER_AGENT, GOOGLE_API_KEY_PATTERN,
+    GOOGLE_API_BASE_URL, ECHO_AISTUDIO_API_CLIENT, ECHO_AGY_USER_AGENT, GOOGLE_API_KEY_PATTERN,
     GOOGLE_AI_STUDIO_WEB_URL, GOOGLE_USERINFO_URL, ECHO_OAUTH_SCOPES, GOOGLE_AUTH_URL,
     AGY_BASE_URLS, ECHO_CLIENT_METADATA, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AUTH_DATA_USER_EMAIL, ECHO_SSH_TUNNEL_USER, ECHO_SSH_TUNNEL_TIMEOUT,
@@ -45,6 +46,19 @@ from echo_constants import (
     ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG,
     ECHO_GLOBAL_TENANT_PROJECT_ID
 )
+
+
+SECRET_AUTH_DATA_KEYS = frozenset({
+    AUTH_METHOD_KEY_PRIMARY,
+    AUTH_METHOD_KEY_SECONDARY,
+    "google_oauth2_refresh_token",
+    "google_oauth2_access_token",
+    "pkce_code_verifier",
+    "pkce_state",
+    "google_tokens",
+})
+
+
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
         """
@@ -57,8 +71,14 @@ class EchoAuth:
         self.user_dir = os.path.join(ECHO_USERS_ROOT, safe_uid)
         os.makedirs(self.user_dir, exist_ok=True)
 
+    def _resolve_safe_uid(self, user_id: str = None) -> str:
+        raw_uid = user_id if user_id is not None else self.user_id
+        if raw_uid and "/" in str(raw_uid):
+            raw_uid = "system"
+        return sanitize_echo_id(str(raw_uid or "system"), fallback="system")
+
     def _get_db_path(self, user_id: str = None) -> str:
-        return get_echo_identity_db_path(user_id or self.user_id)
+        return get_echo_identity_db_path(self._resolve_safe_uid(user_id))
 
     def get_api_keys(self, user_id: str = None) -> List[str]:
         db_path = self._get_db_path(user_id)
@@ -73,11 +93,15 @@ class EchoAuth:
             return []
 
     def get_auth_data(self, key_name: str, user_id: str = None) -> Optional[str]:
-        db_path = self._get_db_path(user_id)
+        safe_uid = self._resolve_safe_uid(user_id)
+        db_path = get_echo_identity_db_path(safe_uid)
         try:
             with closing(open_db(db_path, readonly=True, timeout=5.0)) as conn:
                 row = conn.execute("SELECT value FROM auth_data WHERE key = ?", (key_name,)).fetchone()
-                return row[0] if row else None
+                raw_val = row[0] if row else None
+            if not raw_val or key_name not in SECRET_AUTH_DATA_KEYS:
+                return raw_val
+            return decrypt_auth_data_payload(raw_val, safe_uid, key_name)
         except EchoDbMissingError:
             return None
         except Exception as e:
@@ -247,13 +271,24 @@ class EchoAuth:
         return None
 
     def save_api_key(self, key_name: str, value: str, user_id: str = None):
-        db_path = self._get_db_path(user_id)
+        safe_uid = self._resolve_safe_uid(user_id)
+        db_path = get_echo_identity_db_path(safe_uid)
         try:
+            stored_val = (
+                encrypt_auth_data_payload(value, safe_uid, key_name)
+                if (value and key_name in SECRET_AUTH_DATA_KEYS)
+                else value
+            )
             with closing(open_db(db_path, timeout=10.0)) as conn:
-                conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key_name, value, int(time.time())))
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key_name, stored_val, int(time.time())),
+                )
                 conn.commit()
         except Exception as e:
             print(f"[EchoAuth] Erreur sauvegarde clé {key_name}: {e}")
+            if key_name in SECRET_AUTH_DATA_KEYS and value:
+                raise
 
     save_auth_data = save_api_key
 
@@ -1618,7 +1653,7 @@ class AuthService:
 
             for i, k in enumerate(found_keys):
 
-                test_url = f"{GOOGLE_API_BASE_URL}/models?key={k}"
+                test_url = f"{GOOGLE_API_BASE_URL}/models?pageSize=1000"
 
                 try:
 
@@ -1626,7 +1661,7 @@ class AuthService:
 
                         test_url,
 
-                        headers={"User-Agent": ECHO_USER_AGENT},
+                        headers={"x-goog-api-key": k, "User-Agent": ECHO_AISTUDIO_API_CLIENT, "x-goog-api-client": ECHO_AISTUDIO_API_CLIENT},
 
                         timeout=10
 

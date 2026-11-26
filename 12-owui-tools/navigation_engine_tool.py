@@ -3,16 +3,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.15.0.1
+version: 6.23.0.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.0.1: Ajout de cohort_id et propagation hiérarchique dans delegate_web_browsing, import BrowserToolDispatcher depuis echo_browser_lib.
 # 6.15.0.1: Remontée du code HTTP dans analyze_web_page et archive_web_page ; passage de get_browser_frames_history en lecture seule non destructive avec contrôle disque et métadonnées (session_id, url, http_status, action).
 # 6.13.1.1: Suppression du code mort _deploy_navigation_monitor, ajout de has_clip dans get_browser_frames_history et synchronisation SSE dans retain_browser_frame.
 # 6.7.7.1: Alignement de delegate_web_browsing sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.5.1: Délégation directe de delegate_web_browsing à EchoSubagentController.run_or_resume (avec start_url et custom_dispatcher).
-# 6.7.4.1: Évaluation de clamp_model en amont de get_generation_config dans analyze_web_page.
 
 import os
 import time
@@ -35,6 +35,7 @@ from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_NAV_BROWSER
 from echo_window_manager import get_window_manager
 from echo_browser_lib import (
+    BrowserToolDispatcher,
     EchoBrowserLib,
     req_to_browser,
     cleanup_expired_browserviews,
@@ -50,7 +51,6 @@ from echo_constants import (
     ECHO_SUBAGENT_CONTEXT,
 )
 from echo_subagent_hub import (
-    BrowserToolDispatcher,
     EchoSubagentController,
     extract_response_parts_and_text,
     validate_or_create_sub_sid,
@@ -96,6 +96,7 @@ class Tools:
         task_objective: str,
         start_url: Optional[str] = None,
         sub_sid: Optional[str] = None,
+        cohort_id: Optional[str] = None,
         target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
@@ -107,7 +108,15 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         uid = (__user__ or {}).get("id", "anonymous")
         events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=chat_id)
-        parent_sub_sid = sub_context.get("sub_sid")
+        is_sub = bool(sub_context.get("is_subagent"))
+        parent_sub_sid = sub_context.get("sub_sid") if is_sub else None
+        depth = int(sub_context.get("depth") or 1) + 1 if is_sub else 1
+        group_id = sub_context.get("group_id") if is_sub else None
+        if cohort_id and str(cohort_id).strip():
+            clean_cid = sanitize_echo_id(str(cohort_id).strip(), fallback="cohort").replace("_", "-")
+            norm_gid = clean_cid if clean_cid.startswith("phx_") else f"phx_{clean_cid}"
+            if (not is_sub) or (not group_id):
+                group_id = norm_gid
         sid = validate_or_create_sub_sid(sub_sid=sub_sid, prefix="thread_web")
         browser_session_id = parent_sub_sid if parent_sub_sid else sid
 
@@ -145,7 +154,10 @@ class Tools:
             slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
             autonomous_slice=False,
             engine="navigator",
+            group_id=group_id,
             role_name="Navigateur Web",
+            parent_sid=parent_sub_sid,
+            depth=depth,
             start_url=start_url,
             custom_dispatcher=dispatcher,
             __user__=__user__,

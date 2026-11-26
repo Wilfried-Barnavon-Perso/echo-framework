@@ -51,6 +51,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
+	import { dev } from '$app/environment';
 	import { updated } from '$app/state';
 
 	import i18n, { initI18n, getLanguages, changeLanguage } from '$lib/i18n';
@@ -92,25 +93,44 @@
 	import { shouldNotifyChannelMessage } from '$lib/utils/channelNotifications';
 	import { resolveTerminalConnection, terminalRequest } from '$lib/apis/terminal';
 
-	const unregisterServiceWorkers = async () => {
-		if ('serviceWorker' in navigator) {
-			try {
-				const registrations = await navigator.serviceWorker.getRegistrations();
-				await Promise.all(registrations.map((r) => r.unregister()));
-				return true;
-			} catch (error) {
-				console.error('Error unregistering service workers:', error);
-				return false;
-			}
+	const activateWaitingServiceWorker = async () => {
+		if (!('serviceWorker' in navigator)) return false;
+		try {
+			const reg =
+				(await navigator.serviceWorker.getRegistration('/service-worker.js')) ??
+				(await navigator.serviceWorker.getRegistration());
+			if (!reg?.waiting) return false;
+
+			await /** @type {Promise<void>} */ (
+				new Promise((resolve) => {
+					let settled = false;
+					const finish = () => {
+						if (settled) return;
+						settled = true;
+						navigator.serviceWorker.removeEventListener('controllerchange', finish);
+						clearTimeout(timer);
+						resolve();
+					};
+					const timer = setTimeout(finish, 800);
+					navigator.serviceWorker.addEventListener('controllerchange', finish);
+					reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
+				})
+			);
+			return true;
+		} catch (error) {
+			console.error('Error activating waiting service worker:', error);
+			return false;
 		}
-		return false;
 	};
 
 	// handle frontend updates (https://svelte.dev/docs/kit/configuration#version)
-	beforeNavigate(async ({ willUnload, to }) => {
+	beforeNavigate(({ willUnload, to, cancel }) => {
 		if (updated.current && !mfaManagement && !willUnload && to?.url) {
-			await unregisterServiceWorkers();
-			location.href = to.url.href;
+			cancel();
+			void (async () => {
+				await activateWaitingServiceWorker();
+				location.href = to.url.href;
+			})();
 		}
 	});
 
@@ -229,7 +249,7 @@
 					(($WEBUI_VERSION !== null && version !== $WEBUI_VERSION) ||
 						($WEBUI_DEPLOYMENT_ID !== null && deploymentId !== $WEBUI_DEPLOYMENT_ID))
 				) {
-					await unregisterServiceWorkers();
+					await activateWaitingServiceWorker();
 					location.href = location.href;
 					return;
 				}
@@ -1149,6 +1169,25 @@
 	};
 
 	onMount(async () => {
+		if (!dev && 'serviceWorker' in navigator) {
+			try {
+				const registrations = await navigator.serviceWorker.getRegistrations();
+				await Promise.all(
+					registrations
+						.filter(
+							(r) =>
+								r.active?.scriptURL?.endsWith('/sw.js') ||
+								r.waiting?.scriptURL?.endsWith('/sw.js') ||
+								r.installing?.scriptURL?.endsWith('/sw.js')
+						)
+						.map((r) => r.unregister())
+				);
+				await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+			} catch {
+				// Silent SW registration failure
+			}
+		}
+
 		const originalFetch = window.fetch.bind(window);
 		stopTether = await initializeTether(originalFetch);
 		window.fetch = async (input, init) => {

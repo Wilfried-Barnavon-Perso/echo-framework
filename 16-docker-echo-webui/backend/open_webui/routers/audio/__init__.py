@@ -74,8 +74,23 @@ router.include_router(realtime.router)
 
 # Constants
 
-MAX_FILE_SIZE_MB: int = 20
-MAX_FILE_SIZE: int = MAX_FILE_SIZE_MB * 1024 * 1024
+# [ECHO-V6-HOOK] Alignement SSOT sur le plafond STT Gemini (14 Mo Base64 < 20 Mo JSON) et fast-path magic bytes Zéro-FFmpeg.
+# Le conteneur echo-webui route systématiquement le STT vers /echo/v1/audio/transcriptions (Gemini MODEL_ZEPHYR) :
+# - Si taille <= ECHO_AUDIO_MAX_UPLOAD_SIZE (14 Mo) et magic bytes natifs Gemini (webm/wav/ogg/flac/mp3/aac/mp4),
+#   aucun appel ffprobe/ffmpeg/pydub n'est requis.
+# - Au-delà de 14 Mo (ex: très longue dictée vocale ou PCM non compressé) ou sur conteneur exotique,
+#   le filet de sécurité pydub (convert_audio_to_mp3 / compress_audio / split_audio) ramène les segments <= 14 Mo.
+try:
+    from open_webui.echo.runtime import ensure_echo_sys_path
+
+    ensure_echo_sys_path()
+    from echo_constants import ECHO_AUDIO_MAX_UPLOAD_SIZE, detect_audio_mime_type
+except Exception:
+    ECHO_AUDIO_MAX_UPLOAD_SIZE = 14 * 1024 * 1024
+    detect_audio_mime_type = None
+
+MAX_FILE_SIZE: int = ECHO_AUDIO_MAX_UPLOAD_SIZE
+MAX_FILE_SIZE_MB: int = MAX_FILE_SIZE // (1024 * 1024)
 AZURE_MAX_FILE_SIZE_MB: int = 200
 AZURE_MAX_FILE_SIZE: int = AZURE_MAX_FILE_SIZE_MB * 1024 * 1024
 
@@ -1337,11 +1352,27 @@ async def _transcribe_mistral(request, file_path, filename, metadata, file_dir, 
         )
 
 
+def _is_echo_gemini_native_fastpath(file_path: str) -> bool:
+    """Retourne True si le fichier audio (<= 14 Mo) est directement ingérable par Gemini sans ffprobe ni FFmpeg."""
+    if detect_audio_mime_type is None or not os.path.isfile(file_path):
+        return False
+    try:
+        size = os.path.getsize(file_path)
+        if size <= 0 or size > MAX_FILE_SIZE:
+            return False
+        with open(file_path, 'rb') as f:
+            header = f.read(16)
+        return detect_audio_mime_type(header) is not None
+    except OSError:
+        return False
+
+
 async def transcribe(request: Request, file_path: str, metadata: Optional[dict] = None, user=None):
     log.info('transcribe: %s %s', file_path, metadata)
 
-    if BYPASS_PYDUB_PREPROCESSING:
-        log.info('Bypassing pydub preprocessing (BYPASS_PYDUB_PREPROCESSING=true)')
+    # [ECHO-V6-HOOK] Fast-path Zéro-FFmpeg pour les enregistrements <= 14 Mo dans un conteneur natif Gemini
+    if BYPASS_PYDUB_PREPROCESSING or await asyncio.to_thread(_is_echo_gemini_native_fastpath, file_path):
+        log.debug('Bypassing pydub preprocessing (ECHO native Gemini audio fast-path or BYPASS_PYDUB_PREPROCESSING)')
         chunk_paths = [file_path]
     else:
         if is_audio_conversion_required(file_path):

@@ -1,46 +1,45 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 6.21.3.1
-updated_at: 2026-11-23
-name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive, Tâches UI, Historique Chats & Lecture des Sorties Délestées
-description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer, checklist UI (create_ui_tasks, update_ui_task), recherche/lecture exacte de conversations (search_ui_chats, view_ui_chat) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
-tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, toggle_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, read_tool_output, delete_tool_output]
-keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, toggle_ui_automation, persistent_chat, existing_chat, new_chat, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, checklist, ui_task, search_ui_chats, view_ui_chat, historique, chat, dossier, folder, tag, etiquette, tools_output, output_id, truncated, spillover, délestage, read_tool_output, delete_tool_output]
+version: 6.24.1.1
+updated_at: 2026-11-26
+name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Saisie Interactive, Tâches UI & Lecture des Sorties Délestées
+description: Gestion complète du calendrier de l'Interface Utilisateur (manage_ui_calendar), programmation de tâches de fond CRON (manage_ui_automations, syntaxe RRULE iCalendar), ask_user_input, wait_timer, checklist UI (manage_ui_tasks) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
+tools: [manage_ui_calendar, manage_ui_automations, ask_user_input, wait_timer, manage_ui_tasks, read_tool_output, delete_tool_output]
+keywords: [calendrier, agenda, événement, rendez-vous, rappel, automation, cron, rrule, dtstart, persistent_chat, existing_chat, new_chat, temporisation, checklist, ui_task, tools_output, output_id, truncated, spillover, délestage]
 ---
 
 # MANUEL OPÉRATIONNEL : AGENDA UI, AUTOMATISATIONS CRON & INTERACTIONS (`ui_calendar_and_automations`)
 
-## 1. GESTION DE L'AGENDA DE L'INTERFACE UTILISATEUR (`*_ui_calendar_event*`)
+## 1. GESTION DE L'AGENDA DE L'INTERFACE UTILISATEUR (`manage_ui_calendar`)
 Toutes les dates DOIVENT être alignées sur la référence temporelle `<artifact id="AEC_temporalite">`.
 - **Format attendu pour `start` et `end`** : Chaîne ISO 8601 (ex: `"2026-10-25T14:00:00Z"`) ou `"YYYY-MM-DD HH:MM"`.
+- **Contrainte chronologique stricte (`end >= start`)** : Le Système vérifie `end >= start` sur `list`, `create` et `update` (y compris vis-à-vis de la borne existante lors d'une modification partielle d'un événement). Tout format invalide ou incohérence chronologique lève une erreur immédiate.
+- **Signature unifiée** : `manage_ui_calendar(action="list"|"read"|"create"|"update"|"delete", event_ids=None, query="", start=None, end=None, limit=30, title=None, description=None, location=None, all_day=None, is_cancelled=None, reminder_minutes=None)` *(défaut `action="list"`)*.
+- **Paramètre `event_ids`** : Accepte un identifiant unique (`str`), une chaîne CSV d'identifiants séparés par des virgules ou une liste `list[str]` (`1..N` pour `read` et `delete`, exactement `1` pour `update`).
 
-### 1.1 Consultation, Recherche & Lecture Détaillée
-- `search_ui_calendar_events` : Recherche d'événements par mot-clé (`query` dans titre, description, lieu) et bornes temporelles `start` / `end` (défaut `limit=10`).
-- `list_ui_calendar_events` : Liste élargie des événements sur une période (défaut `limit=30`) pour vérifier les disponibilités ou récupérer les `event_id` avant modification/suppression.
-- `read_ui_calendar_events` :
-  - `event_ids` : Liste d'UUIDs (`list[str]`) ou chaîne d'IDs séparés par des virgules.
-  - Retourne l'intégralité des métadonnées de chaque événement (`title`, `description`, `start`, `end`, `all_day`, `rrule`, `location`, `color`, `reminder_minutes`, `is_cancelled`, `attendees`). **REQUIS** pour auditer un événement avant mise à jour.
-
-### 1.2 Création, Mise à Jour & Suppression
-- `create_ui_calendar_event(title, description="", start="", end="", location="")` : Crée un nouvel événement dans l'agenda (n'accepte pas `all_day` ni `reminder_minutes` à la création ; enchaîner `update_ui_calendar_event` avec l'UUID retourné si ces options sont requises).
-- `update_ui_calendar_event` :
-  - Seuls les paramètres non-`None` sont modifiés ; les champs omis conservent leur valeur existante.
-  - `reminder_minutes` : Délai en minutes avant l'événement (`0` pour l'heure pile, `-1` pour désactiver).
-- `delete_ui_calendar_event` : Supprime définitivement l'événement `event_id`.
+### 1.1 Actions disponibles
+- **`action="list"`** : Liste ou recherche d'événements par mot-clé (`query` dans titre, description, lieu) et bornes temporelles `start` / `end` (défaut `limit=30`) pour vérifier les disponibilités ou récupérer les `event_id` avant lecture/modification/suppression.
+- **`action="read"`** : Retourne l'intégralité des métadonnées de chaque événement ciblé par `event_ids` (`title`, `description`, `start`, `end`, `all_day`, `rrule`, `location`, `color`, `reminder_minutes`, `is_cancelled`, `attendees`). **REQUIS** pour auditer un événement avant mise à jour.
+- **`action="create"`** : Crée un nouvel événement dans l'agenda (`title`, `description`, `start`, `end`, `location`) en supportant directement `all_day` et `reminder_minutes` en un seul appel.
+- **`action="update"`** : Met à jour l'événement unique désigné par `event_ids`. Seuls les paramètres non-`None` sont modifiés ; les champs omis conservent leur valeur existante. `reminder_minutes` fixe le délai en minutes avant l'événement (`0` pour l'heure pile, `-1` pour désactiver).
+- **`action="delete"`** : Supprime définitivement le ou les événements désignés par `event_ids`.
 
 ---
 
-## 2. AUTOMATISATIONS & TÂCHES DE FOND CRON (`*_ui_automation*`)
-Les automatisations programment l'exécution autonome d'un `prompt` par Le Modèle principal sans opérateur interactif (`ask_user_input` et modales **ABSOLUMENT INTERDITS**). Trois modes de ciblage (`target_mode`) sont disponibles :
-- **`new_chat`** *(défaut)* : Chaque déclenchement crée un nouveau chat dans `target_folder_name` (créé automatiquement s'il n'existe pas).
-- **`existing_chat`** : Exécute les déclenchements dans une conversation existante (`target_chat_id`, ou `"current"` pour cibler la conversation active hors chat temporaire `local:`). Aucun dossier n'est créé. Si le chat cible est supprimé, l'automatisation est automatiquement mise en pause (`is_active=False`).
-- **`persistent_chat`** : Crée un chat unique lors du premier déclenchement (dans `target_folder_name`) puis réutilise ce même chat pour tous les déclenchements suivants. En cas de suppression ultérieure du chat cible, l'automatisation est mise en pause.
+## 2. AUTOMATISATIONS & TÂCHES DE FOND CRON (`manage_ui_automations`)
+Les automatisations programment l'exécution autonome d'un `prompt` par Le Modèle principal sans opérateur interactif (`ask_user_input` et modales **ABSOLUMENT INTERDITS**).
+- **Signature unifiée** : `manage_ui_automations(action="list"|"read"|"create"|"update"|"toggle"|"delete", automation_ids=None, name=None, prompt=None, rrule=None, target_folder_name=None, target_mode=None, target_chat_id=None, query="", limit=30)` *(défaut `action="list"`)*.
+- **Paramètre `automation_ids`** : Accepte `str` (ou CSV) ou `list[str]` (`1..N` pour `read`, `toggle` et `delete`, exactement `1` pour `update`).
 
-### 2.0 File d'attente, Coalescing & Résilience
+### 2.0 Modes de ciblage, File d'attente & Coalescing
+Trois modes de ciblage (`target_mode`) mutuellement exclusifs sont disponibles :
+- **`new_chat`** *(défaut)* : Chaque déclenchement crée un nouveau chat dans `target_folder_name` (créé automatiquement s'il n'existe pas). `target_chat_id` DOIT être omis.
+- **`existing_chat`** : Exécute les déclenchements dans une conversation existante précise (`target_chat_id` **REQUIS** : UUID d'une conversation existante, ou `"current"` pour cibler la conversation active hors chat temporaire `local:`). Aucun dossier n'est utilisé (`target_folder_name` ignoré). Si le chat cible est supprimé, l'automatisation est automatiquement mise en pause (`is_active=False`).
+- **`persistent_chat`** : Crée automatiquement un chat dédié unique lors du premier déclenchement (dans `target_folder_name`) puis réutilise ce même chat pour tous les déclenchements suivants (**INTERDIT** de lui passer un `target_chat_id` existant : utiliser `existing_chat` pour cela). En cas de suppression ultérieure du chat dédié, l'automatisation est mise en pause.
 - **Coalescing par `automation_id`** : Un déclenchement ne s'exécute pas en parallèle de lui-même. Si un run est déjà en cours, les déclenchements suivants sont mis en file d'attente et fusionnés (coalescing) jusqu'à 3 heures (`10 800 s`) avant expiration.
 
 ### 2.1 Règles Strictes de Syntaxe `rrule` (iCalendar RFC 5545)
-L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT IMPÉRATIVEMENT** être une chaîne iCalendar valide (et **NON** une expression cron Unix à 5 étoiles) :
+L'argument `rrule` dans `action="create"` et `action="update"` **DOIT IMPÉRATIVEMENT** être une chaîne iCalendar valide (et **NON** une expression cron Unix à 5 étoiles) :
 - **RÈGLE CRITIQUE** : Si `COUNT` est spécifié (ex: exécution unique `COUNT=1`), la clause `DTSTART:YYYYMMDDTHHMMSS` (séparée par un saut de ligne `\n`) est **OBLIGATOIRE**.
 - **Modèles de syntaxe `rrule` certifiés** :
   - Exécution unique à une date/heure précise : `"DTSTART:20261025T140000\nRRULE:FREQ=DAILY;COUNT=1"`
@@ -48,19 +47,18 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Du lundi au vendredi à 08h30 : `"DTSTART:20261022T083000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"`
   - Toutes les heures : `"RRULE:FREQ=HOURLY;INTERVAL=1"`
 
-### 2.2 Spécifications des Fonctions d'Automatisation, Dossiers & Étiquettes
-- `create_ui_automation` : Crée la tâche planifiée (`name`, `prompt`, `rrule`, `target_folder_name="Automations"`, `target_mode="new_chat"`, `target_chat_id=None`).
-- `list_ui_automations` : Liste les automatisations existantes (`id`, `name`, `folder_id`, `rrule`, `target`, `is_active`, `next_run_at`).
-- `read_ui_automations` : Inspecte la configuration intégrale (`prompt` complet, `folder_id`, `target`) d'une liste d'`automation_ids` avant modification.
-- `update_ui_automation` : Met à jour uniquement les champs fournis (`name`, `prompt`, `rrule`, `target_folder_name`, `target_mode`, `target_chat_id`).
-- `toggle_ui_automation(automation_id)` : Met en pause ou réactive une automatisation existante (`is_active`) tout en recalculant la prochaine exécution (`next_run_ns`).
-- `delete_ui_automation` : Supprime la tâche planifiée.
-- `list_ui_folders` : Retourne tous les dossiers de l'Interface Utilisateur (`[{"id": "...", "name": "..."}]`).
-- `list_ui_tags(global_scope=False, chat_id=None)` :
-  - **Format** : Étiquettes normalisées en anglais minuscules (`snake_case` ou `kebab-case` au singulier).
-  - `global_scope=False` (défaut) : Retourne les étiquettes de la conversation active (`{"scope": "local", "chat_id": "...", "tags": [{"id": "...", "name": "..."}]}`).
-  - `global_scope=True` : Retourne l'ensemble des étiquettes de toutes les conversations de L'Utilisateur (`{"scope": "global", "total_tags": N, "tags": [{"id": "...", "name": "...", "chat_count": X}]}`).
-  - **Prérequis RAG** : Avant tout appel à `search_sessions_context(tag=...)`, Le Modèle **DOIT impérativement** appeler `list_ui_tags(global_scope=True)` pour utiliser la nomenclature exacte existante.
+### 2.2 Spécifications des Actions d'Automatisation
+- **`action="list"`** : Liste les automatisations existantes (`id`, `name`, `folder_id`, `rrule`, `target`, `is_active`, `next_run_at`), avec filtrage optionnel par `query` et pagination `limit=30`.
+- **`action="read"`** : Inspecte la configuration intégrale (`prompt` complet, `folder_id`, `target`) des `automation_ids` avant modification.
+- **`action="create"`** : Crée la tâche planifiée (`name`, `prompt`, `rrule`, `target_folder_name="Automations"`, `target_mode="new_chat"`, `target_chat_id=None`). Si `target_chat_id` (`"current"` ou UUID) est fourni sans `target_mode`, bascule automatiquement en `existing_chat`.
+- **`action="update"`** : Met à jour uniquement les champs fournis (`name`, `prompt`, `rrule`, `target_folder_name`, `target_mode`, `target_chat_id`) sur l'automatisation unique ciblée par `automation_ids` :
+  - Omettre `target_mode` et `target_chat_id` conserve la destination existante intacte.
+  - Fournir `target_chat_id` (`"current"` ou UUID) bascule sur `existing_chat` vers cette conversation (même si `target_mode` est omis).
+  - Fournir `target_mode="persistent_chat"` conserve le chat dédié existant s'il est déjà actif, ou initialise un nouveau chat dédié vierge si l'automatisation change de mode ou si l'ancien chat dédié a été supprimé.
+  - Fournir `target_chat_id="reset"` (avec `target_mode="persistent_chat"` ou omis) détache explicitement le chat dédié actuel pour repartir sur une nouvelle conversation dédiée au prochain déclenchement.
+- **`action="toggle"`** : Met en pause ou réactive une ou plusieurs automatisations (`is_active`) via `automation_ids` tout en recalculant la prochaine exécution (`next_run_ns`).
+- **`action="delete"`** : Supprime définitivement la ou les tâches planifiées ciblées par `automation_ids`.
+- **Résolution des conversations, dossiers et étiquettes** : Pour identifier un `target_chat_id` existant (ou inspecter les dossiers et étiquettes), Le Modèle DOIT utiliser `list_ui_chats`, `list_ui_folders` et `list_ui_tags` (domaine `ui_conversations`).
 
 ---
 
@@ -71,7 +69,7 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Mode `input_type="confirm"` : Approbation binaire (`Oui` / `Non`, sans saisie libre), retournant `{"status": "success", "user_input": True}` ou `{"status": "cancelled", "user_input": False}`.
   - Mode `questions=[...]` : Questionnaire multi-étapes (1 à 5 questions structurées avec `id`, `header`, `question`, `options`, `multi_select`, `allow_other`, `show_recommended`). Chaque question avec `multi_select=True` retourne une `list[str]` des choix sélectionnés (plus la saisie libre éventuelle). Retourne `{"status": "success", "answers": {id: valeur}}`.
 - `wait_timer(seconds)` :
-  - Met en pause l'exécution de `1` à `300` secondes tout en diffusant l'état du compte à rebours vers le HUD natif Svelte via le bus Window Manager (`echo_wait_timer`). **Strictement limité à 1 seul appel par boucle agentique**.
+  - Met en pause l'exécution de **`1` à `180` secondes** (`ECHO_MAX_WAIT_TIMER`) tout en diffusant l'état du compte à rebours vers l'interface native via le bus Window Manager (`echo_wait_timer`). **Autorisé aux Sous-Agents** (contrairement à `ask_user_input`). **Strictement limité à 1 seul appel par boucle agentique**.
 
 ## 4. LECTURE PAGINÉE & PURGE DES SORTIES D'OUTILS DÉLESTÉES (`read_tool_output`, `delete_tool_output`)
 - Gouvernance à 3 régimes : `32 768` caractères pour les outils I/O bruts par défaut, `524 288` caractères (512 Ko) pour les outils de distillation cognitive et Sous-Agents, et exemption totale pour les lecteurs déjà paginés (`read_codex`, `read_tool_output`, `delete_tool_output`). Lorsqu'un seuil est franchi (hors Base64 protégé), l'intégralité de la sortie est délestée dans `tools_output/{output_id}.txt` et la réponse inline retourne un aperçu `Head + Tail` accompagné de `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools`. Si la requête de L'Utilisateur exige une restitution exhaustive ou un verbatim, il est ABSOLUMENT INTERDIT de synthétiser l'aperçu partiel sans paginer toutes les lignes omises.
@@ -85,12 +83,9 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
 
 ---
 
-## 5. CHECKLIST UI TEMPS RÉEL & HISTORIQUE DES CONVERSATIONS (`*_ui_task*`, `*_ui_chat*`)
-- **Checklist UI (`create_ui_tasks`, `update_ui_task`)** :
+## 5. CHECKLIST UI TEMPS RÉEL (`manage_ui_tasks`)
+- **Checklist UI (`manage_ui_tasks(action="create"|"update", tasks=None, task_id=None, status=None)`)** :
   - Réservée au Modèle principal (**ABSOLUMENT INTERDITE aux Sous-Agents headless**).
   - Usage : suivi visuel léger des étapes d'une tâche courante dans l'interface (`pending`, `in_progress`, `completed`, `cancelled`), distinct de `strategic_planner` (planification/exécution persistée complexe).
-  - Contrat `create_ui_tasks(tasks=[{"content": "...", "status": "pending", "id": "..."}])` : clé `content` requise (non vide), `status` optionnel parmi `pending`, `in_progress`, `completed`, `cancelled` (défaut `pending`), `id` optionnel (auto-généré si omis).
-  - Contrat `update_ui_task(task_id, status="completed")` : met à jour le statut d'une tâche existante (`pending`, `in_progress`, `completed`, `cancelled`) via son `task_id`.
-- **Recherche & Lecture Exacte des Chats (`search_ui_chats`, `view_ui_chat`)** :
-  - `search_ui_chats(query, count=5, start_timestamp=None, end_timestamp=None)` : Recherche exacte par titre et contenu dans l'historique des conversations (exclut le chat courant). Complémentaire à `search_sessions_context` (recherche sémantique).
-  - `view_ui_chat(chat_id)` : Restitue l'historique chronologique complet d'une conversation précédente identifiée par `search_ui_chats`.
+  - `action="create"` : requiert `tasks=[{"content": "...", "status": "pending", "id": "..."}]` (`content` requis non vide, `status` optionnel parmi `pending`, `in_progress`, `completed`, `cancelled` — défaut `pending` —, `id` optionnel auto-généré si omis).
+  - `action="update"` : Met à jour le statut d'une tâche existante (`pending`, `in_progress`, `completed`, `cancelled`). Les paramètres `task_id` et `status` sont **tous deux obligatoires** (aucun statut implicite par défaut n'est appliqué).

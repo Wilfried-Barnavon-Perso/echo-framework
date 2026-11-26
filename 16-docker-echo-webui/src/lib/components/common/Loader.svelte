@@ -2,6 +2,8 @@
 	import { createEventDispatcher, onDestroy, onMount } from 'svelte';
 	const dispatch = createEventDispatcher();
 
+	export let pollIntervalMs: number | null = 100;
+
 	let loaderElement: HTMLElement;
 
 	let observer;
@@ -12,10 +14,13 @@
 			(entries, observer) => {
 				entries.forEach((entry) => {
 					if (entry.isIntersecting) {
-						intervalId = setInterval(() => {
-							dispatch('visible');
-						}, 100);
-						// dispatch('visible');
+						dispatch('visible');
+						if (pollIntervalMs !== null && pollIntervalMs > 0) {
+							clearInterval(intervalId);
+							intervalId = setInterval(() => {
+								dispatch('visible');
+							}, pollIntervalMs);
+						}
 						// observer.unobserve(loaderElement); // Stop observing until content is loaded
 					} else {
 						clearInterval(intervalId);

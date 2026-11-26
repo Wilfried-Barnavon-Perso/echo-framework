@@ -379,9 +379,48 @@ export const userSignUp = async (
 	return res;
 };
 
+export const purgeEchoClientCaches = async () => {
+	try {
+		if (typeof caches !== 'undefined') {
+			const keys = await caches.keys();
+			await Promise.all(
+				keys.filter((key) => key.startsWith('echo-')).map((key) => caches.delete(key))
+			);
+		}
+	} catch {
+		// Best-effort cache purge
+	}
+
+	try {
+		if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+			const reg = await navigator.serviceWorker.getRegistration('/service-worker.js');
+			const target = navigator.serviceWorker.controller ?? reg?.active ?? reg?.waiting;
+			if (target) {
+				await new Promise<void>((resolve) => {
+					const channel = new MessageChannel();
+					const timer = setTimeout(resolve, 300);
+					channel.port1.onmessage = () => {
+						clearTimeout(timer);
+						resolve();
+					};
+					try {
+						target.postMessage({ type: 'PURGE_CACHES' }, [channel.port2]);
+					} catch {
+						clearTimeout(timer);
+						resolve();
+					}
+				});
+			}
+		}
+	} catch {
+		// Best-effort SW cache purge
+	}
+};
+
 export const userSignOut = async () => {
 	const { clearChatViews } = await import('$lib/stores/chatViewStates');
 	clearChatViews();
+	await purgeEchoClientCaches();
 	const token = localStorage.getItem('token');
 	// Stop local access even if the hosted server cannot be reached.
 	await window.tether?.signedOut();

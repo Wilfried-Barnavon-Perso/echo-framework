@@ -3,11 +3,12 @@
 """
 title: ECHO V6 Vault & Identity Router
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.21.9.1
 description: Routeur FastAPI pour coffre chiffré et identités LLM (/echo/v1/vault).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.9.1: Réutilisation du client HTTP mutualisé echo_http._get_global_client() dans get_vault_schemas.
 # 6.6.9.1: Déportation asyncio.to_thread sur les accès SQLite et chiffrement du coffre (_get_vault_status_sync, _list_vault_secrets_sync, _save_vault_secret_sync, _delete_vault_secret_sync).
 # 6.5.3.1: Ajout du catalogue GET /echo/v1/vault/schemas (connecteurs MCP/Vault) avec filtrage de user_required_instructions.
 # 6.3.0.1: Création du routeur /echo/v1/vault (statut auth_data, quotas masqués, gestion CRUD chiffrée identity_vault).
@@ -21,7 +22,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -33,6 +33,7 @@ from open_webui.utils.auth import get_verified_user
 ensure_echo_sys_path()
 try:
     from echo_auth import EchoAuth  # type: ignore
+    from echo_http import _get_global_client  # type: ignore
     from echo_state_manager import EchoStateManager  # type: ignore
     from echo_paths import sanitize_echo_id  # type: ignore
 except ImportError:
@@ -40,6 +41,7 @@ except ImportError:
     if local_libs.is_dir() and str(local_libs) not in sys.path:
         sys.path.insert(0, str(local_libs))
     from echo_auth import EchoAuth  # type: ignore
+    from echo_http import _get_global_client  # type: ignore
     from echo_state_manager import EchoStateManager  # type: ignore
     from echo_paths import sanitize_echo_id  # type: ignore
 
@@ -237,17 +239,17 @@ async def get_vault_schemas(user=Depends(get_verified_user)):
         "ECHO_MCP_BROKER_URL", "http://echo-mcp-broker:8000"
     ).rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{broker_url}/schemas")
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, dict):
-                    return JSONResponse(
-                        content={
-                            "broker_available": True,
-                            "schemas": data,
-                        }
-                    )
+        client = await _get_global_client()
+        resp = await client.get(f"{broker_url}/schemas", timeout=3.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return JSONResponse(
+                    content={
+                        "broker_available": True,
+                        "schemas": data,
+                    }
+                )
     except Exception as exc:
         log.debug("Broker MCP indisponible pour /schemas: %s", exc)
     return JSONResponse(content={"broker_available": False, "schemas": {}})

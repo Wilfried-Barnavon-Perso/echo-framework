@@ -3,6 +3,10 @@
 	import { tick, getContext, onMount, onDestroy } from 'svelte';
 	import { config, settings } from '$lib/stores';
 	import { blobToFile, calculateSHA256, extractCurlyBraceWords } from '$lib/utils';
+	import {
+		getSupportedAudioRecordingMimeType,
+		resolveRecordedAudioMimeAndExt
+	} from '$lib/utils/audio';
 
 	import { transcribeAudio } from '$lib/apis/audio';
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -243,17 +247,11 @@
 			return;
 		}
 
-		const mineTypes = [
-			'audio/webm; codecs=opus',
-			'audio/webm',
-			'audio/ogg; codecs=opus',
-			'audio/mp4',
-			'audio/wav'
-		];
-
-		mediaRecorder = new MediaRecorder(stream, {
-			mimeType: mineTypes.find((type) => MediaRecorder.isTypeSupported(type))
-		});
+		const supportedMimeType = getSupportedAudioRecordingMimeType();
+		mediaRecorder = new MediaRecorder(
+			stream,
+			supportedMimeType ? { mimeType: supportedMimeType } : undefined
+		);
 
 		mediaRecorder.onstart = async () => {
 			console.log('Recording started');
@@ -275,18 +273,11 @@
 			console.log('Recording stopped');
 
 			if (confirmed) {
-				// Use the actual type provided by MediaRecorder
-				let type = audioChunks[0]?.type || mediaRecorder.mimeType || 'audio/webm';
-
-				// split `/` and `;` to get the extension
-				let ext = type.split('/')[1].split(';')[0] || 'webm';
-
-				// If not audio, default to audio/webm
-				if (!type.startsWith('audio/')) {
-					ext = 'webm';
-				}
-
-				const audioBlob = new Blob(audioChunks, { type: type });
+				const { mimeType, ext } = resolveRecordedAudioMimeAndExt(
+					audioChunks,
+					mediaRecorder?.mimeType
+				);
+				const audioBlob = new Blob(audioChunks, { type: mimeType });
 				await onStopHandler(audioBlob, ext);
 
 				confirmed = false;

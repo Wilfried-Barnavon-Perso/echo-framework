@@ -3,30 +3,42 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 6.18.2.1
+version: 6.23.0.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.0.1: Ajout de sub_sid, cohort_id, allowed_tools et propagation hiérarchique (parent_sid, group_id, depth+1) dans delegate_deep_research.
 # 6.18.2.1: Support JSON complet (answers/WeatherAnswer, infoboxes, engines, publishedDate, unresponsive_engines), fix language='all' et engines à espaces, ajout catégories files/movies/weather.
 # 6.7.7.1: Passage de delegate_deep_research sur tranches autonomes par tours (ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300) et suppression de DEEP_RESEARCH_MAX_CALLS_DEFAULT.
 # 6.7.1.2: Conservation de l'historique thread deep_research pour observabilité UI (suppression close auto) et role_name explicite.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.30.1: Câblage de delegate_deep_research sur EchoSubagentController (ECHO_AUTONOMOUS_ROUND_MAX_CALLS).
 
 import httpx
 import sys
-import uuid
-from typing import Optional, Any, Literal
+from typing import Optional, Any, Literal, List
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_core import wrap_tool_output, echo_tool
-from echo_constants import ECHO_AUTONOMOUS_MAX_TURNS, ECHO_AUTONOMOUS_TIMEOUT_SEC, ECHO_SEARXNG_BASE_URL, ECHO_USER_AGENT
+from echo_constants import (
+    ECHO_AUTONOMOUS_MAX_TURNS,
+    ECHO_AUTONOMOUS_TIMEOUT_SEC,
+    ECHO_SEARXNG_BASE_URL,
+    ECHO_SUBAGENT_CONTEXT,
+    ECHO_USER_AGENT,
+)
+from echo_paths import sanitize_echo_id
 from echo_prompts import SYS_SEARCH_STATIC
-from echo_subagent_hub import EchoSubagentController
+from echo_state_manager import EchoStateManager
+from echo_subagent_hub import (
+    EchoSubagentController,
+    get_subagent_system_prompt,
+    resolve_updated_allowed_tools,
+    validate_or_create_sub_sid,
+)
 
 
 def _clean_snippet(text: Any) -> str:
@@ -252,6 +264,9 @@ class Tools:
             description="Moteurs cibles séparés par des virgules (ex: 'google scholar,semantic scholar,wikipedia')."
         ),
         target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
+        sub_sid: Optional[str] = None,
+        cohort_id: Optional[str] = None,
+        allowed_tools: Optional[List[str]] = None,
         __user__: dict = {},
         __chat_id__: str = "",
         __metadata__: dict = {},
@@ -265,9 +280,36 @@ class Tools:
         
         await events.status(f"🕵️‍♂️ Initialisation de la recherche profonde : {query}...")
         
-        sid = f"thread_deepresearch_{uuid.uuid4().hex[:8]}"
+        sid = validate_or_create_sub_sid(sub_sid=sub_sid, prefix="thread_deepresearch")
 
-        allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
+        parent_ctx = ECHO_SUBAGENT_CONTEXT.get() or {}
+        if parent_ctx.get("is_subagent"):
+            parent_sid = parent_ctx.get("sub_sid")
+            depth = int(parent_ctx.get("depth") or 1) + 1
+            group_id = parent_ctx.get("group_id")
+        else:
+            parent_sid = None
+            depth = 1
+            group_id = None
+
+        if cohort_id and str(cohort_id).strip():
+            clean_cid = sanitize_echo_id(str(cohort_id).strip(), fallback="cohort").replace("_", "-")
+            norm_gid = clean_cid if clean_cid.startswith("phx_") else f"phx_{clean_cid}"
+            if (not parent_ctx.get("is_subagent")) or (not group_id):
+                group_id = norm_gid
+
+        default_allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
+        eff_allowed = (
+            resolve_updated_allowed_tools(default_allowed, allowed_tools)
+            if allowed_tools is not None
+            else default_allowed
+        )
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        eff_system_prompt = (
+            None
+            if (sub_sid and get_subagent_system_prompt(state, sid))
+            else SYS_SEARCH_STATIC
+        )
         
         # Injection du flag de suppression d'UI pour maps et flag d'agent de recherche
         child_metadata = {**(__metadata__ or {}), "_echo_suppress_map_ui": True, "_is_deep_research_agent": True}
@@ -284,16 +326,19 @@ class Tools:
             user_id=user_id,
             chat_id=chat_id,
             task=augmented_query,
-            system_prompt=SYS_SEARCH_STATIC,
+            system_prompt=eff_system_prompt,
             skill_id=None,
             sub_sid=sid,
             target_model_key=target_model_key,
-            allowed_tools=allowed,
+            allowed_tools=eff_allowed,
             slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
             slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
             autonomous_slice=True,
             engine="deep_research",
+            group_id=group_id,
             role_name="Recherche Profonde",
+            parent_sid=parent_sid,
+            depth=depth,
             __user__=__user__,
             __metadata__=child_metadata,
             __event_emitter__=__event_emitter__,

@@ -4,16 +4,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 6.20.4.1
+VERSION : 6.22.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Lecture unifiée de ECHO_ADMIN_PASSWORD et ECHO_DOMAIN via get_instance_secret (suppression OWUI_ADMIN_SECRET_PATH).
 # 6.20.4.1: Filet de sécurité sur les symlinks UPLOADS_DIR pointant sous ECHO_USERS_ROOT et Étape 3.bis de purge des fichiers orphelins dans TMP_UPLOADS_DIR (.tmp_uploads).
 # 6.18.23.1: Durcissement SQLite WAL via open_sqlite_db, réalignement GC fichiers sur la topologie maître users/{uid}/files/ (symlinks chats/{cid}/files/), et appel filet cleanup_expired_purged_subagents_sync (Contrat C2).
 # 6.18.3.1: Préservation du wildcard public principal_id != '*' lors de la purge des orphelins access_grant (évite la suppression des grants publics model/tool).
 # 6.18.0.1: Compatibilité ECHO v6 (API Safeguard /api/v1/users/ + follow_redirects, GC fichiers dual-topologie EchoStorageProvider/Download Broker, délégation browserviews+MP4 à cleanup_expired_browserviews_sync, purge webui.db auth/access_grant/automation_run et levée du filtre len<=30 dans purge_user_artifacts).
-# 6.15.1.1: Respect du délai de grâce BROWSER_TRANSIENT_GRACE_SEC (1800.0s) avant purge des captures browserviews éphémères.
 import datetime
 import html
 import json
@@ -38,7 +38,6 @@ from core.config import (
     MCP_CACHE_DIR,
     N8N_DB_PATH,
     N8N_WORKER_URL,
-    OWUI_ADMIN_SECRET_PATH,
     QDRANT_URL,
     SYSTEM_ADMIN_EMAIL,
     TMP_UPLOADS_DIR,
@@ -48,7 +47,7 @@ from core.config import (
     httpx,
 )
 from core.utils import _format_bytes, _get_tree_size
-from core.security import open_sqlite_db
+from core.security import get_instance_secret, open_sqlite_db
 from core.settings_io import (
     load_maint_config,
     save_maint_config,
@@ -322,17 +321,14 @@ def _run_semantic_pruning(silent=False):
         return err_msg, {}
 
     try:
-        admin_pwd = ""
-        if os.path.exists(OWUI_ADMIN_SECRET_PATH):
-            with open(OWUI_ADMIN_SECRET_PATH, "r") as f:
-                admin_pwd = f.read().strip()
-        
+        admin_pwd = get_instance_secret("ECHO_ADMIN_PASSWORD")
+
         # Authentification de secours/admin pour obtenir un vrai jeton JWT
         owui_url = WEBUI_URL
-        
+
         # Injection de l'en-tête SSO si le domaine est configuré (cf. stack-echo.yml)
         extra_headers = {}
-        if os.environ.get("ECHO_DOMAIN"):
+        if get_instance_secret("ECHO_DOMAIN"):
             extra_headers["X-Webui-User"] = SYSTEM_ADMIN_EMAIL
             
         r_signin = httpx.post(f"{owui_url}/api/v1/auths/signin", json={

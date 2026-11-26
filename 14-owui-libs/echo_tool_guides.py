@@ -3,19 +3,20 @@
 """
 title: ECHO Tool Guides Manager
 author: Wilfried BARNAVON
-version: 6.17.2.1
+version: 6.24.0.1
 description: Gestionnaire de la base de connaissances opérationnelle des outils ECHO (tool_guides/*.md).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.0.1: Normalisation Unicode sans accents (_fold_accents) dans _match_term/resolve_guides et support de exclude_auto_domains.
 # 6.17.2.1: Matching lexical par frontière de mot anti-faux-positifs, invalidation cache st_mtime_ns et filtrage excluded_tools dans l'index hiérarchique.
 # 6.13.2.1: Normalisation sans double préfixe 'v' dans l'index hiérarchique et les XML, libellé dédié pour les guides sans outil et factorisation du rendu XML.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.229.0.1: Intégration de version et updated_at dans le parsing frontmatter, la Carte Hiérarchique et les balises XML.
-# 5.229.0.0: Création initiale de EchoToolGuidesManager (indexation YAML, tool->domain et pré-injection).
 
 import os
 import re
+import unicodedata
 from typing import Dict, List, Optional, Set
 
 
@@ -53,17 +54,25 @@ class EchoToolGuidesManager:
         return tuple(entries)
 
     @staticmethod
+    def _fold_accents(text: str) -> str:
+        """Supprime les diacritiques (accents) par normalisation Unicode NFKD."""
+        if not text:
+            return ""
+        return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+
+    @staticmethod
     def _match_term(text_lower: str, term: str) -> bool:
         """
         Vérifie la présence d'un identifiant ou mot-clé avec frontière lexicale stricte
-        pour prévenir les faux positifs sous-chaîne (ex: 'ui' dans 'suite').
+        et insensibilité aux accents pour prévenir les faux positifs sous-chaîne (ex: 'ui' dans 'suite').
         """
-        term_low = (term or "").strip().lower()
-        if not term_low or not text_lower:
+        text_folded = EchoToolGuidesManager._fold_accents(text_lower or "").lower()
+        term_low = EchoToolGuidesManager._fold_accents((term or "").strip()).lower()
+        if not term_low or not text_folded:
             return False
 
         if term_low.startswith("__") and len(term_low) >= 6:
-            return term_low in text_lower
+            return term_low in text_folded
 
         candidates = [term_low]
         if "_" in term_low and not term_low.startswith("_"):
@@ -71,7 +80,7 @@ class EchoToolGuidesManager:
             candidates.append(term_low.replace("_", "-"))
 
         for cand in candidates:
-            if re.search(rf"(?<![\w]){re.escape(cand)}(?![\w])", text_lower):
+            if re.search(rf"(?<![\w]){re.escape(cand)}(?![\w])", text_folded):
                 return True
         return False
 
@@ -251,13 +260,14 @@ class EchoToolGuidesManager:
         target_tools: Optional[str] = None,
         error_context: Optional[str] = None,
         max_preloaded: int = 4,
+        exclude_auto_domains: Optional[Set[str]] = None,
     ) -> str:
         """
         Résout déterministement les manuels pertinents à pré-injecter dans le prompt
         du Conseiller Outils en croisant :
         1. Les noms d'outils ou de domaines explicitement cités dans `target_tools`.
         2. Les noms d'outils ou de domaines cités dans `objective` ou `error_context`.
-        3. Les `keywords` du Frontmatter YAML détectés dans `objective` ou `error_context`.
+        3. Les `keywords` du Frontmatter YAML détectés dans `objective` ou `error_context` (hors `exclude_auto_domains`).
         """
         guides = cls.load_all_guides()
         tool_map = cls.get_tool_to_domain_map()
@@ -266,6 +276,7 @@ class EchoToolGuidesManager:
 
         matched_domains: List[str] = []
         seen: Set[str] = set()
+        excluded_auto: Set[str] = set(exclude_auto_domains or ())
 
         if not isinstance(objective, str):
             objective = ""
@@ -292,7 +303,7 @@ class EchoToolGuidesManager:
                 elif tok in tool_map:
                     _add_domain(tool_map[tok])
 
-        combined_text = f"{objective or ''}\n{error_context or ''}".lower()
+        combined_text = cls._fold_accents(f"{objective or ''}\n{error_context or ''}").lower()
 
         # 2. Détection exacte de noms de fonctions ou domain_id dans le texte
         for d_id in guides:
@@ -306,12 +317,12 @@ class EchoToolGuidesManager:
         if len(matched_domains) < max_preloaded:
             scored: List[tuple] = []
             for d_id, info in guides.items():
-                if d_id in seen:
+                if d_id in seen or d_id in excluded_auto:
                     continue
                 score = 0
                 matched_kws: Set[str] = set()
                 for kw in info.get("keywords", []):
-                    kw_low = kw.strip().lower()
+                    kw_low = cls._fold_accents(kw.strip()).lower()
                     if (
                         kw_low
                         and kw_low not in matched_kws

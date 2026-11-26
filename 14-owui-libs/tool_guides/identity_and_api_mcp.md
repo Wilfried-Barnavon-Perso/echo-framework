@@ -1,11 +1,11 @@
 ---
 domain_id: identity_and_api_mcp
-version: 6.17.2.1
-updated_at: 2026-11-21
+version: 6.24.0.1
+updated_at: 2026-11-26
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés (AES-256-GCM) (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function, upload_file_to_drive]
-keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse, ssh, serveur_ssh, drive, google_drive, onedrive, upload, upload_file_to_drive, outlook, gmail, email, mail, oauth, account_id]
+keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, corporate, uvx, npx, sse, ssh, serveur_ssh, drive, google_drive, onedrive, upload, outlook, gmail, email, mail, oauth]
 ---
 
 # MANUEL OPÉRATIONNEL : IDENTITY VAULT, CLIENT API & MCP (`identity_and_api_mcp`)
@@ -22,21 +22,23 @@ L'Identity Vault centralise les identifiants d'API, secrets d'orchestration N8N 
    - `list_identities(service="...")` : Le paramètre `service` est **strictement obligatoire** (ex: `"n8n_workflows"`, `"ssh"`, `"microsoft_365"`, `"google_workspace"`, `"remote_mcp"`, `"stdio_mcp"`). Retourne les `account_id` associés à ce service ainsi que leur `"description"`.
 
 ### 1.2 Ajout, Mise à Jour et Suppression (`manage_identity`)
-- **Contrainte d'environnement** : **ABSOLUMENT INTERDIT** depuis un Sous-Agent headless (DOIT être appelé par Le Modèle principal car une modale de confirmation interactive est présentée à L'Utilisateur).
+- Signature : `manage_identity(action, service, account_id, credentials_json="")`.
+- **Contrainte d'environnement** : **ABSOLUMENT INTERDIT** depuis un Sous-Agent headless **ET** en automatisation planifiée (DOIT être appelé par Le Modèle principal car une modale de confirmation interactive est présentée à L'Utilisateur).
 - `action` : `"add"`, `"update"` ou `"delete"`.
 - `service` : Nom du service cible (ex: `"n8n_workflows"`, identifiant d'un serveur MCP résident/natif, `"remote_mcp"`, ou `"stdio_mcp"`).
 - `account_id` : Identifiant du compte, nom de domaine ou nom de la macro secret (pour N8N, correspond à `XXX` dans `__ECHO_SECRET_XXX__`).
-- **Règles pour `credentials_json` (chaîne JSON valide)** :
+- **Règles pour `credentials_json` (chaîne JSON valide) & Conformité MPSI** :
   - **Règle générale** : Le JSON **DOIT impérativement** contenir une clé `"description"` explicitant la finalité de l'identité.
-  - **Serveurs Distants (`mcp_remote`, service `"remote_mcp"` ou alias `"mcp"`)** :
+  - **Protection des secrets sensibles (MPSI)** : Il est **ABSOLUMENT INTERDIT** de demander à L'Utilisateur de saisir des secrets sensibles (mots de passe, clés privées, tokens en clair) dans le chat. Pour tout secret sensible, Le Modèle DOIT guider L'Utilisateur vers l'onglet **Coffre & Identité**.
+  - **Serveurs Distants (`mcp_remote`, exclusivement `service="remote_mcp"`)** :
     - Clés requises : `"url"`, `"transport"` (`"sse"` ou `"streamable_http"`), `"description"`.
     - Clé optionnelle : `"headers"` (chaîne JSON d'en-têtes HTTP, ex: `'{"Authorization": "Bearer XXX"}'`).
-  - **Serveurs Locaux Éphémères Stdio (`mcp_ephemeral`, service `"stdio_mcp"`)** :
+  - **Serveurs Locaux Éphémères Stdio (`mcp_ephemeral`, `service="stdio_mcp"`)** :
     - Clés requises : `"command"` (`"uvx"` ou `"npx"`), `"args"` (tableau JSON de paramètres, ex: `'["-y", "@modelcontextprotocol/server-postgres"]'`), `"description"`.
-  - **Serveurs SSH Distants (`orchestration`, service `"ssh"`)** :
+  - **Serveurs SSH Distants (`orchestration`, `service="ssh"`)** :
     - Clés : `"host"`, `"user"`, `"description"` (et `"port"` optionnel, défaut `"22"`).
     - Conformément au MPSI, `"password"` ou `"private_key"` DOIT être saisi par L'Utilisateur dans l'onglet **Coffre & Identité**, puis utilisé par Le Modèle via `ssh_executor(account_id, command)`.
-  - **Instructions Spécifiques** : Si `list_identities_services` retourne des `user_required_instructions` pour le service visé, Le Modèle **DOIT** suivre scrupuleusement ces instructions et demander les valeurs requises via `ask_user_input`.
+  - **Instructions Spécifiques** : Si `list_identities_services` retourne des `user_required_instructions` pour le service visé, Le Modèle **DOIT** suivre scrupuleusement ces instructions (et guider L'Utilisateur vers l'onglet **Coffre & Identité** pour tout secret sensible).
 
 ---
 
@@ -45,10 +47,12 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
 
 ### Séquence d'Exécution MCP
 1. **Découverte des Schémas (`list_mcp_functions`)** :
-   - `list_mcp_functions(service="...", account_id=None, query=None)` : `service` DOIT correspondre à un identifiant valide issu de `list_identities_services()`. `account_id` (optionnel) sélectionne un compte spécifique configuré dans l'Identity Vault (si un seul compte existe, il est sélectionné par défaut ; en multi-comptes, un `account_id` inconnu ou omis déclenche une erreur structurée retournant `available_accounts` ; il est **ABSOLUMENT INTERDIT** d'injecter `account_id` dans le dictionnaire `arguments` d'outils non compatibles comme ceux de Google Workspace). `query` (optionnel) filtre le catalogue retourné par mots-clés (sur le nom et la description des outils) et compacte les schémas d'entrée : Le Modèle DOIT utiliser `query` sur les serveurs volumineux (`google_workspace`, `microsoft_365`).
-   - Si le statut retourné indique qu'une configuration est requise, Le Modèle DOIT configurer d'abord les identifiants du service via `manage_identity`.
+   - `list_mcp_functions(service="...", account_id=None, query=None)` : `service` DOIT correspondre à un identifiant valide issu de `list_identities_services()`.
+   - **Gestion multi-comptes (`account_id`)** : En multi-comptes dans l'Identity Vault, omettre `account_id` (`account_id=None`) sélectionne automatiquement le premier compte en base sans lever d'erreur ; l'erreur structurée retournant `available_accounts` n'est déclenchée que lorsqu'un `account_id` explicite est introuvable. Par conséquent, Le Modèle **DOIT** préalablement appeler `list_identities(service=...)` et passer explicitement `account_id`. Il est **ABSOLUMENT INTERDIT** d'injecter `account_id` dans le dictionnaire `arguments` d'outils non compatibles comme ceux de Google Workspace.
+   - `query` (optionnel) filtre le catalogue retourné par mots-clés (sur le nom et la description des outils) et compacte les schémas d'entrée : Le Modèle DOIT utiliser `query` sur les serveurs volumineux (`google_workspace`, `microsoft_365`).
+   - Si le statut retourné indique qu'une configuration est requise, Le Modèle DOIT configurer d'abord les identifiants du service via `manage_identity` (ou guider vers l'onglet **Coffre & Identité**).
 2. **Appel d'une Fonction (`call_mcp_function`)** :
-   - `call_mcp_function(service="...", function_name="...", arguments={...}, account_id=None)` : Exécute la méthode `function_name` sur le serveur `service` avec le dictionnaire `arguments` (`account_id` sélectionne le compte dans l'Identity Vault sans être transmis dans `arguments`, avec le même contrôle strict `available_accounts` en multi-comptes).
+   - `call_mcp_function(service="...", function_name="...", arguments={...}, account_id=None)` : Exécute la méthode `function_name` sur le serveur `service` avec le dictionnaire `arguments` (`account_id` sélectionne le compte dans l'Identity Vault sans être transmis dans `arguments`, avec la même exigence d'appel préalable à `list_identities(service=...)` et passage explicite de `account_id`).
 3. **Envoi Sécurisé de Fichiers Locaux vers le Cloud (`upload_file_to_drive`)** :
    - `upload_file_to_drive(service, file_ref, workspace=None, remote_folder_id=None, remote_filename=None, overwrite_file_id=None, convert_to_native=False, conflict_behavior="replace", account_id=None)` :
      - `service` : `"google_workspace"` ou `"microsoft_365"`.
@@ -59,7 +63,7 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
      - `overwrite_file_id` : ID du fichier distant à écraser/mettre à jour (optionnel).
      - `convert_to_native` : booléen (Google Drive uniquement ; convertit Markdown/Word/CSV/Excel/PPTX en Google Docs/Sheets/Slides natifs).
      - `conflict_behavior` : `"replace"`, `"rename"` ou `"fail"` (OneDrive uniquement, défaut `"replace"`).
-     - `account_id` : compte cible dans l'Identity Vault (optionnel).
+     - `account_id` : compte cible dans l'Identity Vault (optionnel, explicite recommandé en multi-comptes).
    - **Streaming Zéro-RAM & Règle Impérative** : Transfère le fichier en streaming résilient par tranches de 5 MiB (jusqu'à 4 Go). Il est **ABSOLUMENT INTERDIT** d'encoder des fichiers locaux en Base64 dans `call_mcp_function` : Le Modèle DOIT utiliser exclusivement `upload_file_to_drive`.
 
 ---
@@ -87,7 +91,7 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
     - `body_max_length` : Longueur maximale du corps textuel extrait lorsque `include_body=True` (disponible sur `get_email`, `search_emails`, `list_emails` et `batch_get_emails`). L'extraction textuelle préserve les URLs/liens des boutons et ancres HTML dans le corps des e-mails.
 - **Lecture Batch vs Unitaire (`batch_get_emails` vs `get_email`)** :
   - **Lecteur Batch (`batch_get_emails`) - À PRIVILÉGIER** : `batch_get_emails(email_ids=["id1", "id2", ...], include_body=True, body_max_length=5000, include_attachments=False)` rapatrie le contenu textuel nettoyé de plusieurs e-mails en un seul appel et restitue `failed_ids` et `failed_details` (code HTTP et motif Graph) en cas d'échec partiel.
-  - **Lecture unitaire (`get_email`)** : Réservée à l'inspection isolée d'un e-mail unique (`email_id="...", include_body=True, body_max_length=5000`).
+  - **Lecture unitaire (`get_email`)** : Réservée à l'inspection isolée d'un e-mail unique (`email_id="...", include_body=True, body_max_length=50000`).
 - **Lecture et Pagination de Dossier (`list_emails`)** :
   - Arguments : `folder` (nom, chemin, `"inbox"` ou `FolderId`), `limit` (1 à 100, défaut `10`), `skip` (décalage pagination, défaut `0`), `order_by` (`"receivedDateTime desc"` ou `"receivedDateTime asc"`), `include_body` (`False` par défaut), `body_max_length` (défaut `5000`).
 - **Suppression, Déplacement et Mutation MAPI des Identifiants (`email_id`)** :
@@ -126,22 +130,31 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
 - **Outils Disponibles** : Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_drive_files`, `list_drive_items`, `get_drive_file_content`, `get_drive_file_download_url`, `create_drive_folder`, `create_drive_file`, `update_drive_file`, `import_to_google_doc`, `import_to_google_sheets`, `import_to_google_slides`, `manage_drive_access` — Le Modèle DOIT utiliser `upload_file_to_drive(service="google_workspace", ...)` avec `convert_to_native=True` optionnel pour pousser tout fichier local ECHO vers Google Drive), Calendar (`list_calendars`, `get_events`, `create_event`), Contacts (`list_contacts`, `list_contact_groups`, `get_contact`, `get_contact_group`, `manage_contact`, `manage_contact_group`, `manage_contacts_batch`), Docs, Sheets, Tasks.
 
 ### 3.3 Agrégateur d'Emploi (`jobs_omnisearch`)
-- **Arguments Clés** :
-  - `sources` : `["all"]` (LinkedIn, APEC, France Travail, WTTJ en parallèle) ou sous-ensemble (ex: `["linkedin", "wttj"]`).
+- **Outils disponibles** : `search_jobs` et `get_job_details`.
+- **Arguments Clés (`search_jobs`)** :
+  - `sources` : `["all"]` (`"linkedin"`, `"apec"`, `"francetravail"`, `"wttj"` en parallèle) ou sous-ensemble (ex: `["linkedin", "wttj", "francetravail"]`).
   - `keywords` : Intitulé de poste, technologies.
   - `location` : Localisation (ex: `"Paris"`, `"Lyon"`, `"Télétravail"`).
-  - `seniority` : `"junior"`, `"mid"`, `"senior"`, `"lead"`.
+  - `seniority` : `"internship"|"entry"|"associate"|"mid_senior"|"director"|"executive"|"executive_search"`.
   - `limit` : Résultats max par source (défaut `10`).
-- **Identifiants Optionnels (Identity Vault)** : `LINKEDIN_SESSION_COOKIE` (cookie `li_at`), `APEC_DATADOME_COOKIE` (cookie `datadome`), `FRANCE_TRAVAIL_CLIENT_ID` / `FRANCE_TRAVAIL_CLIENT_SECRET`.
+- **Identifiants Optionnels (Identity Vault)** : `LINKEDIN_SESSION_COOKIE` (cookie `li_at`), `APEC_DATADOME_COOKIE` (cookie `datadome`), `FRANCE_TRAVAIL_CLIENT_ID` / `FRANCE_TRAVAIL_CLIENT_SECRET`, `WTTJ_ALGOLIA_API_KEY`.
 
-### 3.4 Recherche Scientifique (`academic`)
-- Recherche multi-sources (arXiv, Semantic Scholar, CrossRef).
-- Le Modèle DOIT formuler des requêtes conceptuelles en anglais (ex: `"retrieval augmented generation memory consolidation"`).
+### 3.4 Recherche Scientifique & Indicateurs Macro (`academic`)
+- **Outils disponibles** :
+  - `search_academic_papers(query, domain="computer_science")` : Interroge exclusivement arXiv (5 résultats max). Le Modèle DOIT formuler des requêtes conceptuelles en anglais (ex: `"retrieval augmented generation memory consolidation"`).
+  - `get_macro_indicators(country_code)` : Récupère les indicateurs macroéconomiques depuis World Bank.
+
+### 3.5 Entreprises & Annonces Légales (`corporate`)
+- **Outils disponibles** :
+  - `search_french_company(query)` : Recherche d'entreprises françaises (SIREN, SIRET, dénomination, dirigeants).
+  - `check_bodacc_announcements(siren)` : Consultation des annonces légales BODACC pour un numéro SIREN donné.
+- **Identifiant Optionnel (Identity Vault)** : `sirene_key`.
 
 ---
 
 ## 4. CLIENT HTTP UNIVERSEL (`call_api`)
-- Exécute une requête HTTP/REST directe (`"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`, `"HEAD"`, `"OPTIONS"`) vers une URL externe publique (SSRF bloqué sur IP privées/locales RFC 1918).
+- Signature : `call_api(url, method="GET", headers=None, body=None)` (`timeout=15s`).
+- Exécute une requête HTTP/REST directe (`"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`, `"HEAD"`, `"OPTIONS"`) vers une URL externe publique (SSRF bloqué sur IP privées/locales RFC 1918 ainsi que sur les hôtes internes `echo-*`).
 - `headers` / `body` : Dictionnaires JSON optionnels.
 - **INTERDICTION STRICTE** : Il est **ABSOLUMENT INTERDIT** d'utiliser `call_api` pour interroger un serveur MCP (Le Modèle DOIT utiliser exclusivement `list_mcp_functions` et `call_mcp_function`).
 - **Garde Anti-OOM & Délestage** : Garde anti-OOM physique plafonnée à **5 Mo** (`5 242 880` caractères) ; au-delà de **32 768 caractères**, Le Système déleste automatiquement la sortie dans `tools_output/` (lisible par pagination via `read_tool_output`). Pour traiter ou filtrer un flux binaire ou supérieur à 5 Mo, Le Modèle DOIT déléguer l'appel à `code_executor`.

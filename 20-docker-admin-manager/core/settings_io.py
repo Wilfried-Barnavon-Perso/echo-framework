@@ -4,11 +4,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - CORE SETTINGS I/O
-VERSION : 5.226.18.0
+VERSION : 6.22.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Chiffrement AEAD de sftp_pass dans settings.json (chmod 0600) avec préservation si champ soumis vide.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import configparser
 import copy
@@ -22,11 +23,20 @@ from core.config import (
     DEFAULT_AUTH_SETTINGS,
     DEFAULT_BACKUP_CONFIG,
     DEFAULT_MAINT_CONFIG,
+    HAS_ECHO_LIBS,
     MAINT_HISTORY_FILE,
     OWUI_DATA_ROOT,
     RCLONE_CONF_PATH,
     SETTINGS_FILE,
+    read_host_env_dict,
 )
+
+if HAS_ECHO_LIBS:
+    from echo_crypto import (
+        decrypt_admin_secret,
+        encrypt_admin_secret,
+        is_encrypted_payload,
+    )
 
 __all__ = [
     'get_auth_settings',
@@ -115,22 +125,60 @@ def save_maint_report(report_str):
         with open(MAINT_HISTORY_FILE, 'w') as f: json.dump(history[:500], f, indent=4)
     except Exception: pass
 
+def _get_settings_crypto_key() -> str:
+    """Résout la clé de chiffrement locale des paramètres Admin sans dépendance circulaire."""
+    env_map = read_host_env_dict()
+    return (
+        env_map.get("ECHO_BACKUP_ENCRYPTION_KEY")
+        or env_map.get("ECHO_SSO_SECRET")
+        or os.environ.get("ECHO_SSO_SECRET", "").strip()
+    )
+
+
 def load_settings():
     c = DEFAULT_BACKUP_CONFIG.copy()
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r') as f:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 c.update(json.loads(f.read()))
         except Exception:
             pass
+    if HAS_ECHO_LIBS and is_encrypted_payload(c.get("sftp_pass", "")):
+        crypto_key = _get_settings_crypto_key()
+        if crypto_key:
+            try:
+                c["sftp_pass"] = decrypt_admin_secret(c["sftp_pass"], crypto_key, "sftp_pass")
+            except Exception:
+                c["sftp_pass"] = ""
+        else:
+            c["sftp_pass"] = ""
     # Auto-Heal : le formulaire local ne comporte pas de switch auto_cleanup séparé,
     # la rétention ("Garder X" / "Max X jours") doit toujours rester active.
     c["auto_cleanup"] = True
     return c
 
+
 def save_settings(new_s):
-    c = load_settings(); c.update(new_s)
-    with open(SETTINGS_FILE, 'w') as f: json.dump(c, f, indent=4)
+    c = load_settings()
+    prev_pass = c.get("sftp_pass", "")
+    c.update(new_s)
+    if "sftp_pass" in new_s and not (new_s.get("sftp_pass") or "").strip():
+        c["sftp_pass"] = prev_pass
+
+    to_write = dict(c)
+    if HAS_ECHO_LIBS and to_write.get("sftp_pass") and not is_encrypted_payload(to_write["sftp_pass"]):
+        crypto_key = _get_settings_crypto_key()
+        if not crypto_key:
+            raise RuntimeError("Clé de chiffrement absente pour sécuriser sftp_pass.")
+        to_write["sftp_pass"] = encrypt_admin_secret(to_write["sftp_pass"], crypto_key, "sftp_pass")
+
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(to_write, f, indent=4)
+    try:
+        os.chmod(SETTINGS_FILE, 0o600)
+    except OSError:
+        pass
     from services.maintenance_backup import update_system_schedules
     update_system_schedules()
 

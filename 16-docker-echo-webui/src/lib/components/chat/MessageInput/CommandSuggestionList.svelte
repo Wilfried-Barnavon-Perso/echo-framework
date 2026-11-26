@@ -14,37 +14,25 @@
 	}) => void;
 
 	export let onUpload: (e: any) => void = () => {};
-	export let onCompact: () => void = () => {};
 	export let onComments: () => void = () => {};
 	export let onFork: () => void = () => {};
 	export let onSettings: () => void = () => {};
 	export let onTemporary: () => void = () => {};
 	export let insertTextHandler: (text: string) => void = () => {};
-	export let canCompact: boolean | (() => boolean) = false;
-	export let compactDisabled: boolean | (() => boolean) = false;
 	export let canComments: boolean | (() => boolean) = false;
 	export let canFork: boolean | (() => boolean) = false;
 	export let forkDisabled: boolean | (() => boolean) = false;
 	export let canTemporary: boolean | (() => boolean) = false;
 	export let temporaryEnabled: boolean | (() => boolean) = false;
 	export let hasChatContent = false;
-	export let contextUsage: any = null;
 	export let fileUploadEnabled: boolean | (() => boolean) = true;
 
-	$: compactAvailable = typeof canCompact === 'function' ? canCompact() : canCompact;
-	$: isCompactDisabled =
-		typeof compactDisabled === 'function' ? compactDisabled() : compactDisabled;
 	$: commentsAvailable = typeof canComments === 'function' ? canComments() : canComments;
 	$: forkAvailable = typeof canFork === 'function' ? canFork() : canFork;
 	$: isForkDisabled = typeof forkDisabled === 'function' ? forkDisabled() : forkDisabled;
 	$: temporaryAvailable = typeof canTemporary === 'function' ? canTemporary() : canTemporary;
 	$: isTemporaryEnabled =
 		typeof temporaryEnabled === 'function' ? temporaryEnabled() : temporaryEnabled;
-	$: resolvedContextUsage = typeof contextUsage === 'function' ? contextUsage() : contextUsage;
-	$: contextHasThreshold = Number(resolvedContextUsage?.threshold) > 0;
-	$: contextPercent = contextHasThreshold
-		? Math.max(0, Math.round(resolvedContextUsage?.percent ?? 0))
-		: null;
 	$: isFileUploadEnabled =
 		typeof fileUploadEnabled === 'function' ? fileUploadEnabled() : fileUploadEnabled;
 
@@ -99,15 +87,11 @@
 					bind:this={suggestionElement}
 					{query}
 					bind:filteredItems
-					canCompact={compactAvailable}
-					compactDisabled={isCompactDisabled}
 					canComments={commentsAvailable}
 					canFork={forkAvailable}
 					forkDisabled={isForkDisabled}
 					canTemporary={temporaryAvailable}
 					temporaryEnabled={isTemporaryEnabled}
-					contextPercent={contextPercent ?? undefined}
-					{contextHasThreshold}
 					{hasChatContent}
 					onSelect={(e) => {
 						const { type, data } = e;
@@ -129,9 +113,6 @@
 								content: data.content,
 								type: 'prompt'
 							});
-						} else if (type === 'command' && data.id === 'compact') {
-							command({ id: data.id, label: data.id });
-							onCompact();
 						} else if (type === 'command' && data.id === 'comments') {
 							command({ id: data.id, label: data.id });
 							onComments();

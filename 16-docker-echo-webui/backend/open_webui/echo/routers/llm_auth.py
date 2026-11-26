@@ -3,11 +3,12 @@
 """
 title: ECHO V6 LLM Authentication Router
 author: Wilfried BARNAVON
-version: 6.18.23.1
+version: 6.21.8.1
 description: Routeur FastAPI pour l'authentification LLM (OAuth2 Google PKCE + SSH éphémère, clés AI Studio, quotas et réinitialisation) (/echo/v1/llm-auth).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.8.1: Validation des clés API AI Studio via /models?pageSize=1000 et en-têtes x-goog-api-key, User-Agent et x-goog-api-client (ECHO_AISTUDIO_API_CLIENT).
 # 6.18.23.1: Création du routeur souverain /echo/v1/llm-auth remplaçant le flux inline du pipe et reset_auth_action.py.
 
 import asyncio
@@ -16,7 +17,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -32,9 +33,9 @@ try:
     from echo_constants import (  # type: ignore
         AUTH_METHOD_KEY_PRIMARY,
         AUTH_METHOD_KEY_SECONDARY,
+        ECHO_AISTUDIO_API_CLIENT,
         ECHO_SSH_TUNNEL_TIMEOUT,
         ECHO_SSH_TUNNEL_USER,
-        ECHO_USER_AGENT,
         GOOGLE_API_BASE_URL,
         GOOGLE_API_KEY_PATTERN,
     )
@@ -47,9 +48,9 @@ except ImportError:
     from echo_constants import (  # type: ignore
         AUTH_METHOD_KEY_PRIMARY,
         AUTH_METHOD_KEY_SECONDARY,
+        ECHO_AISTUDIO_API_CLIENT,
         ECHO_SSH_TUNNEL_TIMEOUT,
         ECHO_SSH_TUNNEL_USER,
-        ECHO_USER_AGENT,
         GOOGLE_API_BASE_URL,
         GOOGLE_API_KEY_PATTERN,
     )
@@ -221,12 +222,12 @@ def _rebuild_priority(auth: EchoAuth, safe_uid: str) -> None:
 
 
 async def _validate_google_api_key(api_key: str) -> None:
-    test_url = f"{GOOGLE_API_BASE_URL}/models?key={api_key}"
+    test_url = f"{GOOGLE_API_BASE_URL}/models?pageSize=1000"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 test_url,
-                headers={"User-Agent": ECHO_USER_AGENT},
+                headers={"x-goog-api-key": api_key, "User-Agent": ECHO_AISTUDIO_API_CLIENT, "x-goog-api-client": ECHO_AISTUDIO_API_CLIENT},
                 timeout=10.0,
             )
     except Exception as exc:

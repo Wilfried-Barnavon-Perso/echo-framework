@@ -4,17 +4,18 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 6.20.4.1
+# VERSION : 6.22.1.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Unification /app/secrets/.env, RESTORE_EXTRA_CONTAINERS (echo-auth-manager), SESSION_COOKIE_NAME et secret_key HKDF/SHA-256 stable.
+# 6.21.10.1: Isolation de RCLONE_CONF_DIR sous /backups/rclone (echo-backups) hors du volume partagé echo-webui-data.
 # 6.20.4.1: Ajout de TMP_UPLOADS_DIR (/app/backend/data/.tmp_uploads) et exposition dans DIRS["tmp_uploads"].
 # 6.18.5.1: Ajout de la constante MAX_ECHO_USERS = 50 (plafond Clause 4 Open WebUI).
 # 6.18.0.1: Ajout des constantes SSOT BACKUP_AUX_CONTAINERS (couvrant tous les écrivains :rw ECHO v6) et BROWSER_WORKER_URL.
-# 6.5.3.1: Alignement de l'URL interne et du nom de conteneur sur echo-webui.
-# 6.5.0.1: Définition des constantes SECRETS_DIR, HOST_ENV_FILE et HOST_ECHO_ROOT pour l'archivage et la restauration des secrets hôtes.
 
+import hashlib
 import os
 import sys
 import secrets
@@ -66,9 +67,60 @@ except ImportError:
 # ==============================================================================
 # SECTION 2 : CONFIGURATION & CHEMINS
 # ==============================================================================
+SECRETS_DIR = "/app/secrets"
+HOST_ENV_FILE = "/app/secrets/.env"
+LEGACY_HOST_ENV_FILE = "/app/host_env/.env"
+HOST_ECHO_ROOT = "/opt/ECHO"
+
+
+def parse_env_content(raw_text: str) -> dict[str, str]:
+    """Parse un contenu .env en dictionnaire clé -> valeur dé-quotée."""
+    parsed: dict[str, str] = {}
+    for line in (raw_text or "").splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("#") or "=" not in clean:
+            continue
+        key, val = clean.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if len(val) >= 2 and ((val[0] == '"' and val[-1] == '"') or (val[0] == "'" and val[-1] == "'")):
+            val = val[1:-1]
+        if key:
+            parsed[key] = val
+    return parsed
+
+
+def read_host_env_dict() -> dict[str, str]:
+    """Lit dynamiquement le fichier .env maître depuis /app/secrets/.env (avec repli legacy)."""
+    for candidate in (HOST_ENV_FILE, LEGACY_HOST_ENV_FILE):
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8", errors="ignore") as f_env:
+                    return parse_env_content(f_env.read())
+            except OSError:
+                pass
+    return {}
+
+
+def _derive_flask_secret_key() -> str:
+    """Dérive une clé de session Flask stable à travers les hot-reloads depuis les secrets d'instance."""
+    env_map = read_host_env_dict()
+    raw_seed = (
+        env_map.get("ECHO_SSO_SECRET")
+        or env_map.get("ECHO_BACKUP_ENCRYPTION_KEY")
+        or os.environ.get("ECHO_SSO_SECRET", "").strip()
+    )
+    if raw_seed:
+        return hashlib.sha256(b"echo-am-flask-session:" + raw_seed.encode("utf-8")).hexdigest()
+    return secrets.token_hex(32)
+
+
 app = Flask(__name__, static_folder='/app/static')
-app.secret_key = secrets.token_hex(32)
+app.secret_key = _derive_flask_secret_key()
 app.config['JSON_AS_ASCII'] = False
+app.config['SESSION_COOKIE_NAME'] = 'echo_am_session'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 backup_scheduler = BackgroundScheduler() if HAS_SCHEDULER else None
 
@@ -91,6 +143,10 @@ BACKUP_AUX_CONTAINERS = (
     'echo-coding-worker',
     'echo-user-manager',
 )
+# Conteneurs additionnels devant être stoppés/redémarrés lors d'une restauration complète (auth.db)
+RESTORE_EXTRA_CONTAINERS = (
+    'echo-auth-manager',
+)
 BACKUP_DIR = "/backups"
 HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
@@ -100,13 +156,9 @@ ECHO_USERS_ROOT = os.path.join(OWUI_DATA_ROOT, "users")
 UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, "uploads")
 TMP_UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, ".tmp_uploads")
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
-RCLONE_CONF_DIR = os.path.join(OWUI_DATA_ROOT, "rclone")
+RCLONE_CONF_DIR = os.path.join(BACKUP_DIR, "rclone")
 
 RCLONE_CONF_PATH = os.path.join(RCLONE_CONF_DIR, "rclone.conf")
-OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
-SECRETS_DIR = "/app/secrets"
-HOST_ENV_FILE = "/app/host_env/.env"
-HOST_ECHO_ROOT = "/opt/ECHO"
 DOWNLOADS_DIR = "/app/downloads"
 N8N_DATA_DIR = "/app/n8n-data"
 N8N_DB_PATH = os.path.join(N8N_DATA_DIR, "database.sqlite")

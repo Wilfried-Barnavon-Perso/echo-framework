@@ -76,7 +76,7 @@
 		return structuredClone(
 			branch.map(
 				(
-					{ id, role, content, output, files, contextSummary, model, models, timestamp },
+					{ id, role, content, output, files, model, models, timestamp },
 					index
 				) => ({
 					id,
@@ -84,7 +84,6 @@
 					content: content ?? '',
 					...(output?.length && role === 'assistant' ? { output } : {}),
 					files,
-					contextSummary,
 					model,
 					models,
 					timestamp,
@@ -248,13 +247,6 @@
 		}
 		if (type === 'chat:tags') {
 			void getAllTags(localStorage.token).then((value) => tags.set(value));
-			return;
-		}
-		if (type === 'context_compaction') {
-			const checkpoint = [...context, ...messages].find(
-				(message) => message.id === data.checkpoint_message_id
-			);
-			if (checkpoint && data.context_summary) checkpoint.contextSummary = data.context_summary;
 			return;
 		}
 		if (type === 'request:interaction:done') {
@@ -453,8 +445,7 @@
 					return {
 						id: message.id,
 						role: message.role,
-						output: message.output,
-						contextSummary: message.contextSummary
+						output: message.output
 					};
 				const images = (message.files ?? []).filter(
 					(file: any) => file.type === 'image' || isRasterImageContentType(file.content_type)
@@ -462,7 +453,6 @@
 				return {
 					id: message.id,
 					role: message.role,
-					contextSummary: message.contextSummary,
 					content: images.length
 						? [
 								{ type: 'text', text: message.content ?? '' },

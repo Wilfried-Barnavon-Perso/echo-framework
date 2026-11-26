@@ -3,17 +3,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.18.23.1
+version: 6.23.4.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.4.1: Diffusion temps réel du modèle actif (echo_active_model via broadcast_active_model) en tête de boucle de cascade/relais.
+# 6.23.2.1: Diagnostic agnostique promptFeedback/finishReason dans StreamProcessor, garde and model_parts sur MAX_TOKENS et non-scellement du shadow user bloqué.
 # 6.18.23.1: Reconstruction directe de l'historique depuis session.db via get_shadow_branch_lineage (Schéma v3), scellement parent_id et débranchement du flux PKCE/API-Key vers l'onglet Authentification LLM.
 # 6.7.20.1: Assemblage hot-reload de systemInstruction via load_assembled_system_prompt (system-prompt.xml + system-commands.xml) préservant le cache de préfixe Gemini.
 # 6.7.16.1: Synchronisation en fin de tour du statut final et du résumé VECTORIZED_SUM_UP des ressources de session vers identity.db.
-# 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
-# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 
 
 # ==============================================================================
@@ -49,7 +49,7 @@ from echo_core import (
     load_assembled_system_prompt,
     EchoCompactionEngine,
 )
-from echo_gemini_client import EchoGeminiClient
+from echo_gemini_client import EchoGeminiClient, describe_empty_llm_response
 from echo_http import FatalAPIError
 from echo_logger import DebugLogger
 from echo_constants import (
@@ -777,6 +777,7 @@ class StreamProcessor:
         self.escalation_requested = None
         # [AUTO-CONTINUE] Suivi granulaire de l'état du flux pour la détection des troncatures
         self.last_finish_reason = None; self.is_generating_tool = False
+        self.prompt_blocked = False
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
@@ -841,7 +842,7 @@ class StreamProcessor:
                             log.error(f"[StreamProcessor] Erreur reçue dans la trame SSE : {err_code} - {err_msg}")
                             if in_think:
                                 in_think = False
-                            yield f"\n\n> ❌ **Erreur API Google** (`{err_code}`) : {err_msg}\n"
+                            yield f"\n\n> ❌ **Erreur API d'inférence** (`{err_code}`) : {err_msg}\n"
                             return
                         if "usageMetadata" in target:
                             if self.usage_stats is None:
@@ -849,6 +850,20 @@ class StreamProcessor:
                             self.usage_stats.update(target["usageMetadata"])
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
+                        if not cand and (target.get("promptFeedback") or data.get("promptFeedback")):
+                            diag_empty = describe_empty_llm_response(data)
+                            if diag_empty["is_prompt_blocked"]:
+                                self.prompt_blocked = True
+                                log.warning(
+                                    f"[StreamProcessor] Requête bloquée ({diag_empty['reason']}) : {diag_empty['raw_message']}"
+                                )
+                                if in_think:
+                                    in_think = False
+                                yield (
+                                    f"\n\n> ⚠️ **{diag_empty['summary']}** "
+                                    f"Modifiez ou supprimez votre dernier message avant de reformuler.\n"
+                                )
+                                return
                         if cand:
                             finish_reason = cand[0].get("finishReason")
                             content = cand[0].get("content")
@@ -859,7 +874,8 @@ class StreamProcessor:
                                     # Libération immédiate de l'interface Open WebUI pendant que l'API Google calcule l'usageMetadata
                                     yield ""
                                 elif not content and finish_reason != "MAX_TOKENS":
-                                    yield f"\n\n> ⚠️ï¸  **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                    diag_empty = describe_empty_llm_response(data)
+                                    yield f"\n\n> ⚠️ **{diag_empty['summary']}**\n"
                                     return
                             if content:
                                 for part in content.get("parts", []):
@@ -1280,9 +1296,22 @@ class Pipe:
         failed_models_this_turn = set()
         applied_model = target_model
         is_fallback_cascade = False
+        last_emitted_model: Optional[str] = None
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
+
+            # 0. Diffusion temps réel du modèle actif vers la pastille UI
+            if target_model and target_model != last_emitted_model:
+                last_emitted_model = target_model
+                if chat_id:
+                    try:
+                        from echo_window_manager import get_window_manager
+                        await get_window_manager().broadcast_active_model(
+                            __user__["id"], chat_id, target_model
+                        )
+                    except Exception:
+                        pass
 
             # 1. Synchronisation de l'AEC d'identité si le modèle actif a divergé
             if target_model != applied_model:
@@ -1583,7 +1612,7 @@ class Pipe:
 
                 # [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS)
                 # Mécanisme de relance encapsulée empêchant l'arrêt prématuré de la génération.
-                if proc.last_finish_reason == "MAX_TOKENS" and auto_continue_attempts < max_auto_continue:
+                if proc.last_finish_reason == "MAX_TOKENS" and model_parts and auto_continue_attempts < max_auto_continue:
                     auto_continue_attempts += 1
                     if proc.is_generating_tool:
                         # Cas 1 : L'interruption a eu lieu durant la structuration JSON d'un appel de fonction.
@@ -1627,7 +1656,7 @@ class Pipe:
                 or (body["messages"][-1].get("parentId") if body.get("messages") else None)
                 or (body["messages"][-1].get("parent_id") if body.get("messages") else None)
             )
-            if user_msg_id and user_draft:
+            if user_msg_id and user_draft and not (proc.prompt_blocked and not cascade_history):
                 user_text = body['messages'][-1].get('content') or ""
                 full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
                 # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.

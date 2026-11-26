@@ -1,12 +1,6 @@
 <script lang="ts">
 	import { resolveToolApprovalMode } from '$lib/utils/toolPermissions';
 	import type { TerminalContext } from '$lib/types';
-	import {
-		estimateTokens,
-		estimateMessagesTokens,
-		estimateUsageGrowth,
-		captureUsageCheckpoint
-	} from '$lib/utils/contextUsage';
 	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-sonner';
 
@@ -59,6 +53,7 @@
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import {
+		appendChildToWindowedHistory,
 		resolveDefaultModelIds,
 		convertMessagesToHistory,
 		copyToClipboard,
@@ -89,7 +84,6 @@
 	import {
 		addTagById,
 		archiveChatById,
-		compactChatById,
 		createNewChat,
 		deleteChatById,
 		forkChatById,
@@ -102,6 +96,12 @@
 		updateChatParams,
 		updateChatFolderIdById
 	} from '$lib/apis/chats';
+	import {
+		fetchEchoMessageDetails,
+		getEchoChatWindow,
+		type EchoCompactionCheckpoint
+	} from '$lib/apis/echo/chat_actions';
+	import { echoChatCheckpoints } from '$lib/stores/echo';
 	import { resolveTerminalConnection, setCwd, type FilesystemFile } from '$lib/apis/terminal';
 	import { generateOpenAIChatCompletion, getErrorMessage } from '$lib/apis/openai';
 	import {
@@ -239,8 +239,6 @@
 	} else {
 		selectedModelIds = selectedModels;
 	}
-	let serverContextUsage = null;
-	let contextUsage = null;
 
 	const normalizeSelectedModels = (modelIds: string[] = []) => {
 		if (
@@ -277,83 +275,6 @@
 		}
 	}
 
-	$: contextCompactionEnabled = Boolean($config?.features?.enable_context_compaction);
-
-	const getContextThreshold = (
-		modelId: string | undefined,
-		models: Model[],
-		params: { compact_token_threshold?: unknown }
-	) => {
-		const model = models.find((item) => item.id === modelId);
-		const threshold = Number(
-			model?.info?.params?.compact_token_threshold ?? params?.compact_token_threshold
-		);
-		return Number.isFinite(threshold) && threshold > 0 ? threshold : null;
-	};
-
-	const getContextUsage = (
-		chatHistory: typeof history,
-		system: string,
-		threshold: number | null
-	) => {
-		if (!chatHistory?.currentId) {
-			return null;
-		}
-
-		const messages = createMessagesList(chatHistory, chatHistory.currentId);
-		const systemTokens = estimateTokens(system);
-		let estimatedTokens = systemTokens;
-		let hasUsageCheckpoint = false;
-		let summary = '';
-		let startIdx = 0;
-
-		for (let idx = 0; idx < messages.length; idx += 1) {
-			const value = messages[idx]?.contextSummary ?? messages[idx]?.context_summary;
-			if (typeof value === 'string' && value.trim()) {
-				summary = value;
-				startIdx = idx;
-			}
-		}
-
-		const activeMessages = messages.slice(startIdx);
-
-		for (let idx = activeMessages.length - 1; idx >= 0; idx -= 1) {
-			const usage = activeMessages[idx]?.usage ?? activeMessages[idx]?.info?.usage;
-			const usageTokens = getUsageTokenCount(usage);
-			if (usageTokens) {
-				hasUsageCheckpoint = true;
-				estimatedTokens =
-					usageTokens +
-					estimateUsageGrowth(activeMessages[idx]) +
-					estimateMessagesTokens(activeMessages.slice(idx + 1));
-				break;
-			}
-		}
-
-		if (!hasUsageCheckpoint) {
-			estimatedTokens += estimateTokens(summary) + estimateMessagesTokens(activeMessages);
-		}
-
-		return {
-			tokens: estimatedTokens,
-			estimated_tokens: estimatedTokens,
-			threshold,
-			percent: threshold > 0 ? Math.max(0, Math.round((estimatedTokens / threshold) * 100)) : null,
-			source: 'estimated'
-		};
-	};
-
-	$: contextThreshold = contextCompactionEnabled
-		? (getContextThreshold(
-				atSelectedModel?.id ?? selectedModels.find((id) => id),
-				$models,
-				params
-			) ??
-			serverContextUsage?.threshold ??
-			null)
-		: null;
-	// [ECHO-V6-HOOK] Disable O(N) client-side token estimation on every history update (handled by EchoContextGauge)
-	$: contextUsage = serverContextUsage;
 	$: embeddedHeaderTitle = embeddedTitle || $chatTitle || $i18n.t('Chat');
 
 	let selectedToolIds: string[] = [];
@@ -418,13 +339,12 @@
 	let generating = false;
 	let dragged = false;
 	let generationController = null;
-	const contextCompactions = writable<Record<string, 'in_progress' | { error: string }>>({});
-	setContext('contextCompactions', contextCompactions);
-	let compactionChatId = '';
-	$: if (compactionChatId !== $chatId) {
-		contextCompactions.set({});
-		compactionChatId = $chatId;
-	}
+	let treeIndex: Record<string, any> | null = null;
+	let windowMeta: Record<string, any> | null = null;
+	const inFlightMessageDetails = new Set<string>();
+	$: activeCheckpoints =
+		($chatId && $echoChatCheckpoints[$chatId]) ||
+		((windowMeta?.checkpoints as EchoCompactionCheckpoint[] | undefined) ?? []);
 
 	let chat: any = null;
 	let tags = [];
@@ -441,11 +361,14 @@
 		if (!canClone || cloning) return;
 		cloning = true;
 		try {
+			const fullChat = await getChatById(localStorage.token, chat.id, { windowed: false });
+			const sourceChat = fullChat?.chat ?? chat.chat;
+			const sourceTitle = fullChat?.title ?? chat.title;
 			const [copy] = await importChats(localStorage.token, [
 				{
 					chat: {
-						...chat.chat,
-						title: $i18n.t('Clone of {{TITLE}}', { TITLE: chat.title }),
+						...sourceChat,
+						title: $i18n.t('Clone of {{TITLE}}', { TITLE: sourceTitle }),
 						originalChatId: chat.id,
 						branchPointMessageId: history.currentId
 					}
@@ -493,14 +416,23 @@
 
 	$: if (loading || !history.currentId) {
 		liveStatus = '';
-	} else if (
-		Object.values(history.messages).some(
-			(message) => message.role === 'assistant' && message.done === false
-		)
-	) {
-		liveStatus = $i18n.t('Generating...');
-	} else if (liveStatus) {
-		liveStatus = $i18n.t('Response complete');
+	} else {
+		const currentMsg = history.messages[history.currentId];
+		const parentChildren =
+			currentMsg?.parentId && history.messages[currentMsg.parentId]?.childrenIds
+				? history.messages[currentMsg.parentId].childrenIds
+				: [history.currentId];
+		const anyGenerating =
+			(currentMsg?.role === 'assistant' && currentMsg?.done === false) ||
+			parentChildren.some((cid: string) => {
+				const sibling = history.messages[cid];
+				return sibling?.role === 'assistant' && sibling?.done === false;
+			});
+		if (anyGenerating) {
+			liveStatus = $i18n.t('Generating...');
+		} else if (liveStatus) {
+			liveStatus = $i18n.t('Response complete');
+		}
 	}
 
 	// Chat Input
@@ -620,10 +552,27 @@
 		if (!chatHistory?.messages) {
 			return null;
 		}
-		const messages = chatHistory.currentId
-			? createMessagesList(chatHistory, chatHistory.currentId)
-			: Object.values(chatHistory.messages);
-		for (const message of [...messages].reverse()) {
+		if (chatHistory.currentId) {
+			let cursor: string | null = chatHistory.currentId;
+			let steps = 0;
+			const visited = new Set<string>();
+			while (cursor && !visited.has(cursor) && steps < 12) {
+				visited.add(cursor);
+				const message = chatHistory.messages[cursor];
+				if (!message) break;
+				if (
+					message.role === 'assistant' &&
+					(message.user_id ?? chat?.user_id ?? $user?.id) === $user?.id
+				) {
+					const pending = getPendingAskUserFromMessage(message);
+					if (pending) return pending;
+				}
+				cursor = message.parentId ?? null;
+				steps += 1;
+			}
+			return null;
+		}
+		for (const message of Object.values(chatHistory.messages).reverse() as any[]) {
 			if ((message.user_id ?? chat?.user_id ?? $user?.id) !== $user?.id) continue;
 			const pending = getPendingAskUserFromMessage(message);
 			if (pending) return pending;
@@ -945,7 +894,6 @@
 		tags = [];
 		taskIds = null;
 		chatTasks = [];
-		serverContextUsage = null;
 		history = {
 			messages: {},
 			currentId: null
@@ -1112,9 +1060,19 @@
 		try {
 			const modelIds = atSelectedModel ? [atSelectedModel.id] : [...selectedModels];
 			await Promise.all([
-				!$tools ? getTools(localStorage.token).then((res) => tools.set(res)) : Promise.resolve(),
+				!$tools
+					? getTools(localStorage.token)
+							.then((res) => tools.set(res))
+							.catch((err) => {
+								console.error('[setDefaults] Failed to load tools', err);
+							})
+					: Promise.resolve(),
 				!$functions
-					? getFunctions(localStorage.token).then((res) => functions.set(res))
+					? getFunctions(localStorage.token)
+							.then((res) => functions.set(res))
+							.catch((err) => {
+								console.error('[setDefaults] Failed to load functions', err);
+							})
 					: Promise.resolve()
 			]);
 			if ($tools === null || $functions === null) return;
@@ -1323,24 +1281,6 @@
 		}
 	};
 
-	const clearContextCompaction = (messageId: string) => {
-		const next = { ...$contextCompactions };
-		delete next[messageId];
-		contextCompactions.set(next);
-	};
-
-	const handleContextCompactionStatus = (status, messageId: string) => {
-		if (status?.action !== 'context_compaction') return;
-		if (status.done && !status.error) {
-			clearContextCompaction(messageId);
-		} else {
-			$contextCompactions = {
-				...$contextCompactions,
-				[messageId]: status.error ? { error: $i18n.t('Context compaction failed') } : 'in_progress'
-			};
-		}
-	};
-
 	let joinedChatId = '';
 	let liveParticipants: { id: string; name: string }[] = [];
 	const clearPresence = () => (liveParticipants = []);
@@ -1411,7 +1351,19 @@
 				(local.user_id ?? chat?.user_id) === $user?.id &&
 				(taskIds?.length || generating);
 			if (!local || (!ownActive && (!baseline || baseline[id] === local))) {
-				history.messages[id] = { ...local, ...message };
+				const preserveHydratedLazy =
+					Boolean(local && !local._echoLazyDetails && message?._echoLazyDetails);
+				history.messages[id] = {
+					...local,
+					...message,
+					...(preserveHydratedLazy
+						? {
+								content: local.content,
+								output: local.output,
+								_echoLazyDetails: false
+							}
+						: {})
+				};
 				// Keep recovered replies finished unless their task is active or has been replaced.
 				if (
 					local?.done === true &&
@@ -1445,10 +1397,33 @@
 		const signal = chatLoadController.signal;
 		const promise = (async () => {
 			try {
-				const fresh = await getChatById(localStorage.token, id, signal);
+				const fresh = await getChatById(localStorage.token, id, { signal, windowed: true });
 				if ($chatId !== id || joinedChatId !== id || signal.aborted) return;
 				chat = fresh;
+				if (fresh?.tree_index) treeIndex = fresh.tree_index;
+				if (fresh?.window_meta) {
+					const prevOldestId = windowMeta?.oldest_loaded_id;
+					const keepExpandedWindow = Boolean(
+						prevOldestId &&
+							history?.messages?.[prevOldestId] &&
+							!fresh?.chat?.history?.messages?.[prevOldestId]
+					);
+					windowMeta = keepExpandedWindow
+						? {
+								...fresh.window_meta,
+								oldest_loaded_id: prevOldestId,
+								has_older: Boolean(windowMeta?.has_older)
+							}
+						: fresh.window_meta;
+					if (Array.isArray(fresh.window_meta?.checkpoints)) {
+						echoChatCheckpoints.update((all) => ({
+							...all,
+							[id]: fresh.window_meta.checkpoints
+						}));
+					}
+				}
 				mergeChatMessages(fresh.chat.history, baseline);
+				sanitizeHistory(history, treeIndex);
 			} catch (error) {
 				if ($chatId === id && joinedChatId === id && !signal.aborted) {
 					clearPresence();
@@ -1610,12 +1585,6 @@
 					} else {
 						message.statusHistory = [data];
 					}
-				} else if (type === 'context_compaction') {
-					if (data?.checkpoint_message_id && history.messages[data.checkpoint_message_id]) {
-						history.messages[data.checkpoint_message_id].contextSummary = data.context_summary;
-					}
-					handleContextCompactionStatus(data, event.message_id);
-					autoScrollToBottom();
 				} else if (type === 'chat:active') {
 					if (!data?.active) {
 						taskIds = null;
@@ -1637,6 +1606,7 @@
 						await chatCompletionEventHandler(data, message, event.chat_id, event.shared);
 					}
 					autoScrollToBottom();
+					return;
 				} else if (type === 'chat:tasks:cancel') {
 					for (const interaction of browserInteractions) {
 						if (interaction.messageId === event.message_id) {
@@ -1645,16 +1615,18 @@
 					}
 					message.bridgeCancelled = true;
 					bridgeCancellations.get(event.message_id)?.();
-					clearContextCompaction(event.message_id);
 					if (data?.output) {
 						message.output = data.output;
 					}
 					if (!event.shared && event.message_id === history.currentId) {
 						taskIds = null;
 						// Set all response messages to done
-						for (const messageId of history.messages[message.parentId].childrenIds) {
-							history.messages[messageId].done = true;
-							clearContextCompaction(messageId);
+						if (message.parentId && history.messages[message.parentId]) {
+							for (const messageId of history.messages[message.parentId].childrenIds) {
+								if (history.messages[messageId]) {
+									history.messages[messageId].done = true;
+								}
+							}
 						}
 						message.done = true;
 						await processNextInQueue($chatId);
@@ -1691,7 +1663,6 @@
 						message.done = true;
 					} else handleOpenAIError(data.error, message);
 					if (!event.shared && !responseCompleted) {
-						clearContextCompaction(message.id);
 						if (event.message_id === history.currentId) {
 							await processNextInQueue(event.chat_id);
 						}
@@ -1711,7 +1682,6 @@
 							if (existing.content !== msg.content) {
 								history.messages[msg.id] = {
 									...existing,
-									originalContent: existing.content,
 									...msg
 								};
 							}
@@ -1730,7 +1700,7 @@
 					await refreshChatList(localStorage.token);
 					return; // The message copy is stale after the await; skip the trailing write-back.
 				} else if (type === 'chat:tags') {
-					chat = await getChatById(localStorage.token, $chatId);
+					chat = await getChatById(localStorage.token, $chatId, { windowed: true });
 					allTags.set(await getAllTags(localStorage.token));
 					return;
 				} else if (type === 'source' || type === 'citation') {
@@ -2066,7 +2036,6 @@
 				$socket?.off('disconnect', clearTyping);
 				$socket?.off('disconnect', clearPresence);
 				$socket?.off('disconnect', cancelBrowserInteractions);
-				contextCompactions.set({});
 				audioQueueInstance?.destroy();
 				audioQueue.set(null);
 			} catch (e) {
@@ -2277,7 +2246,7 @@
 					return null;
 				})
 			: null;
-		const savedChat = await getChatById(token, _chatId);
+		const savedChat = await getChatById(token, _chatId, { windowed: true });
 		if (savedChat.title === initialTitle) {
 			const updated = await updateChatById(token, _chatId, {
 				title: title || content.slice(0, 100)
@@ -2350,9 +2319,15 @@
 			}
 		} else if (!$temporaryChatEnabled) {
 			// Patch only the new message, so a running backend turn keeps its current output.
-			await updateChatById(localStorage.token, $chatId, {
-				history: { currentId: history.currentId, messages: changedMessages }
-			});
+			await updateChatById(
+				localStorage.token,
+				$chatId,
+				{
+					history: { currentId: history.currentId, messages: changedMessages }
+				},
+				null,
+				{ light: true }
+			);
 		}
 		return id;
 	};
@@ -2711,6 +2686,10 @@
 		await chatId.set('');
 		await chatTitle.set('');
 
+		treeIndex = null;
+		windowMeta = null;
+		inFlightMessageDetails.clear();
+
 		history = {
 			messages: {},
 			currentId: null
@@ -2829,6 +2808,9 @@
 		if (chatIdProp && chatIdProp !== $chatId) terminalTabs?.prepareChatSwitch();
 		if (chatIdProp && chatIdProp !== $chatId) {
 			terminalContext = null;
+			treeIndex = null;
+			windowMeta = null;
+			inFlightMessageDetails.clear();
 			history = { messages: {}, currentId: null };
 		}
 		const initialHistory = { ...history, messages: { ...history.messages } };
@@ -2844,7 +2826,7 @@
 
 		const id = $chatId;
 		const [loadedChat, loadedTags, pendingTaskIds] = await Promise.all([
-			getChatById(localStorage.token, id, signal).catch(async (error) => {
+			getChatById(localStorage.token, id, { signal, windowed: true }).catch(async (error) => {
 				console.error('[note-chat] getChatById failed', {
 					chatIdProp,
 					activeChatId: $chatId,
@@ -2879,168 +2861,287 @@
 			title: loadedChat?.title
 		});
 
-		if (loadedChat) {
-			chat = loadedChat;
-			tags = loadedTags;
-			noteChatDebug('getTagsById completed', { tagCount: tags?.length ?? 0 });
+		try {
+			if (loadedChat) {
+				chat = loadedChat;
+				tags = loadedTags;
+				noteChatDebug('getTagsById completed', { tagCount: tags?.length ?? 0 });
 
-			const chatContent = chat.chat;
-			chatVariables = chat?.variables ?? {};
+				const chatContent = chat.chat;
+				chatVariables = chat?.variables ?? {};
 
-			if (chatContent) {
-				noteChatDebug('chat payload found', {
-					models: chatContent?.models,
-					hasHistory: !!chatContent?.history,
-					messageCount: Object.keys(chatContent?.history?.messages ?? {}).length
-				});
+				if (chatContent) {
+					noteChatDebug('chat payload found', {
+						models: chatContent?.models,
+						hasHistory: !!chatContent?.history,
+						messageCount: Object.keys(chatContent?.history?.messages ?? {}).length
+					});
 
-				selectedModels =
-					(chatContent?.models ?? undefined) !== undefined
-						? chatContent.models
-						: [chatContent.models ?? ''];
-				if (selectedModels[0]?.startsWith('agent:')) {
-					const terminalId = decodeURIComponent(selectedModels[0].split(':')[1]);
-					if (isTerminalAvailable(terminalId)) {
-						selectedTerminalId.set(terminalId);
-						await refreshAgentModels();
-					} else if ($terminalServers !== null) {
-						selectedModels = selectedModels.filter((modelId) => !modelId.startsWith('agent:'));
-					}
-				}
-
-				// An empty model list is not evidence that the chat's models are gone.
-				if ($models.length > 0) {
-					selectedModels = selectedModels.filter(
-						(modelId) => modelId.startsWith('agent:') || $models.map((m) => m.id).includes(modelId)
-					);
-				}
-
-				if (!($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))) {
-					selectedModels = selectedModels.length > 0 ? [selectedModels[0]] : [''];
-				}
-				if (
-					selectedModels.length === 0 ||
-					(selectedModels.length === 1 && selectedModels[0] === '')
-				) {
-					selectedModels = normalizeSelectedModels(selectedModels);
-					noteChatDebug('normalized empty selected models after load', { selectedModels });
-				}
-
-				chatContent.history ??= convertMessagesToHistory(chatContent.messages);
-				// Keep live updates received while the chat and tags were loading.
-				for (const [id, message] of Object.entries(history.messages)) {
-					if (initialHistory.messages[id] !== message)
-						chatContent.history.messages[id] = { ...chatContent.history.messages[id], ...message };
-				}
-				if (history.currentId !== initialHistory.currentId)
-					chat.current_message_id = history.currentId;
-				history = chatContent.history;
-				if (chat?.current_message_id && history?.messages?.[chat.current_message_id]) {
-					history.currentId = chat.current_message_id;
-				}
-
-				// Sanitize history: repair orphaned references and structurally-malformed
-				// nodes from failed regenerations (#24424, #24157, #20474)
-				sanitizeHistory(history);
-
-				chatTitle.set(chatContent.title);
-
-				params = structuredClone(chatContent?.params ?? {});
-				delete params.note_id;
-				chatFiles = structuredClone(chatContent?.files ?? []);
-
-				// Load tasks from chat-level DB field
-				chatTasks = chat?.tasks ?? [];
-				serverContextUsage = chat?.context_usage ?? null;
-
-				autoScroll = true;
-
-				// Mark all non-current assistant messages as done
-				if (history.currentId) {
-					for (const message of Object.values(history.messages)) {
-						if (
-							message &&
-							message.role === 'assistant' &&
-							message.id !== history.currentId &&
-							message.done !== false
-						) {
-							message.done = true;
+					selectedModels =
+						(chatContent?.models ?? undefined) !== undefined
+							? chatContent.models
+							: [chatContent.models ?? ''];
+					if (selectedModels[0]?.startsWith('agent:')) {
+						const terminalId = decodeURIComponent(selectedModels[0].split(':')[1]);
+						if (isTerminalAvailable(terminalId)) {
+							selectedTerminalId.set(terminalId);
+							await refreshAgentModels();
+						} else if ($terminalServers !== null) {
+							selectedModels = selectedModels.filter((modelId) => !modelId.startsWith('agent:'));
 						}
 					}
-				}
 
-				// Reconcile active tasks with message state:
-				// If the response is already done, remaining tasks are just background
-				// work (follow-ups, title gen) that shouldn't block the input.
-				const activeTaskIds = taskIds;
-				const currentMessage = history.currentId ? history.messages[history.currentId] : null;
-				noteChatDebug('task reconciliation completed', {
-					pendingTaskCount: pendingTaskIds.length,
-					hasCurrentMessage: !!currentMessage
-				});
-				const responseComplete = currentMessage?.role === 'assistant' && currentMessage?.done;
+					// An empty model list is not evidence that the chat's models are gone.
+					if ($models.length > 0) {
+						selectedModels = selectedModels.filter(
+							(modelId) => modelId.startsWith('agent:') || $models.map((m) => m.id).includes(modelId)
+						);
+					}
 
-				if (taskIds === activeTaskIds) {
-					if (pendingTaskIds.length > 0 && !responseComplete) {
-						taskIds = pendingTaskIds;
-					} else {
-						taskIds = null;
-						// No active tasks and message incomplete → generation was interrupted
-						if (pendingTaskIds.length === 0) {
-							for (const message of Object.values(history.messages)) {
-								if (
-									message?.role === 'assistant' &&
-									(message.user_id ?? chat?.user_id) === $user?.id &&
-									!message.done &&
-									!messageHasPendingAskUser(message) &&
-									!message.output?.some((item) => item?.type === 'function_call' && item?.status === 'pending')
-								) {
-									message.done = true;
-									history = history;
+					if (!($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))) {
+						selectedModels = selectedModels.length > 0 ? [selectedModels[0]] : [''];
+					}
+					if (
+						selectedModels.length === 0 ||
+						(selectedModels.length === 1 && selectedModels[0] === '')
+					) {
+						selectedModels = normalizeSelectedModels(selectedModels);
+						noteChatDebug('normalized empty selected models after load', { selectedModels });
+					}
+
+					chatContent.history ??= convertMessagesToHistory(chatContent.messages);
+					// Keep live updates received while the chat and tags were loading.
+					for (const [id, message] of Object.entries(history.messages)) {
+						if (initialHistory.messages[id] !== message)
+							chatContent.history.messages[id] = { ...chatContent.history.messages[id], ...message };
+					}
+					if (history.currentId !== initialHistory.currentId)
+						chat.current_message_id = history.currentId;
+					history = chatContent.history;
+					if (chat?.current_message_id && history?.messages?.[chat.current_message_id]) {
+						history.currentId = chat.current_message_id;
+					}
+
+					treeIndex = loadedChat.tree_index ?? null;
+					windowMeta = loadedChat.window_meta ?? null;
+					if (Array.isArray(windowMeta?.checkpoints)) {
+						echoChatCheckpoints.update((all) => ({
+							...all,
+							[id]: windowMeta!.checkpoints
+						}));
+					}
+
+					// Sanitize history: repair orphaned references and structurally-malformed
+					// nodes from failed regenerations (#24424, #24157, #20474)
+					sanitizeHistory(history, treeIndex);
+
+					chatTitle.set(chatContent.title);
+
+					params = structuredClone(chatContent?.params ?? {});
+					delete params.note_id;
+					chatFiles = structuredClone(chatContent?.files ?? []);
+
+					// Load tasks from chat-level DB field
+					chatTasks = chat?.tasks ?? [];
+
+					autoScroll = true;
+
+					// Mark all non-current assistant messages as done
+					if (history.currentId) {
+						for (const message of Object.values(history.messages)) {
+							if (
+								message &&
+								message.role === 'assistant' &&
+								message.id !== history.currentId &&
+								message.done !== false
+							) {
+								message.done = true;
+							}
+						}
+					}
+
+					// Reconcile active tasks with message state:
+					// If the response is already done, remaining tasks are just background
+					// work (follow-ups, title gen) that shouldn't block the input.
+					const activeTaskIds = taskIds;
+					const currentMessage = history.currentId ? history.messages[history.currentId] : null;
+					noteChatDebug('task reconciliation completed', {
+						pendingTaskCount: pendingTaskIds.length,
+						hasCurrentMessage: !!currentMessage
+					});
+					const responseComplete = currentMessage?.role === 'assistant' && currentMessage?.done;
+
+					if (taskIds === activeTaskIds) {
+						if (pendingTaskIds.length > 0 && !responseComplete) {
+							taskIds = pendingTaskIds;
+						} else {
+							taskIds = null;
+							// No active tasks and message incomplete → generation was interrupted
+							if (pendingTaskIds.length === 0) {
+								for (const message of Object.values(history.messages)) {
+									if (
+										message?.role === 'assistant' &&
+										(message.user_id ?? chat?.user_id) === $user?.id &&
+										!message.done &&
+										!messageHasPendingAskUser(message) &&
+										!message.output?.some(
+											(item) => item?.type === 'function_call' && item?.status === 'pending'
+										)
+									) {
+										message.done = true;
+										history = history;
+									}
 								}
 							}
 						}
 					}
-				}
 
-				if (signal.aborted) return;
-				if (loading) {
-					if (chatIdProp && !$temporaryChatEnabled) updateLastReadAt(chatIdProp);
-
-					const restored = await restoreChatInput(
-						sessionStorage.getItem(`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`)
-					);
 					if (signal.aborted) return;
-					await setDefaults(restored);
-					if (signal.aborted) return;
+					if (loading) {
+						if (chatIdProp && !$temporaryChatEnabled) updateLastReadAt(chatIdProp);
 
-					const lastMessage = history.currentId ? history.messages[history.currentId] : null;
-					if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.done) {
-						await processNextInQueue(chatIdProp);
+						const restored = await restoreChatInput(
+							sessionStorage.getItem(`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`)
+						);
+						if (signal.aborted) return;
+						await setDefaults(restored);
+						if (signal.aborted) return;
+
+						const lastMessage = history.currentId ? history.messages[history.currentId] : null;
+						if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.done) {
+							await processNextInQueue(chatIdProp);
+						}
+						if (signal.aborted) return;
+						loading = false;
+						await tick();
+						if (signal.aborted) return;
+						messageInput?.focus({ preventScroll: true });
 					}
-					if (signal.aborted) return;
-					loading = false;
-					await tick();
-					if (signal.aborted) return;
-					messageInput?.focus({ preventScroll: true });
+					return true;
+				} else {
+					console.warn('[note-chat] chat response missing chat payload', {
+						chatIdProp,
+						activeChatId: $chatId,
+						chat
+					});
 				}
-				return true;
-			} else {
-				console.warn('[note-chat] chat response missing chat payload', {
-					chatIdProp,
-					activeChatId: $chatId,
-					chat
-				});
+			}
+			console.warn('[note-chat] no chat returned from getChatById', {
+				chatIdProp,
+				activeChatId: $chatId
+			});
+			chat = null;
+			if (!embedded) await goto('/');
+			else loading = false;
+			return false;
+		} catch (error) {
+			console.error('[Chat] Unexpected error in loadChat', {
+				chatIdProp,
+				activeChatId: $chatId,
+				error
+			});
+			if ($chatId === chatIdProp && !signal?.aborted) {
+				toast.error(`${error}`);
+			}
+			return false;
+		} finally {
+			if (($chatId === chatIdProp || $chatId === id) && !signal?.aborted) {
+				loading = false;
 			}
 		}
-		console.warn('[note-chat] no chat returned from getChatById', {
-			chatIdProp,
-			activeChatId: $chatId
+	};
+
+	const mergeWindowMessages = (incomingMessages: Record<string, any> = {}) => {
+		for (const [mid, msg] of Object.entries(incomingMessages)) {
+			const existing = history.messages[mid];
+			if (existing && !existing._echoLazyDetails) {
+				continue;
+			}
+			history.messages[mid] = msg;
+		}
+	};
+
+	const applyWindowSliceMetadata = (id: string, slice: any) => {
+		if (slice.tree_index) {
+			treeIndex = slice.tree_index;
+		}
+		windowMeta = {
+			...(windowMeta ?? {}),
+			windowed: true,
+			has_older: Boolean(slice.has_older),
+			oldest_loaded_id: slice.oldest_loaded_id ?? windowMeta?.oldest_loaded_id ?? null,
+			checkpoints: slice.checkpoints ?? windowMeta?.checkpoints ?? []
+		};
+		if (Array.isArray(slice.checkpoints)) {
+			echoChatCheckpoints.update((all) => ({
+				...all,
+				[id]: slice.checkpoints
+			}));
+		}
+		sanitizeHistory(history, treeIndex);
+		history = history;
+	};
+
+	const loadOlderWindow = async (opts?: { beforeId?: string; toCheckpointId?: string }) => {
+		const id = $chatId;
+		if (!id || $temporaryChatEnabled) return;
+		const slice = await getEchoChatWindow(
+			id,
+			{
+				beforeId: opts?.beforeId ?? windowMeta?.oldest_loaded_id ?? undefined,
+				toCheckpointId: opts?.toCheckpointId
+			},
+			localStorage.token
+		).catch((err) => {
+			console.error('[Chat] loadOlderWindow failed', err);
+			toast.error(`${err}`);
+			return null;
 		});
-		chat = null;
-		if (!embedded) await goto('/');
-		else loading = false;
-		return false;
+		if ($chatId !== id || !slice) return;
+		mergeWindowMessages(slice.messages ?? {});
+		applyWindowSliceMetadata(id, slice);
+	};
+
+	const ensureBranchLoaded = async (targetId: string) => {
+		const id = $chatId;
+		if (!id || !targetId || $temporaryChatEnabled || history.messages[targetId]) return;
+		const slice = await getEchoChatWindow(id, { targetId }, localStorage.token).catch((err) => {
+			console.error('[Chat] ensureBranchLoaded failed', err);
+			toast.error(`${err}`);
+			return null;
+		});
+		if ($chatId !== id || !slice) return;
+		mergeWindowMessages(slice.messages ?? {});
+		applyWindowSliceMetadata(id, slice);
+	};
+
+	const ensureMessageDetails = async (messageId: string) => {
+		const id = $chatId;
+		if (!id || !messageId || $temporaryChatEnabled) return;
+		const existing = history.messages?.[messageId];
+		if (!existing?._echoLazyDetails || inFlightMessageDetails.has(messageId)) return;
+		inFlightMessageDetails.add(messageId);
+		try {
+			const res = await fetchEchoMessageDetails(id, [messageId], localStorage.token).catch(
+				(err) => {
+					console.error('[Chat] ensureMessageDetails failed', err);
+					return null;
+				}
+			);
+			if ($chatId !== id || !res) return;
+			const fullMsg = res?.messages?.[messageId];
+			if (fullMsg) {
+				const mergedMsg = {
+					...existing,
+					...fullMsg
+				};
+				delete mergedMsg._echoLazyDetails;
+				history.messages[messageId] = mergedMsg;
+				history = history;
+			}
+		} finally {
+			inFlightMessageDetails.delete(messageId);
+		}
 	};
 
 	const scrollToBottom = async (behavior = 'auto') => {
@@ -3257,9 +3358,6 @@
 			for (const message of res.messages) {
 				const updated = {
 					...history.messages[message.id],
-					...(history.messages[message.id].content !== message.content
-						? { originalContent: history.messages[message.id].content }
-						: {}),
 					...(typeof message.content === 'string' && history.messages[message.id].output?.length
 						? { output: setOutputText(history.messages[message.id].output, message.content) }
 						: {}),
@@ -3273,12 +3371,17 @@
 		}
 
 		if (changed && !$temporaryChatEnabled) {
-			chat = await updateChatById(localStorage.token, _chatId, {
-				models: selectedModels,
-				messages: createMessagesList(history, responseMessageId),
-				history: history,
-				files: chatFiles
-			});
+			await updateChatById(
+				localStorage.token,
+				_chatId,
+				{
+					models: selectedModels,
+					history: history,
+					files: chatFiles
+				},
+				null,
+				{ light: true }
+			);
 
 			await refreshChatList(localStorage.token);
 		}
@@ -3519,7 +3622,6 @@
 
 		if (usage) {
 			message.usage = usage;
-			captureUsageCheckpoint(message);
 		}
 
 		history.messages[message.id] = message;
@@ -3528,10 +3630,8 @@
 		if (done) {
 			message.done = true;
 			message.meta = { ...message.meta, response_ended_at: Date.now() / 1000 };
-			if ($contextCompactions[message.id] === 'in_progress') clearContextCompaction(message.id);
 			if (shared) return;
 			if (message.error) {
-				clearContextCompaction(message.id);
 				bridge?.update();
 				await processNextInQueue(chatId);
 				return;
@@ -3642,68 +3742,6 @@
 		return await sendMessage(history, userMessageId, {
 			modelId: bridgeRequest?.modelId ?? null
 		});
-	};
-
-	const handleManualCompact = async () => {
-		if (!contextCompactionEnabled) {
-			toast.message($i18n.t('Context compaction is disabled'));
-			return;
-		}
-
-		if (!$chatId || !history?.currentId) {
-			toast.message($i18n.t('No chat to compact'));
-			return;
-		}
-
-		const currentMessage = history.messages?.[history.currentId];
-		if (
-			generating ||
-			taskIds?.length ||
-			(currentMessage?.role === 'assistant' && !currentMessage.done)
-		) {
-			toast.warning($i18n.t('Wait for the current response to finish before compacting.'));
-			return;
-		}
-
-		const model = atSelectedModel?.id ?? selectedModels.find((modelId) => modelId);
-		// Preserve the former toast translation for i18n extraction.
-		// const toastId = toast.loading($i18n.t('Compacting context...'));
-		const compactChatId = $chatId;
-		const compactMessageId = history.currentId;
-		if ($contextCompactions[compactMessageId] === 'in_progress') return;
-		$contextCompactions = { ...$contextCompactions, [compactMessageId]: 'in_progress' };
-
-		try {
-			const result = await compactChatById(localStorage.token, compactChatId, model);
-			if ($chatId !== compactChatId) return;
-			serverContextUsage = result?.context_usage ?? serverContextUsage;
-
-			if (!result?.compacted) {
-				const skippedReason =
-					result?.reason === 'too_short'
-						? $i18n.t('Chat is too short to compact')
-						: result?.reason === 'empty'
-							? $i18n.t('No chat to compact')
-							: result?.reason === 'disabled'
-								? $i18n.t('Context compaction is disabled')
-								: $i18n.t('Nothing to compact');
-				toast.message(skippedReason);
-			}
-
-			await loadChat();
-			clearContextCompaction(compactMessageId);
-		} catch (error) {
-			if ($chatId === compactChatId) {
-				$contextCompactions = {
-					...$contextCompactions,
-					[compactMessageId]: {
-						error: String(error?.detail ?? error?.message ?? $i18n.t('Context compaction failed'))
-					}
-				};
-			}
-		} finally {
-			messageInput?.focus({ preventScroll: true });
-		}
 	};
 
 	const handleForkChat = async (messageId: string | null = null) => {
@@ -3862,11 +3900,6 @@
 			selectedModels = _selectedModels;
 		}
 
-		if (String(userPrompt).trim() === '/compact') {
-			clearCommandInput();
-			await handleManualCompact();
-			return { status: 'rejected' };
-		}
 		if (String(userPrompt).trim() === '/comments') {
 			clearCommandInput();
 			messageInput?.openComments();
@@ -4041,7 +4074,6 @@
 		}
 
 		let _chatId = JSON.parse(JSON.stringify($chatId));
-		_history = structuredClone(_history);
 
 		const responseMessageIds: Record<PropertyKey, string> = {};
 		if (!modelId && atSelectedModel) {
@@ -4079,11 +4111,8 @@
 				history.currentId = responseMessageId;
 
 				// Append messageId to childrenIds of parent message
-				if (parentId !== null && history.messages[parentId]) {
-					history.messages[parentId].childrenIds = [
-						...history.messages[parentId].childrenIds,
-						responseMessageId
-					];
+				if (parentId !== null) {
+					appendChildToWindowedHistory(history, treeIndex, parentId, responseMessageId);
 				}
 
 				responseMessageIds[`${modelId}-${modelIdx ? modelIdx : _modelIdx}`] = responseMessageId;
@@ -4098,8 +4127,8 @@
 
 		await tick();
 
-		// Re-clone history so sendMessageSocket gets the response messages we just added
-		_history = structuredClone(history);
+		// Shallow-snapshot history map in O(N) references instead of deep-cloning every message payload
+		_history = { ...history, messages: { ...history.messages } };
 
 		// Vision capability check
 		for (const mid of selectedModelIds) {
@@ -4309,7 +4338,6 @@
 						return {
 							id: message.id,
 							role: message.role,
-							contextSummary: message?.contextSummary,
 							content: [
 								{
 									type: 'text',
@@ -4328,7 +4356,6 @@
 					return {
 						id: message.id,
 						role: message.role,
-						contextSummary: message?.contextSummary,
 						content: message?.merged?.content ?? message.content,
 						model: message.model,
 						meta: message.meta
@@ -4594,8 +4621,9 @@
 			// Set all response messages to done
 			if (responseMessage?.parentId && history.messages[responseMessage.parentId]) {
 				for (const messageId of history.messages[responseMessage.parentId].childrenIds) {
-					history.messages[messageId].done = true;
-					clearContextCompaction(messageId);
+					if (history.messages[messageId]) {
+						history.messages[messageId].done = true;
+					}
 				}
 			}
 
@@ -4828,12 +4856,17 @@
 		if (isShared) return;
 		if ($chatId == _chatId) {
 			if (!$temporaryChatEnabled) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					models: selectedModels,
-					history: history,
-					messages: createMessagesList(history, history.currentId),
-					files: chatFiles
-				});
+				await updateChatById(
+					localStorage.token,
+					_chatId,
+					{
+						models: selectedModels,
+						history: history,
+						files: chatFiles
+					},
+					null,
+					{ light: true }
+				);
 			}
 		}
 	};
@@ -4853,15 +4886,31 @@
 		if (!models && equal(chatFiles, chat.chat?.files ?? [])) return;
 		const id = $chatId;
 
-		const res = await updateChatById(localStorage.token, id, {
-			files: chatFiles,
-			...(models ? { models } : {})
-		}).catch((err) => {
+		const res = await updateChatById(
+			localStorage.token,
+			id,
+			{
+				files: chatFiles,
+				...(models ? { models } : {})
+			},
+			null,
+			{ light: true }
+		).catch((err) => {
 			console.error('[controls autosave]', err);
 			return null;
 		});
 		// Refresh the dedupe baseline so a later revert still saves.
-		if (res && $chatId === id) chat = res;
+		if (res && $chatId === id && chat) {
+			chat = {
+				...chat,
+				updated_at: res.updated_at ?? chat.updated_at,
+				chat: {
+					...(chat.chat ?? {}),
+					files: structuredClone(chatFiles),
+					...(models ? { models } : {})
+				}
+			};
+		}
 	};
 
 	const MAX_DRAFT_LENGTH = 5000;
@@ -5206,7 +5255,9 @@
 			>
 				{#if loading}
 					<div class="flex items-center justify-center h-full w-full">
-						<Spinner className="size-5" />
+						{#if embedded || !fullWidthTabs}
+							<Spinner className="size-5" />
+						{/if}
 					</div>
 				{:else}
 					<FilesOverlay show={dragged} />
@@ -5333,6 +5384,12 @@
 										readOnly={isShared}
 										shareMode={chat?.chat?.share_mode ?? null}
 										bind:history
+										bind:treeIndex
+										bind:windowMeta
+										checkpoints={activeCheckpoints}
+										onLoadOlderWindow={loadOlderWindow}
+										onEnsureBranchLoaded={ensureBranchLoaded}
+										{ensureMessageDetails}
 										bind:autoScroll
 										bind:prompt
 										setInputText={(text) => {
@@ -5409,10 +5466,7 @@
 										bind:dragged
 										dropzoneId={messageInputDropzoneId}
 										chatId={$chatId}
-										{contextUsage}
-										{contextCompactionEnabled}
 										{embedded}
-										compactHandler={handleManualCompact}
 										forkHandler={handleForkChat}
 										{toolApprovalMode}
 										onToolApprovalModeChange={handleToolApprovalModeChange}
@@ -5509,10 +5563,7 @@
 										bind:dragged
 										dropzoneId={messageInputDropzoneId}
 										chatId={$chatId}
-										{contextUsage}
-										{contextCompactionEnabled}
 										{embedded}
-										compactHandler={handleManualCompact}
 										forkHandler={handleForkChat}
 										{toolApprovalMode}
 										onToolApprovalModeChange={handleToolApprovalModeChange}

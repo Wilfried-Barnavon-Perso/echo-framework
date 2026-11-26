@@ -4,14 +4,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - CORE SECURITY & SSO
-VERSION : 6.18.23.1
+VERSION : 6.22.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Lecture dynamique .secrets/.env (get_instance_secret) et vérification temps constant hmac.compare_digest sur X-Echo-Sso-Secret.
 # 6.18.23.1: Ajout du helper centralisé open_sqlite_db (PRAGMA journal_mode=WAL, synchronous=NORMAL, busy_timeout et fermeture garantie) et bascule de check_sso_auth.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 from contextlib import contextmanager
+import hmac
 import os
 import sqlite3
 import time
@@ -19,18 +21,48 @@ from flask import request, session  # pyright: ignore[reportMissingImports]
 from core.config import (
     DOCKER_AVAILABLE,
     HOST_GATEWAY,
+    SECRETS_DIR,
     WEBUI_DB_PATH,
     app,
     paramiko,
+    parse_env_content,
+    read_host_env_dict,
 )
 from core.settings_io import get_auth_settings
 
 __all__ = [
     'open_sqlite_db',
+    'parse_env_content',
+    'read_host_env_dict',
+    'get_instance_secret',
+    'get_admin_settings_crypto_key',
     'generate_complex_temp_password',
     'check_sso_auth',
     'change_system_password',
 ]
+
+
+def get_instance_secret(key_name: str) -> str:
+    """Lit dynamiquement un secret d'instance depuis /app/secrets/.env (repli env ou legacy)."""
+    env_map = read_host_env_dict()
+    val = (env_map.get(key_name) or os.environ.get(key_name, "")).strip()
+    if not val and key_name == "ECHO_ADMIN_PASSWORD":
+        legacy_file = os.path.join(SECRETS_DIR, ".owui-admin-secret")
+        if os.path.isfile(legacy_file):
+            try:
+                with open(legacy_file, "r", encoding="utf-8", errors="ignore") as f_sec:
+                    val = f_sec.read().strip()
+            except OSError:
+                pass
+    return val
+
+
+def get_admin_settings_crypto_key() -> str:
+    """Retourne la clé maître utilisée pour chiffrer les secrets locaux de settings.json."""
+    return (
+        get_instance_secret("ECHO_BACKUP_ENCRYPTION_KEY")
+        or get_instance_secret("ECHO_SSO_SECRET")
+    )
 
 
 @contextmanager
@@ -86,7 +118,7 @@ def check_sso_auth():
         return
 
     # Si le WAF n'est pas configuré, on laisse Flask poursuivre vers la page de login locale
-    expected_secret = os.environ.get("ECHO_SSO_SECRET", "")
+    expected_secret = get_instance_secret("ECHO_SSO_SECRET")
     if not expected_secret:
         return 
 
@@ -98,9 +130,8 @@ def check_sso_auth():
 
     webui_user = request.headers.get("X-Webui-User")
     sso_secret = request.headers.get("X-Echo-Sso-Secret", "").strip()
-    expected_secret = expected_secret.strip()
-    
-    if sso_secret != expected_secret:
+
+    if not sso_secret or not hmac.compare_digest(sso_secret, expected_secret):
         return "<h1>Accès Refusé</h1><p>Absence de validation WAF ou discordance de la clé SSO.</p>", 401
     
     if not webui_user:

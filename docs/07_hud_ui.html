@@ -116,6 +116,12 @@
         <em>Administration &rarr; Réglages</em>. Par ailleurs, lorsqu'ECHO patiente sur un délai programmé, un badge
         minuteur s'affiche directement dans la barre supérieure pour suivre le compte à rebours en temps réel.
       </li>
+      <li>
+        <strong>Pilule Écho en direct et fenêtrage fluide :</strong> le sélecteur unique affiche désormais simplement
+        <strong>Écho</strong> accompagné en direct du palier cognitif actif (infobulle <em>Cortex Auto/Manual</em>). Dans
+        les longues discussions, l'interface n'affiche d'abord que la fenêtre récente et les marqueurs de compaction,
+        avec chargement progressif de l'historique antérieur à la demande.
+      </li>
     </ul>
 
     <figure class="doc-figure">
@@ -146,11 +152,11 @@
 
       <h4>2. Routeurs Spécialisés &amp; Intégration SvelteKit (<code>16-docker-echo-webui</code>)</h4>
       <ul>
-        <li><strong><code>routers/cognition.py</code> (<code>v6.19.0.1</code>) :</strong> Snapshot lecture seule <code>/{chat_id}/snapshot</code>, flux SSE <code>/{chat_id}/stream</code> piloté par <code>get_cognition_seq</code>, flux WebSocket binaire <code>/{chat_id}/browser-ws</code> (header 16 octets Big-Endian <code>!BBHHHHIH</code> + JPEG), clips <code>/clip</code>, rétention <code>/retain</code> et pilotage <code>/message</code> / <code>/control</code> (incluant <code>purge_now</code>).</li>
-        <li><strong><code>routers/llm_auth.py</code> (<code>v6.18.23.1</code>) &amp; <code>routers/chat_actions.py</code> (<code>v6.18.23.1</code>) :</strong> Routeurs souverains dédiés respectivement à l'authentification des fournisseurs LLM (<code>LlmAuth.svelte</code>) et à la reprise distillée en nouveau chat (<code>ChatMenu.svelte</code>).</li>
+        <li><strong><code>routers/cognition.py</code> (<code>v6.21.9.1</code>) :</strong> Snapshot lecture seule <code>/{chat_id}/snapshot</code> (temps réel poussé par <code>echo_cognition_update</code> sur <code>/echo/v1/wm/ws</code>), flux WebSocket binaire <code>/{chat_id}/browser-ws</code> (header 16 octets Big-Endian <code>!BBHHHHIH</code> + JPEG), clips <code>/clip</code>, rétention <code>/retain</code> et pilotage <code>/message</code> / <code>/control</code> (incluant <code>purge_now</code>).</li>
+        <li><strong><code>routers/llm_auth.py</code> (<code>v6.21.8.1</code>) &amp; <code>routers/chat_actions.py</code> (<code>v6.22.0.1</code>) :</strong> Routeurs souverains dédiés respectivement à l'authentification des fournisseurs LLM (<code>LlmAuth.svelte</code>), à la reprise distillée en nouveau chat (<code>ChatMenu.svelte</code>) et au fenêtrage serveur (<code>chat_windowing.py</code> : <code>GET /{chat_id}/window</code>, <code>POST /{chat_id}/messages/details</code>).</li>
         <li><strong><code>routers/codex.py</code> (<code>v6.18.18.1</code>) :</strong> Opérations Git Dulwich déportées via <code>asyncio.to_thread</code> sous verrou <code>get_codex_lock</code>, édition CodeMirror 6 (<code>EchoCodexEditor.svelte</code> + <code>codexLanguages.ts</code>), téléchargement avec MIME IANA + <code>X-Content-Type-Options: nosniff</code> et défense XSS (<code>application/octet-stream</code> pour HTML/SVG).</li>
         <li><strong><code>routers/embeds.py</code> &amp; <code>FullHeightIframe.svelte</code> :</strong> Externalisation des embeds et binaires via <code>echo-embed://</code> et <code>echo-asset://</code> avec pont <code>postMessage</code> (<code>echo:fetch-asset</code> &rarr; <code>echo:asset-blob</code>).</li>
-        <li><strong>Découplage DB en vol &amp; Composants UI :</strong> Les écritures intermédiaires passent par <code>ChatMessage</code> (<code>sync_chat_blob=False</code>) jusqu'au scellement final du tour ; les interactions utilisateur passent par <code>AskUserCard.svelte</code> (<code>request:user_input</code>), les délais programmés par <code>EchoWaitTimer.svelte</code> (<code>echo_wait_timer</code>) et les notifications par <code>InboxPanel.svelte</code> / <code>routers/notifications.py</code>.</li>
+        <li><strong>Découplage DB en vol, Compaction UI, Edge &amp; Service Worker :</strong> Les écritures intermédiaires passent par <code>ChatMessage</code> (<code>sync_chat_blob=False</code>) jusqu'au scellement final du tour ; les bornes de compaction multi-checkpoints s'appuient sur <code>EchoCompactionBoundary.svelte</code> (remplaçant <code>ContextCompactionLabel.svelte</code>), l'indicateur d'embedding WebGPU sur <code>EchoEdgeEmbedding.svelte</code>, la mise en cache statique PWA sur <code>src/service-worker.ts</code> (<code>Cache-Control: no-store</code>), les interactions utilisateur sur <code>AskUserCard.svelte</code> (<code>request:user_input</code>), les délais programmés sur <code>EchoWaitTimer.svelte</code> (<code>echo_wait_timer</code>) et les notifications sur <code>InboxPanel.svelte</code> / <code>routers/notifications.py</code>.</li>
       </ul>
     </details>
 
@@ -160,7 +166,7 @@
       <a href="08_cerveau_cognitif.html">8. La Cognition &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

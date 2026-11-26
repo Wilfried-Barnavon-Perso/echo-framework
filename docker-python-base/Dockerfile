@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Dépendances Python communes (socle API + utilitaires transverses)
 RUN --mount=type=cache,target=/root/.cache/pip \
     PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install \
+    cryptography \
     fastapi \
     uvicorn \
     websockets \
@@ -31,5 +32,5 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python-multipart
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="6.18.6.1"
+LABEL version="6.21.10.1"
 LABEL description="ECHO Shared Python Base Image"

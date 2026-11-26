@@ -126,7 +126,6 @@
 						ui: { ...current.ui, visibility },
 						features: {
 							...current.features,
-							enable_context_compaction: chatConfig.ENABLE_CONTEXT_COMPACTION,
 							enable_tool_permissions: chatConfig.ENABLE_TOOL_PERMISSIONS,
 							enable_tool_permissions_auto:
 								chatConfig.ENABLE_TOOL_PERMISSIONS && chatConfig.ENABLE_TOOL_PERMISSIONS_AUTO,

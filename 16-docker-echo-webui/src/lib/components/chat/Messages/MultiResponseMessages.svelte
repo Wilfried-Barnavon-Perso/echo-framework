@@ -61,6 +61,7 @@
 
 	export let topPadding = false;
 	export let onInsertToNote: ((content: string) => void) | null = null;
+	export let ensureMessageDetails: ((id: string) => Promise<void>) | null = null;
 
 	const dispatch = createEventDispatcher();
 
@@ -289,6 +290,7 @@
 									{selectedModels}
 									isLastMessage={true}
 									siblings={groupedMessageIds[selectedModelIdx].messageIds}
+									{ensureMessageDetails}
 									gotoMessage={(message, messageIdx) => gotoMessage(selectedModelIdx, messageIdx)}
 									showPreviousMessage={() => showPreviousMessage(selectedModelIdx)}
 									showNextMessage={() => showNextMessage(selectedModelIdx)}
@@ -353,6 +355,7 @@
 										{selectedModels}
 										isLastMessage={true}
 										siblings={groupedMessageIds[modelIdx].messageIds}
+										{ensureMessageDetails}
 										gotoMessage={(message, messageIdx) => gotoMessage(modelIdx, messageIdx)}
 										showPreviousMessage={() => showPreviousMessage(modelIdx)}
 										showNextMessage={() => showNextMessage(modelIdx)}

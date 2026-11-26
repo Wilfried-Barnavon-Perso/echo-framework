@@ -142,7 +142,6 @@
 
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
-	export let compactHandler: Function = () => {};
 	export let forkHandler: Function = () => {};
 	export let chatId = '';
 	export let inputId = 'chat-input';
@@ -152,8 +151,6 @@
 	$: isTemporary = temporary ?? $temporaryChatEnabled;
 	export let terminalContext: TerminalContext | null = null;
 	export let terminalSelectionEnabled = true;
-	export let contextUsage = null;
-	export let contextCompactionEnabled = false;
 	export let embedded = false;
 	export let callActive = false;
 	export let callEnabled = true;
@@ -197,7 +194,6 @@
 		((taskIds && taskIds.length > 0) ||
 			(history.currentId && history.messages[history.currentId]?.done != true) ||
 			generating);
-	$: canCompact = !!history?.currentId;
 	$: canComments = !!(
 		!embedded &&
 		$config?.features?.enable_comments &&
@@ -1436,7 +1432,7 @@
 					}
 
 					if (
-						['compact', 'fork', 'comments', 'settings', 'temporary'].includes(props?.id)
+						['fork', 'comments', 'settings', 'temporary'].includes(props?.id)
 					) {
 						editor.chain().focus().deleteRange(range).run();
 						return;
@@ -1456,8 +1452,6 @@
 				},
 				render: getSuggestionRenderer(CommandSuggestionList, {
 					i18n,
-					canCompact: () => !!history?.currentId && contextCompactionEnabled,
-					compactDisabled: () => isActive,
 					canComments: () => canComments,
 					canFork: () =>
 						!!history?.currentId &&
@@ -1467,8 +1461,6 @@
 					canTemporary: () => canToggleTemporary,
 					hasChatContent: hasChatContent,
 					temporaryEnabled: () => isTemporary === true,
-					contextUsage: () => contextUsage,
-					onCompact: compactHandler,
 					onComments: openComments,
 					onFork: forkHandler,
 					onSettings: () => showSettings.set(true),
@@ -1596,6 +1588,9 @@
 	type={selectedValvesType}
 	id={selectedValvesItemId ?? null}
 	on:save={async () => {
+		if (selectedValvesType === 'function' && selectedValvesItemId === 'echo_orchestrator') {
+			void modelSelector?.refreshCognitiveMode?.();
+		}
 		await tick();
 	}}
 	on:close={() => {
@@ -2461,9 +2456,10 @@
 								</div>
 
 								<div class="echo-composer-right flex items-center gap-1 shrink-0">
-									<div class="flex min-w-0 items-center">
+									<div class="echo-composer-model-pill flex min-w-0 items-center">
 										<ModelSelector
 											bind:this={modelSelector}
+											chatId={chatId || history?.currentId || ''}
 											multipleEnabled={multipleModels}
 											bind:selectedModels
 											{onModelSelect}
@@ -2678,6 +2674,9 @@
 		.echo-composer-hud :global(.echo-webgpu-label) {
 			display: none;
 		}
+		.echo-composer-model-pill :global(.echo-model-active-name) {
+			display: none;
+		}
 	}
 
 	@container (max-width: 519px) {
@@ -2696,6 +2695,9 @@
 		.echo-composer-left {
 			flex: 1 1 0%;
 			min-width: 0;
+		}
+		.echo-composer-model-pill {
+			display: none;
 		}
 	}
 </style>

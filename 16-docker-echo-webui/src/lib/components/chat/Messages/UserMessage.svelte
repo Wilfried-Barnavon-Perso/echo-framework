@@ -12,15 +12,15 @@
 	import { user as _user } from '$lib/stores';
 	import {
 		copyToClipboard as _copyToClipboard,
+		createMessageSyncTracker,
 		formatMessageTimestamp,
 		formatMessageTimestampFull,
-		isRasterImageContentType
+		isRasterImageContentType,
+		syncClonedMessage
 	} from '$lib/utils';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
-	import equal from 'fast-deep-equal';
 
 	import Name from './Name.svelte';
-	import ContextCompactionLabel from './ContextCompactionLabel.svelte';
 	import ProfileImage from './ProfileImage.svelte';
 	import ProfilePreview from '$lib/components/channel/Messages/Message/ProfilePreview.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -31,8 +31,6 @@
 	import SubagentResultRow from './SubagentResultRow.svelte';
 
 	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
-	const contextCompactions =
-		getContext<Writable<Record<string, 'in_progress' | { error: string }>>>('contextCompactions');
 	export let user;
 
 	export let chatId;
@@ -70,6 +68,7 @@
 	let editScrollContainer: HTMLDivElement;
 
 	let message = structuredClone(history.messages[messageId]);
+	const syncTracker = createMessageSyncTracker(history.messages[messageId]);
 	$: canBranch = ![...selectedModels, ...(message.models ?? [])].some((id) =>
 		id.startsWith('agent:')
 	);
@@ -85,15 +84,9 @@
 	$: isOwn = Boolean($_user?.id && authorId === $_user.id);
 	$: authorName = author?.name || $i18n.t('Unknown User');
 	let timerExpanded = false;
-	$: if (history.messages) {
-		const source = history.messages[messageId];
-		if (source) {
-			if (message.content !== source.content) {
-				message = structuredClone(source);
-			} else if (!equal(message, source)) {
-				message = structuredClone(source);
-			}
-		}
+	$: {
+		const next = syncClonedMessage(history?.messages?.[messageId], syncTracker);
+		if (next) message = next;
 	}
 	const copyToClipboard = async (text) => {
 		const res = await _copyToClipboard(text);
@@ -207,14 +200,6 @@
 					<Name>{isOwn && !$settings.showUsername ? $i18n.t('You') : authorName}</Name>
 				{/if}
 			</div>
-		{/if}
-
-		{#if message.contextSummary || $contextCompactions?.[messageId]}
-			<ContextCompactionLabel
-				summary={message.contextSummary}
-				status={$contextCompactions?.[messageId]}
-				{compactPreview}
-			/>
 		{/if}
 
 		<div class="chat-{message.role} w-full min-w-full">

@@ -18,6 +18,7 @@
 	import { settings } from '$lib/stores';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
+	const echoLazyExpand = getContext<(() => Promise<void> | void) | undefined>('echoLazyExpand');
 
 	export let id = '';
 	export let tokens: Array<{
@@ -216,11 +217,13 @@
 			aria-expanded={open}
 			on:click={() => {
 				open = !open;
+				if (open) echoLazyExpand?.();
 			}}
 			on:keydown={(event) => {
 				if (event.key === 'Enter' || event.key === ' ') {
 					event.preventDefault();
 					open = !open;
+					if (open) echoLazyExpand?.();
 				}
 			}}
 		>

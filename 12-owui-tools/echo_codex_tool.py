@@ -3,16 +3,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.21.1.1
+version: 6.23.10.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.10.1: Masquage bijectif Base64, plafond net 128 Ko, rejet MAX_TOKENS dans edit_codex, alignement ECHO_CODEX_EDIT_TIMEOUT, truncated_lines dans read_codex et allow_existing sandbox.
 # 6.21.1.1: Correction de l'appel get_echo_session_path(uid, cid, CODEX_DIR_NAME) dans transfer_codex.
 # 6.19.0.1: Isolation paresseuse des accès sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 # 6.15.0.1: Ajout de process_plan et close_plan dans l'indication _check_generic_writable du workspace 'plans'.
 # 6.12.0.1: Ajout create_codex_directory, move_codex, transfer_codex (Option A), list_codex(path, recursive), delete_codex(recursive), garde restore_codex anti-sandbox, recherche récursive et délégation sync_codex_registry_* vers echo_codex_git.
-# 6.7.11.1: Délégation du fenêtrage read_codex à paginate_lines_window et suppression des skip_truncation=True redondants.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -24,7 +24,14 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
-from echo_core import echo_tool, paginate_lines_window, wrap_tool_output
+from echo_core import (
+    dehydrate_inline_base64_blobs,
+    echo_tool,
+    extract_llm_response_text,
+    paginate_lines_window,
+    rehydrate_inline_base64_blobs,
+    wrap_tool_output,
+)
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -42,6 +49,8 @@ from echo_constants import (
     CODEX_WORKSPACE_SANDBOX,
     CODEX_WRITABLE_WORKSPACE_LITERAL,
     ECHO_API_MAX_RETRIES,
+    ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS,
+    ECHO_CODEX_EDIT_TIMEOUT,
     ECHO_CODEX_MAX_READ_BYTES,
     ECHO_CODEX_MAX_READ_LINES,
     ECHO_CODEX_WORKSPACES,
@@ -71,7 +80,7 @@ from echo_paths import get_codex_lock, get_echo_session_path, scope_subagent_san
 class Tools:
     class Valves(BaseModel):
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
-        CODEX_EDIT_TIMEOUT: int = Field(default=600, description="Timeout sub-chat édition (secondes).")
+        CODEX_EDIT_TIMEOUT: int = Field(default=ECHO_CODEX_EDIT_TIMEOUT, description="Timeout sub-chat édition (secondes).")
 
     class UserValves(BaseModel):
         CODEX_EDIT_MODEL: str = Field(
@@ -106,14 +115,23 @@ class Tools:
         return uid, effective_cid, repo, state, is_remote
 
     @staticmethod
-    def _scope_sandbox_path(repo: CodexRepo, path: str, for_write: bool = False) -> str:
+    def _scope_sandbox_path(
+        repo: CodexRepo,
+        path: str,
+        for_write: bool = False,
+        allow_existing: bool = False,
+    ) -> str:
         if getattr(repo, "workspace", "") != CODEX_WORKSPACE_SANDBOX or not path:
             return path
         sub_sid = (ECHO_SUBAGENT_CONTEXT.get() or {}).get("sub_sid") or ""
         if not sub_sid:
             return path
         return scope_subagent_sandbox_path(
-            path, sub_sid=sub_sid, sandbox_root=repo.repo_path, for_write=for_write
+            path,
+            sub_sid=sub_sid,
+            sandbox_root=repo.repo_path,
+            for_write=for_write,
+            allow_existing=allow_existing,
         )
 
     async def _resolve_and_verify_file(
@@ -213,21 +231,6 @@ class Tools:
                 "head_result": result,
                 "file_info": result,
             }, None
-
-    def _extract_llm_text(self, data: dict) -> str:
-        """Extrait le texte des candidates (filtrage thought parts)."""
-        candidates = data.get("candidates", [])
-        if not candidates:
-            return ""
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text_parts = [p.get("text", "") for p in parts if not p.get("thought")]
-        raw = "".join(text_parts).strip()
-        # Nettoyage des blocs markdown enveloppants (```lang ... ```)
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            if len(lines) >= 3 and lines[-1].strip() == "```":
-                return "\n".join(lines[1:-1])
-        return raw
 
     def _emit_urn_directive(self, state: EchoStateManager):
         """Enregistre une directive AEC ultra-concise (Haut SNR, ~35 tokens) pour le prochain tour du Modèle avec protection anti-doublon intra-tour."""
@@ -382,7 +385,9 @@ class Tools:
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
         try:
-            safe_file = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=True))
+            safe_file = repo._secure_path(
+                self._scope_sandbox_path(repo, filename, for_write=True, allow_existing=True)
+            )
         except ValueError as e:
             return wrap_tool_output(
                 text=f"❌ {e}",
@@ -444,8 +449,33 @@ class Tools:
             await events.status(f"🧠 Édition assistée de {safe_file}...", done=False)
 
             content = existing["content"]
+            masked_content, b64_slots = dehydrate_inline_base64_blobs(content)
+            if len(masked_content) > ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS:
+                return wrap_tool_output(
+                    text=(
+                        f"❌ Action refusée : Le contenu textuel net de `{safe_file}` ({len(masked_content)} caractères) "
+                        f"dépasse le plafond d'édition assistée ({ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS} caractères). "
+                        "Le Modèle DOIT effectuer la modification par script Python via `code_executor` dans `workspace='sandbox'` "
+                        "(après `transfer_codex` si nécessaire) puis promouvoir le résultat."
+                    ),
+                    status={
+                        "status": "error",
+                        "error_code": "file_too_large_for_assisted_edit",
+                        "filename": safe_file,
+                        "net_chars": len(masked_content),
+                        "max_chars": ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS,
+                    },
+                )
+
             original_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            user_prompt = f"## Document complet\n```{lang}\n{content}\n```\n\n## Instructions\n{instructions}"
+            slot_notice = (
+                "\n\nNOTE SYSTÈME : Les ressources Data URI Base64 sont représentées par des jetons immuables "
+                "`__ECHO_B64_SLOT_<id>_<hash>__`. Le Modèle DOIT conserver ces jetons strictement intacts "
+                "partout où la ressource correspondante est conservée."
+                if b64_slots
+                else ""
+            )
+            user_prompt = f"## Document complet\n```{lang}\n{masked_content}\n```\n\n## Instructions\n{instructions}{slot_notice}"
 
             edit_model = self.user_valves.CODEX_EDIT_MODEL or "MODEL_APOLLO"
             payload = {
@@ -472,10 +502,40 @@ class Tools:
                 await events.status("❌ Édition échouée — aucun modèle disponible.", done=True)
                 return "❌ Échec : aucun modèle disponible pour l'édition."
 
-            modified = self._extract_llm_text(data)
+            modified, is_truncated, finish_reason = extract_llm_response_text(data, strip_fences=True)
+            if is_truncated:
+                await events.status(f"❌ Édition interrompue ({finish_reason}) — fichier préservé intact.", done=True)
+                return wrap_tool_output(
+                    text=(
+                        f"❌ Édition annulée : La sortie de l'agent éditeur pour `{safe_file}` a été tronquée "
+                        f"(`finishReason={finish_reason}`). Le fichier a été préservé intact."
+                    ),
+                    status={
+                        "status": "error",
+                        "error_code": "output_truncated_max_tokens",
+                        "finish_reason": finish_reason,
+                        "filename": safe_file,
+                    },
+                )
             if not modified:
                 await events.status("❌ L'agent éditeur n'a produit aucun contenu.", done=True)
                 return "❌ L'agent éditeur n'a pas retourné de contenu exploitable."
+            if b64_slots:
+                modified, corrupted_slots = rehydrate_inline_base64_blobs(modified, b64_slots)
+                if corrupted_slots:
+                    await events.status("❌ Marqueur Base64 altéré — fichier préservé intact.", done=True)
+                    return wrap_tool_output(
+                        text=(
+                            f"❌ Édition annulée : Un ou plusieurs jetons Base64 ont été altérés ou laissés non résolus "
+                            f"dans `{safe_file}` ({', '.join(corrupted_slots[:5])}). Le fichier a été préservé intact."
+                        ),
+                        status={
+                            "status": "error",
+                            "error_code": "corrupted_base64_placeholder",
+                            "filename": safe_file,
+                            "corrupted_slots": corrupted_slots,
+                        },
+                    )
 
             msg = commit_message or f"AI edit: {instructions[:60]}"
             line_count = modified.count("\n") + 1
@@ -541,7 +601,9 @@ class Tools:
 
         async with get_codex_lock(uid, cid):
             try:
-                safe_target = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=True))
+                safe_target = repo._secure_path(
+                    self._scope_sandbox_path(repo, filename, for_write=True, allow_existing=True)
+                )
             except ValueError as e:
                 return wrap_tool_output(
                     text=f"❌ {e}",
@@ -714,6 +776,7 @@ class Tools:
                 "end_line": actual_e,
                 "has_more": has_more,
                 "next_start_line": next_s,
+                "truncated_lines": page.get("truncated_lines", []),
                 "is_remote": is_remote,
                 "target_chat_id": cid if is_remote else None,
                 "commit_hash": commit_hash[:12] if commit_hash else "HEAD",

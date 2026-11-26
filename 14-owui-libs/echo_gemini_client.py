@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 6.7.16.1
+version: 6.23.3.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.3.1: Repli automatique de call_cascade sur PromptBlockedError (faux positif isolé d'un modèle) et levée finale de PromptBlockedError uniquement si toute la cascade bloque.
+# 6.23.2.1: Ajout de PromptBlockedError et describe_empty_llm_response (diagnostic agnostique promptFeedback/finishReason et propagation sans cascade dans call/call_cascade).
+# 6.21.8.1: En-têtes AI Studio SDK (ECHO_AISTUDIO_API_CLIENT + x-goog-api-client), suppression x-goog-user-project en OAuth2 consumer, request_id dans wrapped_payload et corrélation diagnostic trace-id/sherlog (_format_google_diag_headers) sur HTTP >= 400.
 # 6.7.16.1: Factorisation de ensure_session_rag_collection (4 index payload keyword), clone_file_rag_points_to_chat et delete_file_rag_points_sync.
 # 5.239.17.1: Timeouts HTTP/2 granulaires via build_httpx_timeout (600s Non-Stream / 300s Stream) et extraction du délai serveur Retry-After / google.rpc.RetryInfo (_extract_server_retry_delay) sur congestion 429/503.
-# 5.239.16.1: Garde anti-ping-pong tried_urls sur Fast-Failover OAuth2 dans call et stream, résolution de _get_global_client intra-boucle et alignement sur ECHO_LLM_CALL_TIMEOUT (240s).
-# 5.237.11.1: Prise en charge du paramètre override_thinking dans call_distillation.
-# 5.236.0.2: Activation inconditionnelle et fallback SSOT des crédits Google One AI en OAuth2.
 import copy
 import re
 import time
@@ -34,10 +34,72 @@ from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
 from echo_protocol import get_ca_model_id, build_ca_generation_config, normalize_generation_config, normalize_response_schema
-from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, COLLECTION_SESSION_RAG, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_LLM_CALL_TIMEOUT, ECHO_LLM_STREAM_TIMEOUT, ECHO_QDRANT_URL, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_RETRY_SERVER_MAX_WAIT_SEC, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, EMBEDDING_DIM, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, build_httpx_timeout, get_descending_cascade, get_generation_config
+from echo_constants import AUTH_METHOD_OAUTH2, COLLECTION_SESSION_RAG, ECHO_AGY_USER_AGENT, ECHO_AISTUDIO_API_CLIENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_LLM_CALL_TIMEOUT, ECHO_LLM_STREAM_TIMEOUT, ECHO_QDRANT_URL, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_RETRY_SERVER_MAX_WAIT_SEC, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, EMBEDDING_DIM, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, build_httpx_timeout, get_descending_cascade, get_generation_config
 
 _SESSION_RAG_ENSURED_BASES: set[str] = set()
 _SESSION_RAG_INDEX_FIELDS: tuple[str, ...] = ("user_id", "chat_id", "source_id", "message_id")
+
+
+class PromptBlockedError(FatalAPIError):
+    """Erreur levée lorsque l'API d'inférence bloque le prompt en amont (promptFeedback.blockReason)."""
+
+    def __init__(self, block_reason: str, summary: str, raw_message: str = ""):
+        super().__init__(summary)
+        self.block_reason = block_reason
+        self.summary = summary
+        self.raw_message = raw_message
+
+
+def describe_empty_llm_response(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Diagnostique une réponse API sans texte exploitable avec des libellés agnostiques."""
+    if not isinstance(data, dict):
+        return {
+            "is_prompt_blocked": False,
+            "kind": "empty",
+            "reason": "EMPTY_RESPONSE",
+            "raw_message": "",
+            "summary": "Réponse vide retournée par l'API d'inférence.",
+        }
+
+    target = data.get("response") if isinstance(data.get("response"), dict) else data
+    pf = target.get("promptFeedback") if isinstance(target.get("promptFeedback"), dict) else None
+    if not (isinstance(pf, dict) and pf.get("blockReason")):
+        pf = data.get("promptFeedback") if isinstance(data.get("promptFeedback"), dict) else None
+
+    if isinstance(pf, dict) and pf.get("blockReason"):
+        reason = str(pf.get("blockReason")).strip()
+        raw_message = str(pf.get("blockReasonMessage") or "").strip()
+        return {
+            "is_prompt_blocked": True,
+            "kind": "prompt_blocked",
+            "reason": reason,
+            "raw_message": raw_message,
+            "summary": (
+                f"Requête bloquée par les filtres de l'API d'inférence (Motif : {reason}). "
+                "Reformulez la consigne (faux positif possible sur les sujets sécurité, code ou biologie)."
+            ),
+        }
+
+    candidates = target.get("candidates") if isinstance(target.get("candidates"), list) else data.get("candidates")
+    if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
+        finish_reason = str(candidates[0].get("finishReason") or "").strip()
+        if finish_reason and finish_reason != "STOP":
+            raw_message = str(candidates[0].get("finishMessage") or "").strip()
+            return {
+                "is_prompt_blocked": False,
+                "kind": "generation_stopped",
+                "reason": finish_reason,
+                "raw_message": raw_message,
+                "summary": f"Génération interrompue par l'API d'inférence (Motif : {finish_reason}).",
+            }
+
+    return {
+        "is_prompt_blocked": False,
+        "kind": "empty",
+        "reason": "EMPTY_RESPONSE",
+        "raw_message": "",
+        "summary": "Réponse vide retournée par l'API d'inférence.",
+    }
 
 
 class EchoGeminiClient:
@@ -230,6 +292,21 @@ class EchoGeminiClient:
             return min(delay_sec, float(ECHO_RETRY_SERVER_MAX_WAIT_SEC))
         return None
 
+    @staticmethod
+    def _format_google_diag_headers(headers: Any = None) -> str:
+        """Extrait les entêtes de corrélation/diagnostic Google (trace-id, sherlog-link) pour les logs d'erreur."""
+        if not headers:
+            return ""
+        lower_map = {str(k).lower(): str(v).strip() for k, v in headers.items() if v}
+        parts = []
+        trace_id = lower_map.get("x-cloudaicompanion-trace-id")
+        if trace_id:
+            parts.append(f"trace_id={trace_id}")
+        sherlog = lower_map.get("x-goog-sherlog-link")
+        if sherlog:
+            parts.append(f"sherlog={sherlog}")
+        return f" [{' | '.join(parts)}]" if parts else ""
+
     @classmethod
     def register_memory_stream(cls, raw_bytes: bytes) -> str:
         """Enregistre un segment binaire en mémoire vive et retourne son marqueur léger (zéro copie lors de copy.deepcopy)."""
@@ -348,18 +425,13 @@ class EchoGeminiClient:
 
             if token:
                 headers["Authorization"] = f"Bearer {token}"
-                # Pour Code Assist Generation, le project est dans le payload JSON.
-                # L'ajout du header x-goog-user-project peut provoquer une erreur 403 Forbidden.
-                if not is_agy or not is_generation:
-                    project_id = provider.get("project_id")
-                    if not project_id:
-                         project_id = (EchoAuth(user_id=provider.get("user_id")).get_auth_data(AUTH_DATA_PROJECT_ID) if provider.get("user_id") else None)
-                    
-                    if project_id:
-                        headers["x-goog-user-project"] = ECHO_GLOBAL_TENANT_PROJECT_ID
+                if provider.get("auth_mode") in ("business_agent_platform_paygo", "business_licensed_enterprise") and provider.get("project_id"):
+                    headers["x-goog-user-project"] = str(provider["project_id"])
             else:
                 raise Exception("Échec de récupération du jeton d'accès (OAuth2).")
         else:
+            headers["User-Agent"] = ECHO_AISTUDIO_API_CLIENT
+            headers["x-goog-api-client"] = ECHO_AISTUDIO_API_CLIENT
             headers["x-goog-api-key"] = provider.get("key")
 
         return headers
@@ -511,6 +583,7 @@ class EchoGeminiClient:
                 "model": target_model,
                 "project": ECHO_GLOBAL_TENANT_PROJECT_ID,
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
+                "request_id": f"req-{uuid.uuid4().hex}",
                 "request": request_body,
                 "userAgent": "antigravity",
                 "requestType": (model_config or {}).get("request_type", "agent")
@@ -922,16 +995,30 @@ class EchoGeminiClient:
                         state_mgr.unlock_agy_endpoint(current_url_idx)
                     json_data = resp.json()
                     # NORMALISATION : Déballage automatique de l'enveloppe Code Assist (OAuth2)
-                    return json_data.get("response", json_data)
+                    unwrapped = json_data.get("response", json_data) if isinstance(json_data, dict) else json_data
+                    if isinstance(unwrapped, dict) and not unwrapped.get("candidates"):
+                        diag_empty = describe_empty_llm_response(json_data)
+                        if diag_empty["is_prompt_blocked"]:
+                            print(
+                                f"[ECHO-INFERENCE] Requête bloquée sur {target_model} "
+                                f"(reason={diag_empty['reason']}, raw={diag_empty['raw_message']!r})",
+                                flush=True,
+                            )
+                            raise PromptBlockedError(
+                                diag_empty["reason"],
+                                diag_empty["summary"],
+                                diag_empty["raw_message"],
+                            )
+                    return unwrapped
 
                 # --- FAIL-FAST SUR ERREUR SYNTAXE ---
                 if resp.status_code == 400:
-                    raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {resp.text}")
+                    raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API{EchoGeminiClient._format_google_diag_headers(resp.headers)}: {resp.text}")
 
                 # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                 if resp.status_code in [401, 403, 404]:
                     if active_idx < len(auth_providers) - 1:
-                        print(f"[ECHO-RETRY] (Non-Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)      
+                        print(f"[ECHO-RETRY] (Non-Stream) Modèle indisponible/401 sur {provider['type']}{EchoGeminiClient._format_google_diag_headers(resp.headers)}. Bascule provider...", flush=True)      
                         active_idx += 1
                         tried_urls = {current_url_idx}
                         attempt = 0
@@ -969,7 +1056,7 @@ class EchoGeminiClient:
                         server_delay = EchoGeminiClient._extract_server_retry_delay(resp.headers, resp.text)
                         if server_delay:
                             wait_time = max(wait_time, server_delay)
-                        print(f"[ECHO-RETRY] (Non-Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
+                        print(f"[ECHO-RETRY] (Non-Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s{EchoGeminiClient._format_google_diag_headers(resp.headers)}...", flush=True)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
                         attempt += 1
@@ -984,6 +1071,10 @@ class EchoGeminiClient:
                         if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
 
+                if resp.status_code >= 400:
+                    diag = EchoGeminiClient._format_google_diag_headers(resp.headers)
+                    if diag:
+                        print(f"[ECHO-HTTP] Erreur {resp.status_code}{diag}", flush=True)
                 resp.raise_for_status()
             except FatalAPIError as fe:
                 raise fe
@@ -1081,6 +1172,7 @@ class EchoGeminiClient:
             extra_gen_keys["responseMimeType"] = "application/json"
 
         # 3. Tentatives en cascade
+        last_blocked_err: Optional[PromptBlockedError] = None
         for model_key in cascade:
             actual_model = model_key
             gen_cfg = get_generation_config(
@@ -1107,13 +1199,26 @@ class EchoGeminiClient:
                 )
                 # Confirmation du modèle effectif (visible dans le status)
                 if model_key != clamped_key:
-                    # Cascade descendante technique (429/503)
-                    reason = f"{clamped_key} unavailable (API error)"
+                    # Cascade descendante technique (429/503) ou repli après blocage filtre isolé
+                    reason = (
+                        f"{clamped_key} blocked (inference filter fallback)"
+                        if last_blocked_err is not None
+                        else f"{clamped_key} unavailable (API error)"
+                    )
                     if events:
                         await events.status(
                             f"⚡ Cascade : {clamped_key} → {model_key} (fallback)", done=False
                         )
                 return data, model_key, reason
+
+            except PromptBlockedError as pbe:
+                last_blocked_err = pbe
+                if events and model_key != cascade[-1]:
+                    await events.status(
+                        f"⚠️ {model_key} bloqué par filtre ({pbe.block_reason}). Repli sur le palier suivant...",
+                        done=False,
+                    )
+                continue
 
             except Exception as e:
                 err_msg = str(e)[:60]
@@ -1131,6 +1236,9 @@ class EchoGeminiClient:
                         f"⚠️ {model_key} ({err_msg}). Repli...", done=False
                     )
                 continue
+
+        if last_blocked_err is not None:
+            raise last_blocked_err
 
         # Tous les modèles ont échoué — signal final
         if events:
@@ -1191,12 +1299,12 @@ class EchoGeminiClient:
                     # --- FAIL-FAST SUR ERREUR SYNTAXE ---
                     if r.status_code == 400:
                         body = await r.aread()
-                        raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {body.decode('utf-8')}")
+                        raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API{EchoGeminiClient._format_google_diag_headers(r.headers)}: {body.decode('utf-8')}")
 
                     # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                     if r.status_code in [401, 403, 404]:
                         if active_idx < len(auth_providers) - 1:
-                            print(f"[ECHO-RETRY] (Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)  
+                            print(f"[ECHO-RETRY] (Stream) Modèle indisponible/401 sur {provider['type']}{EchoGeminiClient._format_google_diag_headers(r.headers)}. Bascule provider...", flush=True)  
                             active_idx += 1
                             tried_urls = {current_url_idx}
                             attempt = 0
@@ -1240,7 +1348,7 @@ class EchoGeminiClient:
                             server_delay = EchoGeminiClient._extract_server_retry_delay(r.headers, err_text)
                             if server_delay:
                                 wait_time = max(wait_time, server_delay)
-                            print(f"[ECHO-RETRY] (Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
+                            print(f"[ECHO-RETRY] (Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s{EchoGeminiClient._format_google_diag_headers(r.headers)}...", flush=True)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
                             attempt += 1
@@ -1255,6 +1363,10 @@ class EchoGeminiClient:
                             if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                             continue
 
+                    if r.status_code >= 400:
+                        diag = EchoGeminiClient._format_google_diag_headers(r.headers)
+                        if diag:
+                            print(f"[ECHO-HTTP] Erreur {r.status_code}{diag}", flush=True)
                     r.raise_for_status()
 
                     # Déverrouillage proactif sur succès (Auto-Heal)

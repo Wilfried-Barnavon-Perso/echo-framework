@@ -3,16 +3,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 6.20.3.1
+version: 6.21.8.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.8.1: Neutralisation @media print de .w-0, max-width, min-width et content-visibility/contain dans get_print_isolation_js.
 # 6.20.3.1: Suppression des helpers JS morts get_custom_modals_js et get_sanitize_html_js.
 # 6.18.23.1: Suppression du court-circuit iframe et masquage @media print des barres d'actions (.buttons, .print:hidden, [role="toolbar"]) dans get_print_isolation_js.
 # 6.14.2.2: Purge du code mort EchoFloatingHUD et ajout du pont postMessage echo-asset:// et du fast-path blob: dans image_viewer et get_media_export_js.
 # 6.6.16.1: Suppression de get_floating_monitor_js suite à la migration de echo_monitor vers EchoCanvasTab.svelte.
-# 6.6.9.2: Purge du reliquat mort get_esm_loader_js.
 
 
 import sys
@@ -1688,6 +1688,10 @@ return new Promise(function(resolve) {{
         '    height: auto !important;\\n' +
         '    max-height: none !important;\\n' +
         '    width: 100% !important;\\n' +
+        '    max-width: none !important;\\n' +
+        '    min-width: 0 !important;\\n' +
+        '    content-visibility: visible !important;\\n' +
+        '    contain: none !important;\\n' +
         '    background: transparent !important;\\n' +
         '    padding: 0 !important;\\n' +
         '    margin: 0 !important;\\n' +
@@ -1699,11 +1703,21 @@ return new Promise(function(resolve) {{
         '    display: block !important;\\n' +
         '    position: static !important;\\n' +
         '    width: 100% !important;\\n' +
+        '    max-width: none !important;\\n' +
+        '    min-width: 0 !important;\\n' +
+        '    content-visibility: visible !important;\\n' +
+        '    contain: none !important;\\n' +
         '    height: auto !important;\\n' +
         '    max-height: none !important;\\n' +
         '    overflow: visible !important;\\n' +
         '    padding: 0 !important;\\n' +
         '    margin: 0 !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-target > .w-0 {{\\n' +
+        '    width: 100% !important;\\n' +
+        '    max-width: 100% !important;\\n' +
+        '    min-width: 0 !important;\\n' +
+        '    padding-left: 0 !important;\\n' +
         '  }}\\n' +
         '  .echo-print-target * {{\\n' +
         '    overflow: visible !important;\\n' +

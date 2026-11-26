@@ -3,16 +3,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.18.23.1
+version: 6.21.12.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.12.1: Élagage des bornes context_checkpoint via prune_checkpoint_payload(cutoff_ts, live_msg_ids) dans sync_cloned_session.
 # 6.18.23.1: Durcissement SQLite WAL/NORMAL/busy_timeout via echo_db_schema.open_db(..., require_version=False) et réapplication WAL post-backup sur new_db dans backup_session_db.
 # 6.14.2.2: Retrait du ré-ancrage obsolète de echo_settings['wm_state'] dans reassign_session_ids et inclusion de tools_output/ dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 6.13.1.1: Réécriture de echo_resources.metadata dans reassign_session_ids et ajout de _prune_transient_browserviews_on_clone (transfert retained uniquement lors du clone/resume).
 # 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
-# 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 
 from contextlib import closing
 import asyncio
@@ -39,6 +39,7 @@ from echo_constants import (
     get_codex_workspace_resource_type,
     is_codex_workspace_indexed,
     is_codex_workspace_versioned,
+    prune_checkpoint_payload,
 )
 from echo_db_schema import open_db
 from echo_paths import format_codex_storage_path, get_echo_session_path, sanitize_echo_id
@@ -923,9 +924,25 @@ def sync_cloned_session(
                 "('context_stats', 'previous_context_stats', 'turn_origin_model')"
             )
             cur.execute(
-                "DELETE FROM echo_settings WHERE key = 'context_checkpoint' AND updated_at > ?",
-                (cutoff_ts,),
+                "SELECT value, updated_at FROM echo_settings WHERE key = 'context_checkpoint'"
             )
+            ckpt_row = cur.fetchone()
+            if ckpt_row is not None:
+                pruned_ckpt = prune_checkpoint_payload(
+                    ckpt_row["value"],
+                    cutoff_ts=int(cutoff_ts),
+                    live_msg_ids=live_msg_ids,
+                )
+                if pruned_ckpt is None:
+                    cur.execute(
+                        "DELETE FROM echo_settings WHERE key = 'context_checkpoint'"
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE echo_settings SET value = ?, updated_at = MIN(updated_at, ?) "
+                        "WHERE key = 'context_checkpoint'",
+                        (json.dumps(pruned_ckpt), int(cutoff_ts)),
+                    )
             cur.execute(
                 "SELECT model_id FROM message_shadows "
                 "WHERE model_id IS NOT NULL AND model_id != '' "

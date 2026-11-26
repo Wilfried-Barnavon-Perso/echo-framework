@@ -4,16 +4,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.20.3.1
+version: 6.23.4.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.4.1: Ajout de broadcast_active_model (echo_active_model) et de l'action RPC get_active_model pour la pastille Écho v6.
+# 6.21.9.1: Ajout de notify_cognition_update (bus WS echo_cognition_update), capture de _loop dans subscribe et cache _chat_owner_cache.
 # 6.20.3.1: Ajout de broadcast_wait_timer (echo_wait_timer) pour la diffusion temps réel du minuteur vers le bus WM.
 # 6.17.4.1: Suppression relais WS Canvas et file d'événements, ajout jetons HMAC sandbox_event et préservation src app_proxy dans upsert_canvas_frame.
 # 6.16.0.4: Registre _active_browser_sessions, relais WS Canvas/App, tickets HMAC app_proxy et purge code mort polling/pings/event.
-# 6.15.2.1: Isolation multi-run par run_id dans les frames Canvas, arrêt ciblé canvas_stop_run, réconciliation F5 reconcile_canvas_frames et réveil réactif inbox via wake_event.
-# 6.14.2.1: Suppression intégrale de la persistance SQLite wm_state (_load_chat_state, _save_chat_state, _sanitize_windows_dict) et des actions RPC mortes (window_mounted, window_updated, window_closed, kv_sync).
 
 import asyncio
 import base64
@@ -119,6 +119,8 @@ class EchoWindowManager:
     def __init__(self):
         # user_id -> { client_id: asyncio.Queue }
         self._subscribers: Dict[str, Dict[str, asyncio.Queue]] = {}
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._chat_owner_cache: Dict[str, str] = {}
         # exec_id -> { "future": Future, "user_id": str, "chat_id": str, "message_id": str, "code": str, "created_at": float }
         self._pending_calls: Dict[str, Dict[str, Any]] = {}
         # exec_id -> { "user_id": str, "chat_id": str, "code": str, "created_at": float }
@@ -253,6 +255,10 @@ class EchoWindowManager:
         return False
 
     def subscribe(self, user_id: str, client_id: str) -> asyncio.Queue:
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         uid = user_id or "system"
         if uid not in self._subscribers:
             self._subscribers[uid] = {}
@@ -344,6 +350,57 @@ class EchoWindowManager:
                 "active": bool(active),
             },
         )
+
+    def notify_cognition_update(self, chat_id: str, seq: int = 0, user_id: str = "") -> None:
+        """Notifie de manière thread-safe les navigateurs abonnés d'une mise à jour cognitive."""
+        if not self._subscribers:
+            return
+        safe_cid = sanitize_echo_id(chat_id)
+        if not safe_cid or safe_cid == "default":
+            return
+        owner_uid = user_id or self._chat_owner_cache.get(safe_cid) or ""
+        if not owner_uid:
+            owner_uid = _find_existing_chat_owner(chat_id) or ""
+            if owner_uid:
+                if len(self._chat_owner_cache) > 256:
+                    self._chat_owner_cache.pop(next(iter(self._chat_owner_cache)), None)
+                self._chat_owner_cache[safe_cid] = owner_uid
+        if owner_uid:
+            sub_map = self._subscribers.get(owner_uid)
+        elif len(self._subscribers) == 1:
+            sub_map = next(iter(self._subscribers.values()))
+        else:
+            return
+        if not sub_map:
+            return
+        event = {"type": "echo_cognition_update", "chat_id": safe_cid, "seq": int(seq)}
+
+        def _push() -> None:
+            for q in list(sub_map.values()):
+                try:
+                    if q.full():
+                        try:
+                            q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            pass
+                    q.put_nowait(event)
+                except Exception:
+                    pass
+
+        if self._loop is not None and not self._loop.is_closed():
+            try:
+                curr_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                curr_loop = None
+            if curr_loop is self._loop:
+                _push()
+            else:
+                self._loop.call_soon_threadsafe(_push)
+        else:
+            try:
+                _push()
+            except Exception:
+                pass
 
     def register_browser_session(self, user_id: str, chat_id: str, session_id: str) -> None:
         """Enregistre la session Playwright active pour (user_id, chat_id) et réveille les attentes."""
@@ -982,12 +1039,48 @@ class EchoWindowManager:
         finally:
             self._pending_calls.pop(eid, None)
 
+    @staticmethod
+    def _normalize_active_model_key(raw_model: Optional[str]) -> Optional[str]:
+        """Normalise un identifiant de modèle brut vers sa clé canonique MODEL_*."""
+        if not raw_model or raw_model == "aucun":
+            return None
+        from echo_constants import get_model_identity
+        resolved = get_model_identity(str(raw_model).strip())
+        return resolved if resolved and resolved != "UNKNOWN" else None
+
+    async def broadcast_active_model(
+        self, user_id: str, chat_id: str, model_key: Optional[str]
+    ) -> int:
+        """Diffuse le modèle cognitif actif de l'orchestrateur sur le bus WM."""
+        if not chat_id:
+            return 0
+        normalized = self._normalize_active_model_key(model_key)
+        owner_uid = self._resolve_owner_uid(user_id, chat_id)
+        return await self.broadcast(
+            owner_uid,
+            {"type": "echo_active_model", "chat_id": chat_id, "model_key": normalized},
+        )
+
     async def handle_rpc(self, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Traite les retours RPC, le cycle de vie DOM des fenêtres et la synchronisation KV."""
         action = payload.get("action") or ""
         client_id = str(payload.get("client_id") or "")
         chat_id = str(payload.get("chat_id") or "")
         exec_id = str(payload.get("exec_id") or "")
+
+        if action == "get_active_model":
+            if not chat_id or chat_id == "_new" or chat_id.startswith("local:"):
+                return {"status": "ok", "chat_id": chat_id, "model_key": None}
+
+            def _read_model() -> Optional[str]:
+                owner_uid = self._resolve_owner_uid(user_id, chat_id)
+                sm = EchoStateManager(owner_uid, chat_id)
+                if not os.path.isfile(sm.db_path):
+                    return None
+                return self._normalize_active_model_key(sm.get_last_active_model())
+
+            model_key = await asyncio.to_thread(_read_model)
+            return {"status": "ok", "chat_id": chat_id, "model_key": model_key}
 
         if action == "rpc_result":
             entry = self._pending_calls.get(exec_id)

@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-upgrade.sh
-# VERSION : 6.21.0.1
+# VERSION : 6.22.1.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Purge effective des secrets .secrets/.env lors d'un echo-rebuild en conservant ECHO_DOMAIN et TZ.
 # 6.21.0.1: Export de CONFIRMED_YET avant auto-relance pour éviter la double confirmation interactive.
 # 6.18.16.1: Suppression des variables Compose inutilisées (DOCKER_COMPOSE_CMD, COMPOSE_FILE).
 # 6.8.1.1: Propagation du code d'échec de install-stack.sh (|| exit 1) afin de ne pas afficher 'UPGRADE TERMINÉ' en cas d'erreur.
 # 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
 ECHO_ROOT="/opt/ECHO"
@@ -63,7 +63,20 @@ if [[ "$0" == *"/echo-rebuild" || "$0" == "echo-rebuild" ]] ; then
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
     docker buildx prune -a -f > /dev/null 2>&1 && echo "Cache de construction purgé"
-    rm -rf "$ECHO_SECRETS" && echo "Fichiers secrets supprimés"
+    local_env_src="${ECHO_ENV_FILE:-$ECHO_SECRETS/.env}"
+    [ -f "$local_env_src" ] || local_env_src="$ECHO_ROOT/.env"
+    SAVED_DOMAIN=""
+    SAVED_TZ=""
+    if [ -f "$local_env_src" ]; then
+        SAVED_DOMAIN=$(grep -E '^ECHO_DOMAIN=' "$local_env_src" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | tr -d "\"'[:space:]" || true)
+        SAVED_TZ=$(grep -E '^TZ=' "$local_env_src" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | tr -d "\"'[:space:]" || true)
+    fi
+    rm -rf "$ECHO_SECRETS" "$ECHO_ROOT/.env" && echo "Fichiers secrets et .env supprimés"
+    mkdir -p "$ECHO_SECRETS" && chmod 700 "$ECHO_SECRETS"
+    (umask 077 && touch "$ECHO_SECRETS/.env") && chmod 600 "$ECHO_SECRETS/.env"
+    [ -n "$SAVED_DOMAIN" ] && echo "ECHO_DOMAIN=\"$SAVED_DOMAIN\"" >> "$ECHO_SECRETS/.env"
+    [ -n "$SAVED_TZ" ] && echo "TZ=\"$SAVED_TZ\"" >> "$ECHO_SECRETS/.env"
+    ln -sfn ".secrets/.env" "$ECHO_ROOT/.env"
 fi
 
 # --- SELF RUN (Protection) ---

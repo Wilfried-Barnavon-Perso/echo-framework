@@ -223,7 +223,8 @@ sudo disable-bunkerweb</code></pre>
       <summary>Dossier d'Ingénierie : Paramètres Hyper-V, Pré-vol Linux/WSL2, Cycle Compose &amp; Scripts Ops</summary>
 
       <h3>1. Voies de Provisioning (<code>install-hyperv.ps1</code>, <code>install-linux.sh</code>,
-        <code>install-wsl2.sh</code>)</h3>
+        <code>install-wsl2.sh</code>)
+      </h3>
       <ul>
         <li><strong><code>install-hyperv.ps1</code> (v6.18.12.1)</strong> : Crée de façon idempotente le commutateur
           interne <code>ECHO-Internal</code>, le NAT <code>ECHO-NAT</code> (sous-réseau <code>192.168.118.0/24</code>,
@@ -234,7 +235,8 @@ sudo disable-bunkerweb</code></pre>
           snapshots automatiques désactivés, VHDX dynamique <code>60 Go</code> avec calibration Storage QoS hors cache
           en <code>2^N</code>) via Cloud-Init et disque Seed CIDATA de <code>256 Mo</code> embarquant l'archive ZIP
           filtrée par <code>.gitignore</code> (branche par défaut <code>dev</code>, hostname normalisé
-          <code>echo-v&lt;majeure&gt;-&lt;branche&gt;</code>).</li>
+          <code>echo-v&lt;majeure&gt;-&lt;branche&gt;</code>).
+        </li>
         <li><strong><code>install-linux.sh</code> (v6.18.16.1)</strong> : Supporte Ubuntu et Debian natifs (garde
           non-interactive si WSL2 détecté sans TTY). Contrôles pré-vol : RAM (avertissement si
           <code>&lt; 7500 Mo</code>) et disque sur <code>/opt</code> (blocage si <code>&lt; 10 Go</code>, avertissement
@@ -242,29 +244,34 @@ sudo disable-bunkerweb</code></pre>
           <code>docker.io</code> sans couper le démon), <code>yq v4.40.5</code> mappé dynamiquement selon
           <code>dpkg --print-architecture</code>, <code>cron</code>, <code>rsync</code>, <code>psmisc</code>,
           <code>chrony</code>, <code>jq</code>, et enregistre la traçabilité <code>linux:</code> dans
-          <code>echo_deploy_script_version</code>.</li>
+          <code>echo_deploy_script_version</code>.
+        </li>
         <li><strong><code>install-wsl2.sh</code> (v6.18.16.1)</strong> : Cible Ubuntu 22.04+ / Debian sous WSL2. Détecte
           et bloque l'intégration Docker Desktop scopée sur la distribution
           (<code>_is_docker_desktop_integrated</code>). Vérifie la mémoire totale RAM + Swap (avertissement RAM
           <code>&lt; 7500 Mo</code>, seuil critique RAM + Swap <code>&lt; 6800 Mo</code> orientant vers
           <code>%UserProfile%\.wslconfig</code>) et l'espace disque (<code>10 Go</code> / <code>20 Go</code>). Installe
-          Docker Engine natif dans la distro (hors PATH Windows) et enregistre la traçabilité <code>wsl2:</code>.</li>
+          Docker Engine natif dans la distro (hors PATH Windows) et enregistre la traçabilité <code>wsl2:</code>.
+        </li>
       </ul>
 
       <h3>2. Cycle de Déploiement Compose (<code>00-echo-scripts/install-stack.sh</code> v6.18.15.1 &amp;
-        <code>echo-globals.sh</code> v6.18.15.1)</h3>
+        <code>echo-globals.sh</code> v6.23.0.2)
+      </h3>
       <ul>
         <li><strong>Orchestration factorisée</strong> : <code>init_echo_compose_cmd()</code>,
           <code>build_echo_compose_args()</code>, <code>echo_compose()</code>, <code>has_active_echo_domain()</code> et
           <code>compute_echo_detected_origins()</code> détectent Compose V2/V1 et assemblent
-          <code>01-config/stack-echo.yml</code> (et <code>01-config/bunkerweb-stack.yml</code> si actif).</li>
+          <code>01-config/stack-echo.yml</code> (et <code>01-config/bunkerweb-stack.yml</code> si actif).
+        </li>
         <li><strong>Pré-build isolé &amp; Watchtower</strong> : Arrête gracieusement <code>echo-watchtower</code> (avec
           <code>trap EXIT</code> de reprise), purge les éventuels conteneurs Compose temporaires
           (<code>^[0-9a-f]{12}_echo-</code>) en état <code>Created</code>, compile l'image socle
           <code>echo-python-base:latest</code> (<code>CMAKE_BUILD_PARALLEL_LEVEL=2</code>, throttle 30 jours via
           <code>.last_base_pull</code>), puis pré-construit isolément <code>echo-webui</code> (allocation Node V8
           <code>--max-old-space-size=6144</code>) avant de lancer le build parallèle borné
-          (<code>COMPOSE_PARALLEL_LIMIT=2</code>).</li>
+          (<code>COMPOSE_PARALLEL_LIMIT=2</code>).
+        </li>
         <li><strong>Swap &amp; Docker Autosafety</strong> : <code>ensure_swap_and_vm_tuning()</code> crée un
           <code>/swapfile</code> de <code>4 Go</code> (avec <code>chattr +C</code> pour compatibilité Btrfs et
           persistance <code>/etc/fstab</code>, exempté sous WSL2) et fixe <code>vm.swappiness=25</code>.
@@ -273,11 +280,13 @@ sudo disable-bunkerweb</code></pre>
           <code>restart_docker_daemon_and_wait()</code>) et installe le lien <code>/etc/cron.daily/echo-clean</code>.
         </li>
         <li><strong>Secrets &amp; Provisioning natif</strong> : <code>ensure_echo_secrets()</code> génère avec
-          <code>umask 077</code> les clés de <code>/opt/ECHO/.env</code> (<code>BW_DB_PASSWORD</code>,
-          <code>SEARXNG_SECRET</code>, <code>ECHO_SSO_SECRET</code>, <code>N8N_ENCRYPTION_KEY</code>,
-          <code>ECHO_VAULT_ENCRYPTION_KEY</code>, synchronisation <code>.owui-admin-secret</code> &harr;
+          <code>umask 077</code> les clés de <code>/opt/ECHO/.secrets/.env</code> (avec lien symbolique
+          <code>/opt/ECHO/.env</code> : <code>BW_DB_PASSWORD</code>, <code>SEARXNG_SECRET</code>,
+          <code>ECHO_SSO_SECRET</code>, <code>N8N_ENCRYPTION_KEY</code>, <code>ECHO_VAULT_ENCRYPTION_KEY</code>,
+          <code>ECHO_AUTH_ENCRYPTION_KEY</code>, <code>ECHO_BACKUP_ENCRYPTION_KEY</code> et
           <code>ECHO_ADMIN_PASSWORD</code>). Le provisioning des plugins et du modèle maître est assuré au boot par
-          <code>open_webui.echo.bootstrap</code>.</li>
+          <code>open_webui.echo.bootstrap</code>.
+        </li>
       </ul>
 
       <h3>3. Cartographie Complète des 13 Scripts (<code>00-echo-scripts/</code>) &amp; Hygiène</h3>
@@ -297,51 +306,62 @@ sudo disable-bunkerweb</code></pre>
           </tr>
           <tr>
             <td><code>echo-globals.sh</code></td>
-            <td><code>v6.18.15.1</code></td>
-            <td>Variables globales, primitives Compose V2/V1, <code>is_wsl2()</code>, <code>generate_secret()</code>,
-              <code>ensure_echo_secrets()</code>.</td>
+            <td><code>v6.23.0.2</code></td>
+            <td>Variables globales, layout <code>.secrets/.env</code> (garde <code>-ef</code>), primitives Compose
+              V2/V1, <code>is_wsl2()</code>,
+              <code>generate_secret()</code> (préservation des secrets quotés),
+              <code>ensure_echo_secrets()</code>.
+            </td>
           </tr>
           <tr>
             <td><code>echo-sync.sh</code></td>
-            <td><code>v6.21.0.1</code></td>
-            <td>Distribution déclarative vers <code>/opt/ECHO</code>, auto-relance post-Git, gestion liens <code>/usr/local/bin/</code>
+            <td><code>v6.23.0.1</code></td>
+            <td>Distribution déclarative vers <code>/opt/ECHO</code>, pré-synchronisation de
+              <code>echo-globals.sh</code>, initialisation <code>.secrets/.env</code>,
+              auto-relance post-Git, gestion liens <code>/usr/local/bin/</code>
               et normalisation LF/BOM préservant le cache BuildKit.</td>
           </tr>
           <tr>
             <td><code>enable-bunkerweb.sh</code></td>
             <td><code>v6.18.15.1</code></td>
             <td>Active le mode Secure Edge (<code>bunkerweb-stack.yml</code>), expose <code>ui.*</code>,
-              <code>auth.*</code>, <code>my.*</code>, <code>am.*</code> et les sous-réseaux IPAM.</td>
+              <code>auth.*</code>, <code>my.*</code>, <code>am.*</code> et les sous-réseaux IPAM.
+            </td>
           </tr>
           <tr>
             <td><code>disable-bunkerweb.sh</code></td>
             <td><code>v6.18.15.1</code></td>
             <td>Révoque la proxyfication BunkerWeb et rétablit l'exposition directe locale de <code>echo-webui</code> et
-              <code>echo-admin-manager</code>.</td>
+              <code>echo-admin-manager</code>.
+            </td>
           </tr>
           <tr>
             <td><code>echo-update.sh</code></td>
             <td><code>v6.18.16.1</code></td>
             <td>Tirage Git, synchronisation via <code>echo-sync.sh</code> et redémarrage ciblé des conteneurs labellisés
-              <code>echo.hot-reload=true</code>.</td>
+              <code>echo.hot-reload=true</code>.
+            </td>
           </tr>
           <tr>
             <td><code>echo-upgrade.sh</code></td>
-            <td><code>v6.21.0.1</code></td>
+            <td><code>v6.22.1.1</code></td>
             <td>Mise à niveau applicative majeure enchaînant <code>install-stack.sh</code> ; alias
-              <code>echo-rebuild</code> protégé par double confirmation.</td>
+              <code>echo-rebuild</code> protégé par double confirmation et purgeant <code>.secrets/.env</code>.
+            </td>
           </tr>
           <tr>
             <td><code>echo-os-upgrade.sh</code></td>
             <td><code>v6.18.16.1</code></td>
             <td>Arrêt gracieux des conteneurs, <code>apt dist-upgrade</code> sous verrou <code>fuser</code>, nettoyage
-              <code>echo-clean.sh</code>, détection redémarrage noyau / WSL2.</td>
+              <code>echo-clean.sh</code>, détection redémarrage noyau / WSL2.
+            </td>
           </tr>
           <tr>
             <td><code>echo-clean.sh</code></td>
             <td><code>v6.18.16.1</code></td>
             <td>Maintenance disque graduée (<code>&ge; 85 %</code> urgence, <code>&ge; 90 %</code> critique),
-              <code>journalctl --vacuum-size=100M</code> et purge Page Cache.</td>
+              <code>journalctl --vacuum-size=100M</code> et purge Page Cache.
+            </td>
           </tr>
           <tr>
             <td><code>echo-ps.sh</code></td>
@@ -359,7 +379,8 @@ sudo disable-bunkerweb</code></pre>
             <td><code>v6.18.16.1</code></td>
             <td>Rapport de version en lecture seule (<code>ECHO_VERSION</code>, branche, <code>UI_VERSION</code>,
               commit, origine <code>linux:</code>/<code>wsl2:</code>/Hyper-V, modes <code>--short</code> /
-              <code>--json</code>).</td>
+              <code>--json</code>).
+            </td>
           </tr>
           <tr>
             <td><code>echo-show-admin.sh</code></td>
@@ -382,7 +403,7 @@ sudo disable-bunkerweb</code></pre>
       <a href="16_infrastructure_globale.html">16. Périphériques &amp; Infra &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

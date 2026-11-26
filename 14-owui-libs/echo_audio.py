@@ -4,16 +4,16 @@
 """
 title: ECHO In-Process Audio Bridge
 author: ECHO Framework
-version: 6.6.14.1
+version: 6.21.7.1
 description: Pont audio in-process (STT Gemini MODEL_ZEPHYR & TTS Edge Vivienne).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.7.1: Factorisation de sniff_audio_mime_type et ECHO_AUDIO_STT_THINKING_LEVEL depuis echo_constants.
 # 6.6.14.1: Prise en compte du paramètre optionnel language (ISO-639-1) dans la consigne STT de /transcriptions.
 # 6.6.9.1: Durcissement de resolve_user_id (JWT valide ou loopback strict, sinon HTTP 401) sur /transcriptions, /speech, /models et /voices.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Intégration du paramètre pitch (-2Hz) et rétablissement de la vitesse nominale 1.0.
-# 1.3: Ajustement de la vitesse d'élocution TTS par défaut à 1.06 (106%).
 
 import os
 import sys
@@ -38,49 +38,16 @@ from echo_constants import (
     ECHO_AUDIO_DEFAULT_TTS_SPEED,
     ECHO_AUDIO_DEFAULT_TTS_PITCH,
     ECHO_AUDIO_DEFAULT_STT_MODEL,
+    ECHO_AUDIO_STT_THINKING_LEVEL,
     ECHO_AUDIO_MAX_UPLOAD_SIZE,
     ECHO_USERS_ROOT,
+    sniff_audio_mime_type,
 )
 from echo_prompts import USR_AUDIO_TRANSCRIBE
 from echo_gemini_client import EchoGeminiClient
 
 # Routeur dédié au pont audio ECHO
 audio_router = APIRouter(prefix=f"{ECHO_AUDIO_PREFIX}/audio", tags=["echo_audio"])
-
-
-def sniff_audio_mime_type(data: bytes) -> str:
-    """Détecte avec précision le conteneur audio via ses magic bytes."""
-    if not data or len(data) < 4:
-        return "audio/webm"
-
-    # 1. WebM / Matroska (EBML ID: 1A 45 DF A3)
-    if data.startswith(b"\x1a\x45\xdf\xa3"):
-        return "audio/webm"
-
-    # 2. WAV / RIFF (RIFF .... WAVE)
-    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WAVE":
-        return "audio/wav"
-
-    # 3. OGG (OggS)
-    if data.startswith(b"OggS"):
-        return "audio/ogg"
-
-    # 4. FLAC (fLaC)
-    if data.startswith(b"fLaC"):
-        return "audio/flac"
-
-    # 5. MP3 (ID3v2 tag ou frame sync FF FB / FF F3 / FF F2)
-    if data.startswith(b"ID3"):
-        return "audio/mpeg"
-    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
-        return "audio/mpeg"
-
-    # 6. MP4 / M4A (ftyp à l'offset 4)
-    if len(data) >= 8 and data[4:8] == b"ftyp":
-        return "audio/mp4"
-
-    # Fallback par défaut adapté au flux audio WebRTC d'Open WebUI
-    return "audio/webm"
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -215,7 +182,7 @@ async def transcribe_audio(
         "generationConfig": {
             "maxOutputTokens": 8192,
             "thinkingConfig": {
-                "thinkingLevel": "minimal"
+                "thinkingLevel": ECHO_AUDIO_STT_THINKING_LEVEL
             }
         }
     }

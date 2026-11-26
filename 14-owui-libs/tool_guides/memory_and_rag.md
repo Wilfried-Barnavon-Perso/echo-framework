@@ -1,7 +1,7 @@
 ---
 domain_id: memory_and_rag
-version: 6.17.2.1
-updated_at: 2026-11-21
+version: 6.24.0.1
+updated_at: 2026-11-26
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
 tools: [update_meta_artifact, search_meta_artifacts, delete_meta_artifact_item, save_session_context, delete_session_context_source, search_sessions_context]
@@ -20,6 +20,7 @@ Le système mémoriel d'ECHO est scindé en deux espaces vectoriels isolés :
    - Inventaire des sources, Lecture chronologique ou Recherche sémantique : `search_sessions_context`
    - Sauvegarde explicite d'un fait/extrait dans la session : `save_session_context`
    - Purge d'une source de la session : `delete_session_context_source`
+   - *Frontière avec `ui_conversations`* : Pour lister les conversations existantes, inspecter leur état d'exécution (`running`, `pending_approval`, `queued`, `error`, `idle`) ou lire leur transcript exact/live, Le Modèle DOIT utiliser `list_ui_chats` et `read_ui_chat_transcript` (domaine `ui_conversations`).
 
 ---
 
@@ -40,15 +41,16 @@ Dans `update_meta_artifact(artifact_name, fact, importance)`, le paramètre `imp
 
 ### 2.3 Spécifications des Fonctions Méta-Artéfacts
 - **Contrainte d'environnement (Sous-Agent)** : `update_meta_artifact` et `delete_meta_artifact_item` sont **ABSOLUMENT INTERDITS depuis un Sous-Agent headless** (`DELEGATE_AGENT_BLACKLIST` ; seule la lecture via `search_meta_artifacts` est autorisée).
-- `update_meta_artifact` :
+- `update_meta_artifact(artifact_name, fact, importance)` :
   - `fact` : Énoncé factuel, dense et autonome (sans pronoms ambigus ni références temporelles relatives).
+  - **Conservation du score maximal** : En cas de mise à jour d'un souvenir existant (identifiant déterministe), Le Système préserve `max(importance, existant)` afin de ne jamais dégrader un niveau d'importance établi.
   - **Retour** : Génère et retourne le `memory_id` unique (indispensable pour suppression ultérieure).
-- `search_meta_artifacts` :
+- `search_meta_artifacts(query=None, artifact_name=None, limit=20, start_date="", end_date="")` :
   - `artifact_name` : `"Profil d'Alignement"`, `"Hypothèses d'Apprentissage"`, ou `None` (les deux simultanément).
   - **Mode Recherche Ciblée (`query` renseigné)** : Extraction sémantique pondérée par niveau d'importance (`limit=20` par défaut).
-  - **Mode Lecture Globale (`query=None` ou omis)** : Extraction chronologique des `limit` (défaut `20`) derniers faits mémorisés avec leurs `memory_id` (**REQUIS** avant suppression).
+  - **Mode Lecture Globale (`query=None` ou omis)** : Lecture paginée par scroll (non triée chronologiquement) retournant jusqu'à `limit` (défaut `20`) faits mémorisés avec leurs `memory_id` (**REQUIS** avant suppression).
   - `start_date` / `end_date` : Bornes temporelles optionnelles au format ISO 8601 (`"YYYY-MM-DD"`).
-- `delete_meta_artifact_item` :
+- `delete_meta_artifact_item(memory_id)` :
   - Supprime définitivement un souvenir à partir de son `memory_id` exact (obtenu via `update_meta_artifact` ou `search_meta_artifacts`).
 
 ---
@@ -61,9 +63,12 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
 - Si une précision granulaire est requise, Le Modèle DOIT appeler `search_sessions_context` en filtrant sur `source_id`.
 
 ### 3.2 Spécifications de `search_sessions_context`
+Signature complète :
+`search_sessions_context(mode, query=None, certainty_level="STANDARD", cosine_threshold=None, sort_order=None, source_id=None, global_search=False, tag=None, start_date=None, end_date=None, max_fragments=10)`
 - `mode` (**Seul paramètre obligatoire** — `Literal["inventory", "chronological", "semantic"]`) :
   - `"inventory"` : Liste tous les `source_id` indexés (`"conversation_history"`, `file_id` de documents joints, notes enregistrées), leur nombre exact de fragments, la plage temporelle ISO 8601 (`YYYY-MM-DDTHH:MM:SSZ`) et un aperçu des bornes. Le Modèle **DOIT** invoquer ce mode en amont pour identifier les `source_id` disponibles et l'étendue temporelle d'une session. `query`, `sort_order`, `cosine_threshold` et `certainty_level != "STANDARD"` sont **ABSOLUMENT INTERDITS**.
   - `"chronological"` : Lit les fragments complets dans l'ordre temporel (`sort_order="newest_first"` par défaut, ou `"oldest_first"` pour remonter au début d'une session). **REQUIS** pour toute exploration temporelle ou question ouverte sans terme sémantique discriminant. `query`, `sort_order="cosine_desc"`, `cosine_threshold` et `certainty_level != "STANDARD"` sont **ABSOLUMENT INTERDITS**.
+  - **Plafond de scroll (`inventory` / `chronological`)** : La lecture par scroll est plafonnée à **`4096` fragments**.
   - `"semantic"` : Recherche vectorielle par proximité cosinus. `query` est **REQUIS** (horodatage ISO 8601 restitué sur chaque extrait).
 - `certainty_level` & `cosine_threshold` (**Uniquement en `mode="semantic"`**) :
   - Paliers pré-calibrés (`cosine_threshold` **DOIT** rester `None`) : `"BROAD"` (`0.34`), `"STANDARD"` (`0.52`, défaut), `"STRICT"` (`0.63`), `"EXACT"` (`0.81`).
@@ -74,13 +79,13 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
 - `start_date` / `end_date` (`Optional[str] = None`) : Bornes temporelles inclusives au format ISO `"YYYY-MM-DD"`.
 - `max_fragments` (`int = 10`) : Nombre maximal de fragments retournés en `chronological` et `semantic` (ajustable selon le volume annoncé par `inventory`).
 - `tag` :
-  - Restreint la recherche aux conversations rattachées à cette étiquette.
+  - Restreint la recherche inter-chats aux conversations (jusqu'à **`100` chats**) rattachées à cette étiquette, **indépendamment de `global_search`**.
   - **Prérequis obligatoire** : Le Modèle DOIT appeler préalablement `list_ui_tags(global_scope=True)` pour identifier la chaîne anglaise exacte (`snake_case` / `kebab-case`).
 - `global_search` :
-  - `False` (Défaut) : Restreint la recherche à la session active avec filtrage automatique sur les messages de la **branche active**. Les messages de branches mortes ou alternatives sont exclus de la restitution textuelle.
+  - `False` (Défaut) : Restreint la recherche à la session active (sauf si `tag` est fourni) avec filtrage automatique sur les messages de la **branche active**. Les messages de branches mortes ou alternatives sont exclus de la restitution textuelle.
   - `True` : Étend la recherche à **l'intégralité de l'historique inter-sessions** de L'Utilisateur (**DOIT** être activé dès que L'Utilisateur mentionne un échange antérieur).
-- **Isolation Sous-Agent Headless** : Lorsqu'il est invoqué depuis un Sous-Agent headless, `search_sessions_context` est strictement isolé sur le `sub_sid` de ce Sous-Agent.
+- **Accès Sous-Agent Headless** : Lorsqu'il est invoqué depuis un Sous-Agent headless, `search_sessions_context` accède aux sources communes de la session et de l'Orchestrateur (`sub_sid` vide : `AEC_smart_context`, `conversation_history`) ainsi qu'à ses propres sources (`sub_sid`) ; seuls les vecteurs privés des autres Sous-Agents sont masqués (contrairement à `delete_session_context_source` qui reste strictement isolé sur le `sub_sid` appelant).
 
 ### 3.3 Persistance et Purge de Sources de Session
 - `save_session_context(text, source_id)` : Remplace tout vecteur existant sous `source_id` puis vectorise `text` dans la session active.
-- `delete_session_context_source(source_id)` : Purge tous les vecteurs associés à `source_id` dans la session active (un Sous-Agent PEUT uniquement purger les sources qu'il a lui-même créées).
+- `delete_session_context_source(source_id)` : Purge tous les vecteurs associés à `source_id` dans la session active (un Sous-Agent PEUT uniquement purger les sources qu'il a lui-même créées sous son `sub_sid`).

@@ -76,6 +76,10 @@
 	export let onToolCallResolved: Function = () => {};
 
 	const taskId = `task-${uuidv4()}`;
+	const echoLazyExpand = getContext<(() => Promise<void> | void) | undefined>('echoLazyExpand');
+	const handleLazyExpand = (isOpen: boolean) => {
+		if (isOpen) echoLazyExpand?.();
+	};
 
 	const headerComponent = (depth: number) => {
 		return 'h' + depth;
@@ -500,6 +504,7 @@
 							resolvable={!!chatId && !!messageId && save}
 							resolving={resolvingCallId === detailToken.attributes?.id}
 							onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+							onChange={handleLazyExpand}
 							open={$settings?.expandDetails ?? false}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
@@ -510,6 +515,7 @@
 							open={$settings?.expandDetails ?? false}
 							attributes={detailToken?.attributes}
 							messageDone={done}
+							onChange={handleLazyExpand}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
 							dir="auto"
@@ -562,6 +568,7 @@
 				resolvable={!!chatId && !!messageId && save}
 				resolving={resolvingCallId === token.attributes?.id}
 				onResolve={(approved) => resolveToolCall(token.attributes?.id ?? '', approved)}
+				onChange={handleLazyExpand}
 				open={$settings?.expandDetails ?? false}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}
@@ -572,6 +579,7 @@
 				open={$settings?.expandDetails ?? false}
 				attributes={token?.attributes}
 				messageDone={done}
+				onChange={handleLazyExpand}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}
 				dir="auto"

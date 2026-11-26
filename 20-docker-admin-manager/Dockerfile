@@ -26,7 +26,7 @@ ENV TZ=Europe/Paris
 ENV PYTHONUNBUFFERED=1
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="6.18.5.1"
+LABEL version="6.22.1.1"
 LABEL description="ECHO Admin Manager (System & Orchestration)"
 
 EXPOSE 3001

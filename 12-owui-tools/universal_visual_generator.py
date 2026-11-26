@@ -3,16 +3,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 6.18.23.1
+version: 6.24.1.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.1.1: Gardes headless_forbidden, missing_chat_id et invalid_arguments normalisées via wrap_tool_output dans close_image_session.
 # 6.18.23.1: Alignement de close_image_session sur close_subagent_session ('purged', rétention 1440m) et garde anti-réutilisation dans generate_image.
 # 6.14.2.1: Externalisation binaire des images générées via save_embed_binary_asset (echo-asset://) hors flux Base64.
 # 6.7.4.1: Passage intégral en override_thinking='medium' des 3 étapes (génération, réparation JSON et critique multimodal) de generate_rich_visualization.
 # 6.7.1.2: Télémétrie temps réel save_subagent_meta/mark_subagent_running sur generate_image et filtrage extract_response_parts_and_text dans _run_visual_critic.
-# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -926,13 +926,28 @@ class Tools:
     __event_emitter__: Any = None,
   ) -> dict:
     """Clôt une session de sous-agent d'imagerie (`sub_sid`) en lecture seule ('purged', rétention 1440 min) lorsque l'image convient à l'Utilisateur."""
+    sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+    if sub_ctx and sub_ctx.get("is_subagent"):
+      return wrap_tool_output(
+          text="❌ Action refusée : `close_image_session` est strictement réservé au Modèle principal (interdit depuis un Sous-Agent headless).",
+          status={"status": "error", "error_code": "headless_forbidden"},
+      )
+
     events = EchoEvents(__event_emitter__)
     user_id = (__user__ or {}).get("id", "system")
     chat_id = (__metadata__ or {}).get("chat_id")
     if not chat_id:
-      return "❌ Contexte de session (`chat_id`) manquant."
+      return wrap_tool_output(
+          text="❌ Contexte de session (`chat_id`) manquant.",
+          status={"status": "error", "error_code": "missing_chat_id"},
+      )
 
     clean_sid = (sub_sid or "").strip()
+    if not clean_sid:
+      return wrap_tool_output(
+          text="❌ Le paramètre `sub_sid` non vide est requis.",
+          status={"status": "error", "error_code": "invalid_arguments"},
+      )
     state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
     threads = state_mgr.list_threads(chat_id)
     sids_in_chat = {t["sub_sid"] for t in threads}

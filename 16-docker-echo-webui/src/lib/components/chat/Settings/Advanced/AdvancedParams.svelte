@@ -204,65 +204,6 @@
 		</div>
 	{/if}
 
-	{#if admin && $config?.features?.enable_context_compaction}
-		<div>
-			<Tooltip
-				content={$i18n.t(
-					'settings.personal.general.parameters.contextCompactionThreshold.description'
-				)}
-				placement="top-start"
-				className="inline-tooltip"
-			>
-				<UserSettingRow
-					let:labelId
-					className="w-full py-0.5"
-					labelClassName="self-center font-normal underline decoration-dotted decoration-gray-400/70 underline-offset-4 dark:decoration-gray-500"
-				>
-					<span slot="label">
-						{$i18n.t('settings.personal.general.parameters.contextCompactionThreshold.label')}
-					</span>
-					<button
-						id={`${labelId}-control`}
-						class="p-1 px-3 text-xs flex rounded-sm transition shrink-0 outline-hidden font-normal text-gray-900 dark:text-gray-100"
-						type="button"
-						on:click={() => {
-							params.compact_token_threshold =
-								(params?.compact_token_threshold ?? null) === null ? 80000 : null;
-							onParamChange('compact_token_threshold', params.compact_token_threshold);
-						}}
-					>
-						{#if (params?.compact_token_threshold ?? null) === null}
-							<span class="ml-2 self-center"> {$i18n.t('Default')} </span>
-						{:else}
-							<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
-						{/if}
-					</button>
-				</UserSettingRow>
-			</Tooltip>
-
-			{#if (params?.compact_token_threshold ?? null) !== null}
-				<div class="flex mt-0.5 space-x-2">
-					<div class=" flex-1">
-						<input
-							class="text-sm w-full bg-transparent outline-hidden outline-none font-normal text-gray-900 dark:text-gray-100"
-							type="number"
-							aria-label={$i18n.t(
-								'settings.personal.general.parameters.contextCompactionThreshold.label'
-							)}
-							placeholder={$i18n.t('Enter token threshold')}
-							bind:value={params.compact_token_threshold}
-							on:change={() =>
-								onParamChange('compact_token_threshold', params.compact_token_threshold ?? null)}
-							autocomplete="off"
-							min="1"
-							step="1"
-						/>
-					</div>
-				</div>
-			{/if}
-		</div>
-	{/if}
-
 	<div>
 		<Tooltip
 			content={$i18n.t('settings.personal.general.parameters.functionCalling.description')}

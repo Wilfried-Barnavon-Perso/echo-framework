@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-sync.sh
-# VERSION : 6.21.0.1
+# VERSION : 6.23.0.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -12,10 +12,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.0.1: Pré-synchronisation de echo-globals.sh avant migration .secrets/.env, garde d'inode -ef et backfill ensure_echo_secrets sur instance existante.
+# 6.22.1.1: Initialisation unifiée de /opt/ECHO/.secrets/.env et du lien symbolique /opt/ECHO/.env via ensure_echo_env_layout.
 # 6.21.0.1: Auto-relance (--local-only) après synchronisation Git lorsque echo-sync.sh évolue.
 # 6.18.15.1: Garde d'existence /etc/cron.daily lors du nettoyage des liens symboliques.
 # 6.6.20.1: Purge automatique des liens symboliques orphelins (/usr/local/bin et /etc/cron.daily) pointant vers $ECHO_SCRIPTS.
-# 6.5.3.1: Renommage des références echo-open-webui vers echo-webui.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"
@@ -31,6 +32,8 @@ else
     export ECHO_CONFIG="$ECHO_ROOT/config"
     export ECHO_SOURCE="$ECHO_ROOT/source"
     export ECHO_SECRETS="$ECHO_ROOT/.secrets"
+    export ECHO_ENV_FILE="$ECHO_SECRETS/.env"
+    export ECHO_ENV_SYMLINK="$ECHO_ROOT/.env"
     export ECHO_VERSION_FILE="$ECHO_ROOT/ECHO_VERSION"
     export ECHO_BRANCH_FILE="$ECHO_ROOT/ECHO_BRANCH"
 fi
@@ -175,8 +178,34 @@ echo ""
 # --- 2. DÉPLOIEMENT FICHIERS ---
 echo "📂 [SYNC] 2/2 Déploiement des fichiers vers $ECHO_ROOT..."
 
-mkdir -p "$ECHO_SECRETS"
-[ -f "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" ] || (umask 077 && touch "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" && chmod 600 "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}")
+# Pré-synchronisation immédiate de echo-globals.sh pour éviter la pollution ECHO_ENV_FILE=/opt/ECHO/.env pré-6.23
+if [ -f "$SRC_DIR/00-echo-scripts/echo-globals.sh" ]; then
+    mkdir -p "$ECHO_SCRIPTS"
+    cp -f "$SRC_DIR/00-echo-scripts/echo-globals.sh" "$ECHO_SCRIPTS/echo-globals.sh"
+    sed -i '1s/^\xEF\xBB\xBF//; s/\r$//' "$ECHO_SCRIPTS/echo-globals.sh"
+    chmod +x "$ECHO_SCRIPTS/echo-globals.sh"
+    source "$ECHO_SCRIPTS/echo-globals.sh"
+fi
+
+if declare -F ensure_echo_env_layout >/dev/null 2>&1; then
+    ensure_echo_env_layout
+    [ -s "$ECHO_ENV_FILE" ] && declare -F ensure_echo_secrets >/dev/null 2>&1 && ensure_echo_secrets
+else
+    SECRETS_ENV_TARGET="$ECHO_ROOT/.secrets/.env"
+    mkdir -p "$ECHO_ROOT/.secrets"
+    chmod 700 "$ECHO_ROOT/.secrets"
+    [ -d "$ECHO_ROOT/.env" ] && [ ! -L "$ECHO_ROOT/.env" ] && rm -rf "$ECHO_ROOT/.env"
+    if [ -f "$ECHO_ROOT/.env" ] && [ ! -L "$ECHO_ROOT/.env" ] && ! [ "$ECHO_ROOT/.env" -ef "$SECRETS_ENV_TARGET" ]; then
+        if [ ! -s "$SECRETS_ENV_TARGET" ]; then
+            mv -f "$ECHO_ROOT/.env" "$SECRETS_ENV_TARGET"
+        else
+            rm -f "$ECHO_ROOT/.env"
+        fi
+    fi
+    (umask 077 && touch "$SECRETS_ENV_TARGET")
+    chmod 600 "$SECRETS_ENV_TARGET"
+    ln -sfn ".secrets/.env" "$ECHO_ROOT/.env"
+fi
 
 # Table d'état : chemins déjà purgés dans ce run (évite la double suppression)
 _HEALED_PATHS=""

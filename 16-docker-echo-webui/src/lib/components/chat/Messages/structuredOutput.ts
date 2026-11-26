@@ -74,11 +74,6 @@ export type OutputDisplayItem =
 			type: 'file';
 			id: string;
 			item: Record<string, unknown>;
-	  }
-	| {
-			type: 'context_compaction';
-			id: string;
-			summary: string;
 	  };
 
 type ResponseStreamEvent = {
@@ -114,8 +109,21 @@ const OPENAI_TOOL_NAMES: Record<string, string> = {
 	computer_call: 'Computer Use'
 };
 
-function getTextFromParts(parts: OutputContentPart[] = []): string {
-	return parts
+export function normalizeOutputParts(
+	raw: unknown,
+	defaultType = 'output_text'
+): OutputContentPart[] {
+	if (Array.isArray(raw)) {
+		return raw;
+	}
+	if (typeof raw === 'string' && raw.length > 0) {
+		return [{ type: defaultType, text: raw }];
+	}
+	return [];
+}
+
+function getTextFromParts(parts: unknown = []): string {
+	return normalizeOutputParts(parts)
 		.map((part) => {
 			if (part?.text === undefined || part?.text === null) {
 				return '';
@@ -144,16 +152,17 @@ function isDoneStatus(status?: string): boolean {
 }
 
 function getMessageText(item: OutputItem): string {
-	return getTextFromParts(item.content ?? []);
+	return getTextFromParts(normalizeOutputParts(item.content, 'output_text'));
 }
 
 function getReasoningText(item: OutputItem): string {
-	const summary = Array.isArray(item.summary) && item.summary.length ? item.summary : null;
-	return getTextFromParts(summary ?? item.content ?? []);
+	const summaryParts = normalizeOutputParts(item.summary, 'summary_text');
+	const parts = summaryParts.length > 0 ? summaryParts : normalizeOutputParts(item.content, 'reasoning_text');
+	return getTextFromParts(parts);
 }
 
 function getToolResultText(item?: OutputItem): string {
-	return (item?.output ?? [])
+	return normalizeOutputParts(item?.output, 'output_text')
 		.filter((part) => part?.type !== 'input_image')
 		.map((part) => {
 			if (part?.text === undefined || part?.text === null) {
@@ -444,16 +453,6 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			if (token) {
 				currentDetailTokens.push(token);
 			}
-			return;
-		}
-
-		if (item.type === 'open_webui:context_compaction') {
-			flushDetails();
-			displayItems.push({
-				type: 'context_compaction',
-				id: item.id ?? `context-compaction-${index}`,
-				summary: typeof item.summary === 'string' ? item.summary : ''
-			});
 			return;
 		}
 

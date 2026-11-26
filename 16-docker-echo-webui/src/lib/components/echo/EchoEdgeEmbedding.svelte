@@ -1,4 +1,9 @@
 <!-- Copyright (c) 2025-2026 Wilfried BARNAVON | SPDX-License-Identifier: Apache-2.0 -->
+<script context="module" lang="ts">
+	// Mémorise le masquage sur la session SPA pour éviter un réaffichage de 5s à chaque changement de chat
+	let incompatibleHiddenForSession = false;
+</script>
+
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import {
@@ -10,9 +15,20 @@
 		ECHO_EDGE_TARGET_REPO
 	} from '$lib/stores/echo';
 
+	const INCOMPATIBLE_HIDE_DELAY_MS = 5000;
+
 	let showPopover = false;
 	let popoverStyle = '';
 	let containerRef: HTMLDivElement | null = null;
+	let hidden = false;
+	let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const clearHideTimer = () => {
+		if (hideTimer) {
+			clearTimeout(hideTimer);
+			hideTimer = null;
+		}
+	};
 
 	const updatePopoverPosition = () => {
 		if (showPopover && containerRef) {
@@ -39,6 +55,7 @@
 	});
 
 	onDestroy(() => {
+		clearHideTimer();
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleClickOutside);
 			window.removeEventListener('resize', updatePopoverPosition);
@@ -49,6 +66,26 @@
 	$: progress = $echoEdgeEmbedProgress;
 	$: reason = $echoEdgeEmbedReason;
 	$: dtype = $echoEdgeEmbedDtype;
+
+	$: if (state === 'incompatible') {
+		if (incompatibleHiddenForSession) {
+			hidden = true;
+			clearHideTimer();
+		} else if (showPopover) {
+			clearHideTimer();
+		} else if (!hidden && !hideTimer) {
+			hideTimer = setTimeout(() => {
+				hideTimer = null;
+				incompatibleHiddenForSession = true;
+				hidden = true;
+				showPopover = false;
+			}, INCOMPATIBLE_HIDE_DELAY_MS);
+		}
+	} else {
+		clearHideTimer();
+		incompatibleHiddenForSession = false;
+		hidden = false;
+	}
 
 	$: badgeBorder =
 		state === 'active'
@@ -77,6 +114,7 @@
 							: 'En attente';
 </script>
 
+{#if !hidden}
 <div class="relative inline-flex items-center shrink-0" bind:this={containerRef}>
 	<button
 		type="button"
@@ -175,3 +213,4 @@
 		</div>
 	{/if}
 </div>
+{/if}

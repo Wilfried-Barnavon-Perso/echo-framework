@@ -3,21 +3,23 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 6.18.23.1
+VERSION : 6.21.11.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-11
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.11.1: Chiffrement AEAD AES-256-GCM de totp_secret via echo_crypto (ECHO_AUTH_ENCRYPTION_KEY) et endpoint interne POST /internal/verify-totp.
 # 6.18.23.1: Factorisation des connexions auth.db via _open_auth_db (PRAGMA journal_mode=WAL, synchronous=NORMAL, busy_timeout=10000 et fermeture garantie).
 # 6.18.5.1: Plafond strict MAX_ECHO_USERS = 50 (_is_within_user_cap ORDER BY rowid ASC LIMIT 50 sur /api/verify, /login et /enroll).
 # 6.6.3.1: Ajout de la colonne users.gender (M/F/X), pré-remplissage enrôlement et émission du header SSO X-Webui-Gender.
 # 6.5.3.1: Alignement de OWUI_INTERNAL_URL sur http://echo-webui:8080.
-# 5.239.3.1: Ergonomie responsive et ascenseur sur les templates (grille 2 colonnes pour enroll.html, conteneur .auth-container-wide, max-height dynamique avec scrollbar stylisée et correction du contraste des options <select>).
 from contextlib import contextmanager
+import hmac
 import os
 import sqlite3
+import sys
 import httpx
 import pyotp
 import base64
@@ -32,12 +34,22 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from passlib.hash import argon2
+from pydantic import BaseModel
 from typing import Optional
+
+ECHO_LIBS_DIR = "/app/echo_libs"
+if not os.path.isdir(ECHO_LIBS_DIR):
+    ECHO_LIBS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "14-owui-libs"))
+if ECHO_LIBS_DIR not in sys.path and os.path.isdir(ECHO_LIBS_DIR):
+    sys.path.insert(0, ECHO_LIBS_DIR)
+
+from echo_crypto import decrypt_totp_secret, encrypt_totp_secret  # type: ignore
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 DB_PATH = os.environ.get("AUTH_DB_PATH", "/data/auth.db")
+ECHO_SSO_SECRET = os.environ.get("ECHO_SSO_SECRET", "").strip()
 # Plafond technique par défaut
 # (conformité Open WebUI License Clause 4 : <= 50 utilisateurs)
 MAX_ECHO_USERS = 50
@@ -210,11 +222,12 @@ def update_user_enrollment(
         current_time = int(time.time())
         clean_name = (name or "").strip()
         clean_gender = normalize_gender(gender)
+        stored_totp = encrypt_totp_secret(totp_secret, email) if totp_secret else totp_secret
         cursor.execute("""
             UPDATE users 
             SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = COALESCE(NULLIF(?, ''), name), gender = ?, failed_attempts = 0, locked_until = 0
             WHERE email = ?
-        """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, clean_name, clean_gender, email))
+        """, (pass_hash, stored_totp, security_question, security_answer_hash, current_time, clean_name, clean_gender, email))
         conn.commit()
 
 def update_user_password(email: str, pass_hash: str):
@@ -243,6 +256,17 @@ def verify_totp(secret: str, code: str) -> bool:
     valid_window = int(settings.get("totp_tolerance", 1))
     totp = pyotp.TOTP(secret)
     return totp.verify(code, valid_window=valid_window)
+
+
+def verify_stored_user_totp(email: str, stored_secret: Optional[str], code: str) -> bool:
+    clean_code = (code or "").strip().replace(" ", "")
+    if not email or not stored_secret or not clean_code:
+        return False
+    try:
+        plain_secret = decrypt_totp_secret(stored_secret, email)
+        return bool(verify_totp(plain_secret, clean_code))
+    except Exception:
+        return False
 
 def generate_qr_base64(secret: str, email: str) -> str:
     totp = pyotp.TOTP(secret)
@@ -799,7 +823,7 @@ async def login_post(
         })
 
     # Utilisateur normal, vérification MFA
-    if not totp or not verify_totp(user["totp_secret"], totp):
+    if not totp or not verify_stored_user_totp(email, user["totp_secret"], totp):
         attempt_res = record_login_attempt(user, client_ip, False, now, settings)
         return _render_login(
             request,
@@ -960,7 +984,7 @@ async def recovery_step2(
         return templates.TemplateResponse(request=request, name="recovery.html", context={"request": request, "email": email, "question": user["security_question"], "next": safe_next, "error": "Réponse de sécurité incorrecte."})
 
     # Validation MFA
-    if not verify_totp(user["totp_secret"], totp_code):
+    if not verify_stored_user_totp(email, user["totp_secret"], totp_code):
         return templates.TemplateResponse(request=request, name="recovery.html", context={"request": request, "email": email, "question": user["security_question"], "next": safe_next, "error": "Code MFA invalide."})
 
     # Succès
@@ -968,6 +992,29 @@ async def recovery_step2(
     update_user_password(email, pass_hash)
     
     return _render_login(request, next_url=safe_next, success="Mot de passe réinitialisé avec succès.")
+
+
+class InternalTotpVerifyRequest(BaseModel):
+    email: str
+    totp_code: str
+
+
+@app.post("/internal/verify-totp")
+async def internal_verify_totp(payload: InternalTotpVerifyRequest, request: Request):
+    if request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="External proxy transit forbidden")
+    provided_secret = (request.headers.get("x-echo-sso-secret") or "").strip()
+    if not ECHO_SSO_SECRET or not provided_secret or not hmac.compare_digest(provided_secret, ECHO_SSO_SECRET):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal secret")
+    clean_email = (payload.email or "").strip()
+    clean_code = (payload.totp_code or "").strip().replace(" ", "")
+    if not clean_email or not clean_code:
+        return {"valid": False}
+    user = get_user(clean_email)
+    if not user or not user["totp_secret"]:
+        return {"valid": False}
+    return {"valid": bool(verify_stored_user_totp(clean_email, user["totp_secret"], clean_code))}
+
 
 # Route racine de fallback (évite les 404 si safe_next retombe sur "/")
 @app.get("/")

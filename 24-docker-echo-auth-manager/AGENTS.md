@@ -8,8 +8,16 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `auth_server.py` (v6.18.23.1)
+### `auth_server.py` (v6.21.11.1)
 Le cœur du gestionnaire d'identités (FastAPI), alignant `OWUI_INTERNAL_URL` sur `http://echo-webui:8080`.
+- **Chiffrement AEAD `totp_secret` & Endpoint Interne `/internal/verify-totp`** : Chiffre et déchiffre les graines MFA `users.totp_secret` en `AES-256-GCM` via `/app/echo_libs/echo_crypto.py` (`encrypt_totp_secret` / `decrypt_totp_secret` avec `ECHO_AUTH_ENCRYPTION_KEY`, `HKDF-SHA256` et `AAD = totp:<email_lower>`). Expose `POST /internal/verify-totp` (interdit via `X-Forwarded-For`/`X-Real-IP`, protégé en temps constant par `X-Echo-Sso-Secret`) pour la vérification Zero-Key déléguée par `echo-user-manager`.
+  - **Migration CLI ponctuelle (`totp_secret` existants)** :
+    ```bash
+    docker exec -i echo-auth-manager python -c "import sqlite3, sys; sys.path.insert(0, '/app/echo_libs'); from echo_crypto import encrypt_totp_secret, is_encrypted_payload; conn = sqlite3.connect('/app/auth-data/auth.db', timeout=10.0); rows = [(e, s) for e, s in conn.execute(\"SELECT email, totp_secret FROM users WHERE totp_secret IS NOT NULL AND totp_secret != ''\").fetchall() if not is_encrypted_payload(s)]
+    for e, s in rows: conn.execute('UPDATE users SET totp_secret = ? WHERE email = ?', (encrypt_totp_secret(s, e), e))
+    if rows: conn.commit(); conn.execute('PRAGMA wal_checkpoint(TRUNCATE);')
+    conn.close(); print(f'[ECHO-MIGRATE] totp_secret : {len(rows)} compte(s) chiffré(s).')"
+    ```
 - **Authentification Locale, Genre & Hachage Argon2** : Gère les comptes utilisateurs et sessions SSO dans SQLite (`auth.db` via le helper `_open_auth_db` imposant `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, `PRAGMA busy_timeout=10000` et fermeture garantie, tables `users` incluant `gender TEXT DEFAULT 'X'` migré via `init_db`, et `sessions`) avec normalisation via `normalize_gender` (`M`/`F`/`X`), préservation du `name` préexistant lors de l'enrôlement (`COALESCE(NULLIF(?, ''), name)` + mise à jour de `gender` dans `update_user_enrollment`), hachage de mots de passe et réponses de sécurité via **Argon2** (`passlib.hash.argon2`), gestion de l'expiration des mots de passe temporaires (`temp_pass_expires`), suivi de la date d'enrôlement (`last_enrollment`) et traçabilité de session (`ip_address`, `os`, `browser`, `device`). Dans `stack-echo.yml`, `JWT_EXPIRES_IN` d'Open WebUI est aligné sur `${ECHO_JWT_EXPIRES_IN:-4w}` (4 semaines par défaut) et soutenu par un bounce `/sso-logout` (`Clear-Site-Data: "cache"`).
 - **Garde Anti-Bruteforce & Politique de Verrouillage Dual-Tier** :
   - **Délai inter-essais paramétrable (`login_retry_delay_sec`)** : Constante `LOGIN_RETRY_DELAY_VALID_SEC = (0, 5, 10, 20)`. Imposé sur tous les comptes (enrôlés ou non via `last_attempt_at` SQLite) ainsi que sur les IP inconnues/adresses non reconnues via le cache mémoire LRU `_ip_last_attempt` (purge automatique au-delà de 2048 entrées).

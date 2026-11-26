@@ -8,6 +8,7 @@ import {
 	getEchoToken,
 	registerEchoWmWsTransport
 } from '$lib/apis/echo';
+import type { EchoCompactionCheckpoint } from '$lib/apis/echo/chat_actions';
 import { isSavedChatId } from '$lib/utils/chatId';
 
 export interface EchoContextGaugePayload {
@@ -284,6 +285,8 @@ export interface EchoWaitTimerState {
 }
 
 export const echoContextGauge = writable<EchoContextGaugePayload | null>(null);
+export const echoActiveModel = writable<string | null>(null);
+export const echoChatCheckpoints = writable<Record<string, EchoCompactionCheckpoint[]>>({});
 export const echoWaitTimers = writable<Record<string, EchoWaitTimerState | null>>({});
 export const clearEchoWaitTimer = (chatId: string) => {
 	if (!chatId) return;
@@ -410,25 +413,19 @@ export const echoEdgeEmbedReason = writable<string>('');
 export const echoEdgeEmbedDtype = writable<'fp16' | 'fp32'>('fp16');
 export const ECHO_EDGE_TARGET_REPO = 'onnx-community/harrier-oss-v1-0.6b-ONNX';
 
-// Gestionnaire SSE refcounté unique pour /echo/v1/cognition/{chatId}/stream
+// Gestionnaire refcounté des snapshots cognition via bus WS /echo/v1/wm/ws
 let activeStreamChatId = '';
 let activeRefCount = 0;
-let activeEventSource: EventSource | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-const clearReconnectTimer = () => {
-	if (reconnectTimer !== null) {
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
-	}
-};
+let cognitionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let cognitionRefreshInFlight = false;
+let cognitionRefreshQueued = false;
 
 const closeActiveStream = () => {
-	clearReconnectTimer();
-	if (activeEventSource) {
-		activeEventSource.close();
-		activeEventSource = null;
+	if (cognitionRefreshTimer !== null) {
+		clearTimeout(cognitionRefreshTimer);
+		cognitionRefreshTimer = null;
 	}
+	cognitionRefreshQueued = false;
 };
 
 const resetCognitionStores = () => {
@@ -445,43 +442,40 @@ const applyCognitionSnapshot = (data: EchoCognitionSnapshot) => {
 	echoCognitionRunningCount.set(data.running_count ?? 0);
 };
 
-const openCognitionEventSource = (chatId: string) => {
-	if (typeof window === 'undefined') return;
-	const token = localStorage?.token;
-	if (!token || !isSavedChatId(chatId)) return;
-
-	closeActiveStream();
-	const url = `${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/stream?token=${encodeURIComponent(token)}`;
-	const source = new EventSource(url);
-	activeEventSource = source;
-
-	source.onmessage = (event) => {
-		if (chatId !== activeStreamChatId) return;
-		try {
-			const data = JSON.parse(event.data) as EchoCognitionSnapshot;
-			if (!data?.chat_id || data.chat_id === activeStreamChatId) {
-				applyCognitionSnapshot(data);
-			}
-		} catch {
-			// Ignorer les trames JSON malformées
+const runCognitionRefresh = async (chatId: string) => {
+	if (!chatId || chatId !== activeStreamChatId || activeRefCount <= 0) return;
+	if (cognitionRefreshInFlight) {
+		cognitionRefreshQueued = true;
+		return;
+	}
+	cognitionRefreshInFlight = true;
+	try {
+		await refreshCognitionSnapshot(chatId);
+	} finally {
+		cognitionRefreshInFlight = false;
+		if (cognitionRefreshQueued && activeRefCount > 0 && activeStreamChatId === chatId) {
+			cognitionRefreshQueued = false;
+			scheduleCognitionRefresh(chatId, 80);
 		}
-	};
+	}
+};
 
-	source.onerror = () => {
-		if (activeEventSource === source) {
-			source.close();
-			activeEventSource = null;
+const scheduleCognitionRefresh = (chatId: string, delayMs = 80) => {
+	if (!chatId || chatId !== activeStreamChatId || activeRefCount <= 0) return;
+	if (delayMs <= 0) {
+		if (cognitionRefreshTimer !== null) {
+			clearTimeout(cognitionRefreshTimer);
+			cognitionRefreshTimer = null;
 		}
-		if (activeRefCount > 0 && activeStreamChatId === chatId) {
-			clearReconnectTimer();
-			reconnectTimer = setTimeout(() => {
-				reconnectTimer = null;
-				if (activeRefCount > 0 && activeStreamChatId === chatId) {
-					openCognitionEventSource(chatId);
-				}
-			}, 3000);
-		}
-	};
+		void runCognitionRefresh(chatId);
+		return;
+	}
+	if (cognitionRefreshTimer === null) {
+		cognitionRefreshTimer = setTimeout(() => {
+			cognitionRefreshTimer = null;
+			void runCognitionRefresh(chatId);
+		}, delayMs);
+	}
 };
 
 export const acquireCognitionStream = (chatId: string): (() => void) => {
@@ -496,6 +490,7 @@ export const acquireCognitionStream = (chatId: string): (() => void) => {
 		return () => {};
 	}
 
+	const isNewOrFirst = activeStreamChatId !== chatId || activeRefCount === 0;
 	if (activeStreamChatId !== chatId) {
 		closeActiveStream();
 		activeStreamChatId = chatId;
@@ -504,8 +499,8 @@ export const acquireCognitionStream = (chatId: string): (() => void) => {
 	}
 
 	activeRefCount += 1;
-	if (!activeEventSource) {
-		openCognitionEventSource(chatId);
+	if (isNewOrFirst) {
+		scheduleCognitionRefresh(chatId, 0);
 	}
 
 	let released = false;
@@ -667,6 +662,9 @@ const openWmSocket = () => {
 				wmSocketAuthenticated = true;
 				wmReconnectAttempt = 0;
 				registerEchoWmWsTransport(sendWmRpcOverWs);
+				if (activeRefCount > 0 && activeStreamChatId) {
+					scheduleCognitionRefresh(activeStreamChatId, 0);
+				}
 				return;
 			}
 			if (data.type === 'ping') {
@@ -697,6 +695,23 @@ const openWmSocket = () => {
 				const activeCid = wmGetActiveChatId();
 				if (!data.payload.chat_id || data.payload.chat_id === activeCid) {
 					echoContextGauge.set(data.payload);
+				}
+			} else if (data.type === 'echo_active_model') {
+				const activeCid = wmGetActiveChatId();
+				if (!data.chat_id || data.chat_id === activeCid) {
+					const mk =
+						typeof data.model_key === 'string' && data.model_key.trim()
+							? data.model_key.trim()
+							: null;
+					echoActiveModel.set(mk);
+				}
+			} else if (data.type === 'echo_context_checkpoint' && data.payload) {
+				const cid = data.payload.chat_id || data.chat_id || '';
+				if (cid && Array.isArray(data.payload.checkpoints)) {
+					echoChatCheckpoints.update((all) => ({
+						...all,
+						[cid]: data.payload.checkpoints
+					}));
 				}
 			} else if (data.type === 'echo_open_tab') {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
@@ -794,6 +809,11 @@ const openWmSocket = () => {
 							}
 						}));
 					}
+				}
+			} else if (data.type === 'echo_cognition_update') {
+				const cid = String(data.chat_id || '');
+				if (cid && activeRefCount > 0 && cid === activeStreamChatId) {
+					scheduleCognitionRefresh(cid, 80);
 				}
 			}
 		} catch {

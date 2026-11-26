@@ -4,20 +4,22 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 6.20.4.1
+VERSION : 6.22.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Whitelist /api/admin/secrets/<id>, import PRA /action/backup/upload, restauration Fail-Closed 4 barrières EBKP1 + fusion sélective .secrets/.env et arrêt/relance echo-auth-manager.
+# 6.21.10.1: Purge/création 0o700 de RCLONE_CONF_DIR au restore, chmod 0o600 sur rclone.conf/*_sa.json et contrôle ECHO_AUTH_ENCRYPTION_KEY.
 # 6.20.4.1: Agrégation de TMP_UPLOADS_DIR (.tmp_uploads) et UPLOADS_DIR dans storage_stats["uploads"] pour le Dashboard.
 # 6.18.23.1: Durcissement SQLite WAL/NORMAL/busy_timeout et fermeture garantie sur toutes les routes via core.security.open_sqlite_db.
 # 6.18.5.1: Plafond strict MAX_ECHO_USERS = 50 (_get_auth_user_quota, GET /api/auth/quota, gardes sur auth_create_user, auth_import_users et auth_import_admin).
-# 6.18.3.1: Garde défensive principal_id != '*' sur la purge access_grant dans auth_delete_user.
-# 6.18.0.1: Compatibilité ECHO v6 (BACKUP_AUX_CONTAINERS et détection ECHO_ADMIN_PASSWORD au restore, purge identity_vault dans auth_reset_user, purge auth/access_grant/automation_run dans auth_delete_user, suppression de la route dupliquée auth_user_role).
+import base64
 import configparser
 from contextlib import closing
 import datetime
 import glob
+import hashlib
 import json
 import os
 import re
@@ -46,16 +48,15 @@ from core.config import (
     HAS_ECHO_LIBS,
     HAS_PSUTIL,
     HOST_ECHO_ROOT,
-    HOST_ENV_FILE,
     HOST_GATEWAY,
     MAINTENANCE_STATE,
     MAX_ECHO_USERS,
     MCP_CACHE_DIR,
     N8N_DATA_DIR,
-    OWUI_ADMIN_SECRET_PATH,
     OWUI_DATA_ROOT,
     RCLONE_CONF_DIR,
     RCLONE_CONF_PATH,
+    RESTORE_EXTRA_CONTAINERS,
     SYSTEM_ADMIN_EMAIL,
     TARGET_CONTAINER,
     TMP_UPLOADS_DIR,
@@ -65,11 +66,27 @@ from core.config import (
     docker,
     paramiko,
     psutil,
+    parse_env_content,
+    read_host_env_dict,
 )
 
 if HAS_ECHO_LIBS:
     from echo_paths import get_echo_identity_db_path
     from echo_db_schema import open_db
+    from echo_crypto import (
+        decrypt_backup_file_to_path,
+        is_encrypted_backup_file,
+        verify_backup_key_file,
+    )
+else:
+    def is_encrypted_backup_file(_file_path: str) -> bool:
+        return False
+
+    def verify_backup_key_file(_file_path: str, _raw_key: str) -> bool:
+        return False
+
+    def decrypt_backup_file_to_path(_enc_path: str, _dst_plain_path: str, _raw_key: str) -> int:
+        raise RuntimeError("Module echo_crypto indisponible.")
 from core.utils import (
     _format_bytes,
     _get_tree_size,
@@ -92,6 +109,7 @@ from core.settings_io import (
 from core.security import (
     change_system_password,
     generate_complex_temp_password,
+    get_instance_secret,
     open_sqlite_db,
 )
 from services.memory_consolidation import consolidate_memories_for_user
@@ -154,7 +172,19 @@ def index():
         "real_sessions": real_session_count,
         "backup_size": backup_stats.get("size_fmt", "N/A")
     }
-    return render_template_string(HTML_DASHBOARD, settings=load_settings(), 
+    ui_settings = dict(load_settings())
+    has_sftp_pass = bool(ui_settings.get("sftp_pass"))
+    ui_settings["sftp_pass"] = ""
+    bkey = get_instance_secret("ECHO_BACKUP_ENCRYPTION_KEY")
+    apwd = get_instance_secret("ECHO_ADMIN_PASSWORD")
+    secrets_meta = {
+        "has_backup_key": bool(bkey),
+        "backup_key_fp": hashlib.sha256(bkey.encode("utf-8")).hexdigest()[:10] if bkey else "",
+        "has_admin_pwd": bool(apwd),
+    }
+    return render_template_string(HTML_DASHBOARD, settings=ui_settings,
+                                has_sftp_pass=has_sftp_pass,
+                                secrets_meta=secrets_meta,
                                 storage_stats=stats, maint=load_maint_config(),
                                 auth_settings=get_auth_settings(),
                                 version=get_echo_version(), user=session.get('username'),
@@ -211,14 +241,31 @@ def user_stats():
     except Exception: pass
     return jsonify(data)
 
+ADMIN_EXPORTABLE_SECRETS = {
+    "backup_key": "ECHO_BACKUP_ENCRYPTION_KEY",
+    "admin_password": "ECHO_ADMIN_PASSWORD",
+}
+
+
+@app.route('/api/admin/secrets/<secret_id>')
+def api_admin_secret(secret_id):
+    if not session.get('logged_in'):
+        return jsonify({"error": "Unauthorized"}), 403
+    env_key = ADMIN_EXPORTABLE_SECRETS.get(secret_id)
+    if not env_key:
+        return jsonify({"error": "Not found"}), 404
+    val = get_instance_secret(env_key)
+    if not val:
+        return jsonify({"error": "Secret absent"}), 404
+    return jsonify({"key": secret_id, "value": val})
+
+
 @app.route('/api/admin/password')
 def admin_password():
-    if not session.get('logged_in'): return jsonify({}), 403
-    try:
-        if os.path.exists(OWUI_ADMIN_SECRET_PATH):
-            with open(OWUI_ADMIN_SECRET_PATH, 'r') as f: return jsonify({"password": f.read().strip()})
-    except Exception: pass
-    return jsonify({"password": "N/A"})
+    if not session.get('logged_in'):
+        return jsonify({}), 403
+    pwd = get_instance_secret("ECHO_ADMIN_PASSWORD")
+    return jsonify({"password": pwd or "N/A"})
 
 @app.route('/api/backups')
 def api_backups():
@@ -338,79 +385,191 @@ def containers():
         return jsonify([])
 
 
-def _restore_host_secrets_and_check_env(client, archive_path: str, has_secrets: bool, has_env: bool) -> bool:
-    """Restaure .secrets et .env sur l'hôte via un conteneur éphémère one-shot et détecte si une clé maître a changé."""
-    if not has_secrets and not has_env:
+def _extract_tar_member_text(tar_path: str, member_name: str) -> str:
+    """Extrait en mémoire le contenu UTF-8 d'un membre précis d'une archive tar.xz."""
+    if not member_name:
+        return ""
+    res = subprocess.run(
+        ['tar', '-xOf', tar_path, member_name],
+        capture_output=True,
+        check=False,
+    )
+    if res.returncode != 0 or not res.stdout:
+        return ""
+    return res.stdout.decode("utf-8", errors="ignore")
+
+
+def _format_env_line(key: str, val: str) -> str:
+    """Formate une ligne KEY=VALUE compatible Docker Compose / Bash."""
+    if any(ch in val for ch in (' ', ';', '#', '"', "'")):
+        escaped = val.replace('"', '\\"')
+        return f'{key}="{escaped}"'
+    return f"{key}={val}"
+
+
+def _restore_host_secrets_and_check_env(client, staging_tar_path: str, files_list: list[str]) -> bool:
+    """Restaure sélectivement .secrets/.env sur l'hôte via conteneur éphémère et détecte les divergences."""
+    norm_map = {f.lstrip('./').rstrip('/'): f for f in files_list if f}
+    env_member = norm_map.get('app/secrets/.env') or norm_map.get('app/host_env/.env') or ''
+    legacy_sec_member = norm_map.get('app/secrets/.owui-admin-secret') or ''
+    if not env_member and not legacy_sec_member:
         return False
 
+    archive_env = parse_env_content(_extract_tar_member_text(staging_tar_path, env_member)) if env_member else {}
+    if not archive_env.get("ECHO_ADMIN_PASSWORD") and legacy_sec_member:
+        legacy_pwd = _extract_tar_member_text(staging_tar_path, legacy_sec_member).strip()
+        if legacy_pwd:
+            archive_env["ECHO_ADMIN_PASSWORD"] = legacy_pwd
+
+    if not archive_env:
+        return False
+
+    current_host_env = read_host_env_dict()
+    data_bound_keys = (
+        "ECHO_VAULT_ENCRYPTION_KEY",
+        "ECHO_AUTH_ENCRYPTION_KEY",
+        "N8N_ENCRYPTION_KEY",
+        "N8N_INSTANCE_OWNER_MANAGED_BY_ENV",
+        "N8N_INSTANCE_OWNER_EMAIL",
+        "N8N_INSTANCE_OWNER_FIRST_NAME",
+        "N8N_INSTANCE_OWNER_LAST_NAME",
+        "N8N_INSTANCE_OWNER_PASSWORD",
+        "ECHO_BACKUP_ENCRYPTION_KEY",
+        "ECHO_ADMIN_PASSWORD",
+        "ECHO_SSO_SECRET",
+    )
+    host_bound_keys = (
+        "BW_DB_PASSWORD",
+        "SEARXNG_SECRET",
+        "ECHO_DOMAIN",
+        "ECHO_DETECTED_ORIGINS",
+        "ECHO_JWT_EXPIRES_IN",
+        "TZ",
+    )
+
+    merged_env = dict(current_host_env)
+    for k, v in archive_env.items():
+        if k not in host_bound_keys and v:
+            merged_env[k] = v
+    for k in data_bound_keys:
+        if archive_env.get(k):
+            merged_env[k] = archive_env[k]
+    for k in host_bound_keys:
+        if current_host_env.get(k):
+            merged_env[k] = current_host_env[k]
+        elif archive_env.get(k):
+            merged_env[k] = archive_env[k]
+
+    env_payload_text = "\n".join(_format_env_line(k, v) for k, v in merged_env.items()) + "\n"
+    env_b64 = base64.b64encode(env_payload_text.encode("utf-8")).decode("ascii")
+
     restore_py_script = (
-        "import os, shutil, subprocess, sys\n"
-        "archive, has_sec, has_env = sys.argv[1], sys.argv[2] == '1', sys.argv[3] == '1'\n"
-        "tmp_dir = '/tmp/echo_sec_restore'\n"
-        "shutil.rmtree(tmp_dir, ignore_errors=True)\n"
-        "os.makedirs(tmp_dir, exist_ok=True)\n"
-        "members = ([] if not has_sec else ['app/secrets']) + ([] if not has_env else ['app/host_env/.env'])\n"
-        "subprocess.run(['tar', '-xf', archive, '-C', tmp_dir, *members], check=True)\n"
-        "if has_sec:\n"
-        "    sec_dst = '/host_echo/.secrets'\n"
-        "    os.makedirs(sec_dst, exist_ok=True)\n"
-        "    for f in os.listdir(sec_dst):\n"
-        "        fp = os.path.join(sec_dst, f)\n"
-        "        if os.path.isfile(fp):\n"
-        "            os.remove(fp)\n"
-        "    sec_src = os.path.join(tmp_dir, 'app/secrets')\n"
-        "    if os.path.isdir(sec_src):\n"
-        "        for f in os.listdir(sec_src):\n"
-        "            sp, dp = os.path.join(sec_src, f), os.path.join(sec_dst, f)\n"
-        "            if os.path.isfile(sp):\n"
-        "                shutil.copy2(sp, dp)\n"
-        "                os.chmod(dp, 0o400)\n"
-        "if has_env:\n"
-        "    env_src = os.path.join(tmp_dir, 'app/host_env/.env')\n"
-        "    env_dst = '/host_echo/.env'\n"
-        "    if os.path.isfile(env_src):\n"
-        "        shutil.copy2(env_src, env_dst)\n"
-        "        os.chmod(env_dst, 0o600)\n"
-        "shutil.rmtree(tmp_dir, ignore_errors=True)\n"
+        "import base64, os, shutil, sys\n"
+        "raw_env = base64.b64decode(sys.argv[1].encode('ascii'))\n"
+        "sec_dir = '/host_echo/.secrets'\n"
+        "os.makedirs(sec_dir, mode=0o700, exist_ok=True)\n"
+        "os.chmod(sec_dir, 0o700)\n"
+        "env_tmp = os.path.join(sec_dir, '.env.restore.tmp')\n"
+        "env_dst = os.path.join(sec_dir, '.env')\n"
+        "fd = os.open(env_tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)\n"
+        "with os.fdopen(fd, 'wb') as f_out:\n"
+        "    f_out.write(raw_env)\n"
+        "os.replace(env_tmp, env_dst)\n"
+        "os.chmod(env_dst, 0o600)\n"
+        "legacy_sec = os.path.join(sec_dir, '.owui-admin-secret')\n"
+        "if os.path.exists(legacy_sec):\n"
+        "    os.remove(legacy_sec)\n"
+        "sym_path = '/host_echo/.env'\n"
+        "if os.path.islink(sym_path):\n"
+        "    os.unlink(sym_path)\n"
+        "elif os.path.isdir(sym_path):\n"
+        "    shutil.rmtree(sym_path)\n"
+        "elif os.path.exists(sym_path):\n"
+        "    os.remove(sym_path)\n"
+        "os.symlink('.secrets/.env', sym_path)\n"
     )
     client.containers.run(
         image="echo-python-base:latest",
-        command=["python3", "-c", restore_py_script, archive_path, "1" if has_secrets else "0", "1" if has_env else "0"],
+        command=["python3", "-c", restore_py_script, env_b64],
         volumes={
             HOST_ECHO_ROOT: {"bind": "/host_echo", "mode": "rw"},
-            "echo-backups": {"bind": BACKUP_DIR, "mode": "ro"},
         },
         remove=True,
     )
 
-    if not has_env or not os.path.isfile(HOST_ENV_FILE):
-        return False
-
     try:
-        with open(HOST_ENV_FILE, "r", encoding="utf-8", errors="ignore") as f_env:
-            restored_kv = {}
-            for line in f_env:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    restored_kv[k.strip()] = v.strip()
-
-        def _get_container_env_val(cname: str, key: str) -> str:
+        def _get_container_env_val(cname: str, key: str):
             try:
                 env_list = client.containers.get(cname).attrs.get("Config", {}).get("Env", [])
-                return next((e.split("=", 1)[1] for e in env_list if e.startswith(f"{key}=")), "")
-            except Exception:
+                for e in env_list:
+                    if e.startswith(f"{key}="):
+                        return e.split("=", 1)[1]
                 return ""
+            except Exception:
+                return None
 
         checks = [
-            (restored_kv.get("ECHO_VAULT_ENCRYPTION_KEY", ""), _get_container_env_val(TARGET_CONTAINER, "ECHO_VAULT_ENCRYPTION_KEY")),
-            (restored_kv.get("ECHO_ADMIN_PASSWORD", ""), _get_container_env_val(TARGET_CONTAINER, "WEBUI_ADMIN_PASSWORD")),
-            (restored_kv.get("N8N_ENCRYPTION_KEY", ""), _get_container_env_val("echo-n8n-worker", "N8N_ENCRYPTION_KEY")),
-            (restored_kv.get("ECHO_SSO_SECRET", ""), os.environ.get("ECHO_SSO_SECRET", "")),
+            (merged_env.get("ECHO_VAULT_ENCRYPTION_KEY", ""), _get_container_env_val(TARGET_CONTAINER, "ECHO_VAULT_ENCRYPTION_KEY")),
+            (merged_env.get("ECHO_AUTH_ENCRYPTION_KEY", ""), _get_container_env_val("echo-auth-manager", "ECHO_AUTH_ENCRYPTION_KEY")),
+            (merged_env.get("ECHO_ADMIN_PASSWORD", ""), _get_container_env_val(TARGET_CONTAINER, "WEBUI_ADMIN_PASSWORD")),
+            (merged_env.get("N8N_ENCRYPTION_KEY", ""), _get_container_env_val("echo-n8n-worker", "N8N_ENCRYPTION_KEY")),
+            (merged_env.get("ECHO_SSO_SECRET", ""), _get_container_env_val("echo-auth-manager", "ECHO_SSO_SECRET")),
+            (merged_env.get("ECHO_SSO_SECRET", ""), os.environ.get("ECHO_SSO_SECRET", "") or None),
         ]
-        return any(new_val and cur_val and new_val != cur_val for new_val, cur_val in checks)
+        return any(new_val and cur_val is not None and new_val != cur_val for new_val, cur_val in checks)
     except Exception:
         return False
+
+
+@app.route('/action/backup/upload', methods=['POST'])
+def upload_backup():
+    if not session.get('logged_in'):
+        return redirect(url_for('index'))
+    if MAINTENANCE_STATE.get("is_running"):
+        flash("Une opération de maintenance ou de sauvegarde est déjà en cours.", "warning")
+        return redirect(url_for('index'))
+    up_file = request.files.get('backup_file')
+    if not up_file or not up_file.filename:
+        flash("Aucun fichier sélectionné.", "danger")
+        return redirect(url_for('index'))
+    fname = secure_filename(up_file.filename)
+    if not (fname.endswith('.tar.xz.enc') or fname.endswith('.tar.xz')):
+        flash("Format refusé : seuls les fichiers .tar.xz.enc ou .tar.xz sont acceptés.", "danger")
+        return redirect(url_for('index'))
+    if not fname.startswith('echo_backup_'):
+        fname = f"echo_backup_imported_{fname}"
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    dst_path = os.path.join(BACKUP_DIR, fname)
+    part_path = f"{dst_path}.part"
+    try:
+        first_chunk = up_file.stream.read(4 * 1024 * 1024)
+        if fname.endswith('.tar.xz.enc'):
+            if not first_chunk.startswith(b"EBKP1"):
+                flash("Fichier rejeté : signature d'archive chiffrée EBKP1 absente.", "danger")
+                return redirect(url_for('index'))
+        elif not first_chunk.startswith(b"\xfd7zXZ\x00"):
+            flash("Fichier rejeté : signature tar.xz valide absente.", "danger")
+            return redirect(url_for('index'))
+
+        fd = os.open(part_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'wb') as f_out:
+            f_out.write(first_chunk)
+            while True:
+                chunk = up_file.stream.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+        os.replace(part_path, dst_path)
+        flash(f"Sauvegarde '{fname}' importée avec succès.", "success")
+    except Exception as e:
+        if os.path.exists(part_path):
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
+        flash(f"Erreur lors de l'importation : {e}", "danger")
+    return redirect(url_for('index'))
 
 
 @app.route('/action/<action>', methods=['POST'])
@@ -521,72 +680,114 @@ def handle_action(action):
         if f and os.path.exists(p := os.path.join(BACKUP_DIR, secure_filename(f))): os.remove(p); flash('Supprimé.', 'warning')
     elif action == 'restore':
         f = request.form.get('filename')
-        if f and DOCKER_AVAILABLE:
-            p = os.path.join(BACKUP_DIR, secure_filename(f))
-            if not os.path.exists(p):
-                flash('Erreur: Fichier de sauvegarde introuvable.', 'danger')
-                return redirect(url_for('index'))
-            stopped_containers = []
-            try:
-                client = docker.from_env()
-                for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS):
-                    try:
-                        c_obj = client.containers.get(c_name)
-                        c_obj.stop()
-                        stopped_containers.append(c_obj)
-                    except Exception:
-                        pass
-                
-                list_cmd = subprocess.run(['tar', '-tf', p], capture_output=True, text=True, check=True)
-                files_list = list_cmd.stdout.split('\n')
-                has_secrets = any(f.startswith('app/secrets') for f in files_list)
-                has_env = any(f.startswith('app/host_env/.env') for f in files_list)
-                env_recreate_required = False
-                if any(f.startswith('app/backend/data') for f in files_list):
-                    shutil.rmtree('/app/backend/data', ignore_errors=True)
-                    os.makedirs('/app/backend/data', exist_ok=True)
-                    shutil.rmtree('/qdrant/storage', ignore_errors=True)
-                    os.makedirs('/qdrant/storage', exist_ok=True)
-                    shutil.rmtree('/app/auth-data', ignore_errors=True)
-                    os.makedirs('/app/auth-data', exist_ok=True)
-                    if any(f.startswith('app/n8n-data') for f in files_list):
-                        shutil.rmtree(N8N_DATA_DIR, ignore_errors=True)
-                        os.makedirs(N8N_DATA_DIR, exist_ok=True)
-                    if any(f.startswith('app/mcp_cache') for f in files_list):
-                        shutil.rmtree(MCP_CACHE_DIR, ignore_errors=True)
-                        os.makedirs(MCP_CACHE_DIR, exist_ok=True)
-                    subprocess.run(
-                        ['tar', '-xf', p, '-C', '/', '--exclude=app/secrets', '--exclude=app/host_env'],
-                        check=True,
-                    )
-                    env_recreate_required = _restore_host_secrets_and_check_env(client, p, has_secrets, has_env)
-                else:
-                    shutil.rmtree(OWUI_DATA_ROOT, ignore_errors=True)
-                    os.makedirs(OWUI_DATA_ROOT, exist_ok=True)
-                    subprocess.run(['tar', '-xf', p, '-C', OWUI_DATA_ROOT], check=True)
-                
-                if env_recreate_required:
-                    flash(
-                        "Restauration terminée. ⚠️ Des clés maîtresses (.env) ont été modifiées : "
-                        "exécutez 'docker compose --env-file /opt/ECHO/.env -f /opt/ECHO/config/stack-echo.yml up -d' "
-                        "(ou 'echo-upgrade.sh') sur l'hôte pour recréer les conteneurs.",
-                        'warning',
-                    )
-                else:
-                    flash('Restauration terminée.', 'success')
-            except Exception as e:
-                flash(f'Erreur: {e}', 'danger')
-            finally:
-                already_restarted = set()
-                for c_obj in stopped_containers:
-                    try:
-                        c_obj.start()
-                        already_restarted.add(getattr(c_obj, 'name', ''))
-                    except Exception:
-                        pass
+        if not f:
+            flash('Nom de sauvegarde manquant.', 'danger')
+            return redirect(url_for('index'))
+        p = os.path.join(BACKUP_DIR, secure_filename(f))
+        if not os.path.exists(p):
+            flash('Erreur: Fichier de sauvegarde introuvable.', 'danger')
+            return redirect(url_for('index'))
+
+        is_enc = is_encrypted_backup_file(p) or p.endswith('.enc')
+        backup_key = (request.form.get('backup_key') or '').strip()
+
+        # Barrière 1 : clé obligatoire pour toute archive chiffrée (avant toute coupure de service)
+        if is_enc and not backup_key:
+            flash('Restauration refusée : la clé de déchiffrement est obligatoire.', 'danger')
+            return redirect(url_for('index'))
+
+        # Barrière 2 : validation instantanée de l'en-tête AEAD EBKP1 (< 2 ms)
+        if is_enc and not verify_backup_key_file(p, backup_key):
+            flash('Restauration refusée : clé de déchiffrement invalide pour cette sauvegarde.', 'danger')
+            return redirect(url_for('index'))
+
+        if not DOCKER_AVAILABLE:
+            flash('Docker indisponible pour coordonner la restauration.', 'danger')
+            return redirect(url_for('index'))
+
+        staging_tar = None
+        stopped_containers = []
+        try:
+            # Barrière 3 : validation intégrale AEAD de tous les blocs + tar -tf avant arrêt/purge
+            if is_enc:
+                staging_tar = os.path.join(
+                    BACKUP_DIR,
+                    f".restore_staging_{os.getpid()}_{int(time.time())}.tar.xz",
+                )
+                decrypt_backup_file_to_path(p, staging_tar, backup_key)
+                tar_source = staging_tar
+            else:
+                tar_source = p
+
+            list_cmd = subprocess.run(['tar', '-tf', tar_source], capture_output=True, text=True, check=True)
+            files_list = list_cmd.stdout.split('\n')
+            norm_files = [m.lstrip('./') for m in files_list]
+
+            # Barrière 4 : arrêt coordonné (dont echo-auth-manager), purge contrôlée et extraction
+            client = docker.from_env()
+            for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS, *RESTORE_EXTRA_CONTAINERS):
+                try:
+                    c_obj = client.containers.get(c_name)
+                    c_obj.stop()
+                    stopped_containers.append(c_obj)
+                except Exception:
+                    pass
+
+            env_recreate_required = False
+            if any(m.startswith('app/backend/data') for m in norm_files):
+                shutil.rmtree('/app/backend/data', ignore_errors=True)
+                os.makedirs('/app/backend/data', exist_ok=True)
+                shutil.rmtree('/qdrant/storage', ignore_errors=True)
+                os.makedirs('/qdrant/storage', exist_ok=True)
+                shutil.rmtree('/app/auth-data', ignore_errors=True)
+                os.makedirs('/app/auth-data', exist_ok=True)
+                if any(m.startswith('app/n8n-data') for m in norm_files):
+                    shutil.rmtree(N8N_DATA_DIR, ignore_errors=True)
+                    os.makedirs(N8N_DATA_DIR, exist_ok=True)
+                if any(m.startswith('app/mcp_cache') for m in norm_files):
+                    shutil.rmtree(MCP_CACHE_DIR, ignore_errors=True)
+                    os.makedirs(MCP_CACHE_DIR, exist_ok=True)
+                if any(m.startswith('backups/rclone') for m in norm_files):
+                    shutil.rmtree(RCLONE_CONF_DIR, ignore_errors=True)
+                    os.makedirs(RCLONE_CONF_DIR, mode=0o700, exist_ok=True)
+                subprocess.run(
+                    ['tar', '-xf', tar_source, '-C', '/', '--exclude=app/secrets', '--exclude=app/host_env'],
+                    check=True,
+                )
+                env_recreate_required = _restore_host_secrets_and_check_env(client, tar_source, files_list)
+            else:
+                shutil.rmtree(OWUI_DATA_ROOT, ignore_errors=True)
+                os.makedirs(OWUI_DATA_ROOT, exist_ok=True)
+                subprocess.run(['tar', '-xf', tar_source, '-C', OWUI_DATA_ROOT], check=True)
+
+            if env_recreate_required:
+                flash(
+                    "Restauration terminée. ⚠️ Des clés maîtresses (.env) ont été modifiées : "
+                    "exécutez 'sudo /opt/ECHO/echo-scripts/install-stack.sh' sur l'hôte "
+                    "pour recréer les conteneurs avec les clés restaurées.",
+                    'warning',
+                )
+            else:
+                flash('Restauration terminée.', 'success')
+        except Exception as e:
+            flash(f'Restauration annulée / Erreur : {e}', 'danger')
+        finally:
+            if staging_tar and os.path.exists(staging_tar):
+                try:
+                    os.remove(staging_tar)
+                except OSError:
+                    pass
+            already_restarted = set()
+            for c_obj in stopped_containers:
+                try:
+                    c_obj.start()
+                    already_restarted.add(getattr(c_obj, 'name', ''))
+                except Exception:
+                    pass
+            if stopped_containers:
                 try:
                     client_hr = docker.from_env()
-                    skip_names = already_restarted | {'echo-admin-manager', 'echo-auth-manager'}
+                    skip_names = already_restarted | {'echo-admin-manager'}
                     for hr_cont in client_hr.containers.list(filters={'label': 'echo.hot-reload=true'}):
                         if getattr(hr_cont, 'name', '') not in skip_names:
                             try:
@@ -697,7 +898,7 @@ def auth_reset_user(user_id):
 def action_rclone_create():
     if not session.get('logged_in'): return redirect(url_for('index'))
     try:
-        os.makedirs(RCLONE_CONF_DIR, exist_ok=True)
+        os.makedirs(RCLONE_CONF_DIR, mode=0o700, exist_ok=True)
         remote_name = secure_filename(request.form.get('remote_name', '').strip())
         if not remote_name: raise ValueError("Nom de profil invalide.")
         provider = request.form.get('provider')
@@ -717,6 +918,7 @@ def action_rclone_create():
             if sa_file and sa_file.filename:
                 sf = os.path.join(RCLONE_CONF_DIR, f"{remote_name}_sa.json")
                 sa_file.save(sf)
+                os.chmod(sf, 0o600)
                 section['service_account_file'] = sf
             elif raw_token:
                 # Nettoyage des sauts de ligne (\r\n) injectés par le copier-coller PowerShell
@@ -759,6 +961,7 @@ def action_rclone_create():
         cfg[remote_name] = section
         with open(RCLONE_CONF_PATH, 'w', encoding='utf-8') as f:
             cfg.write(f)
+        os.chmod(RCLONE_CONF_PATH, 0o600)
         sets = load_settings()
         if not sets.get('rclone_remote'):
             save_settings({'rclone_remote': f"{remote_name}:ECHO_Backups"})
@@ -812,7 +1015,10 @@ def save_settings_route():
     })
     # Application immédiate de la politique de rétention sur les archives existantes
     try:
-        files = sorted(glob.glob(f"{BACKUP_DIR}/echo_backup_*.tar.*"), key=os.path.getmtime)
+        files = sorted(
+            (f for f in glob.glob(f"{BACKUP_DIR}/echo_backup_*.tar.*") if not f.endswith('.part')),
+            key=os.path.getmtime,
+        )
         if c_mode == 'count':
             while len(files) > c_val:
                 os.remove(files.pop(0))

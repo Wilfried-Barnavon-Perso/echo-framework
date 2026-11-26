@@ -12,7 +12,7 @@
 	import { oneDark } from '@codemirror/theme-one-dark';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import { isHiddenToolCall } from './structuredOutput';
+	import { isHiddenToolCall, normalizeOutputParts } from './structuredOutput';
 
 	const i18n = getContext('i18n');
 
@@ -139,7 +139,7 @@
 	// Helpers
 
 	function getMessageText(item: any): string {
-		return (item.content ?? [])
+		return normalizeOutputParts(item?.content, 'output_text')
 			.filter((p: any) => p && (p.type === 'output_text' || 'text' in p))
 			.map((p: any) => p.text ?? '')
 			.join('');
@@ -148,7 +148,7 @@
 	function updateMessageText(idx: number, text: string) {
 		const next = [...output];
 		const item = { ...next[idx] };
-		const parts = (item.content ?? []).filter(
+		const parts = normalizeOutputParts(item?.content, 'output_text').filter(
 			(p: any) => p && (p.type === 'output_text' || 'text' in p)
 		);
 		item.content = [{ ...(parts[0] ?? { type: 'output_text' }), text }];
@@ -158,7 +158,10 @@
 	}
 
 	function getReasoningText(item: any): string {
-		return (item.summary ?? item.content ?? [])
+		const summaryParts = normalizeOutputParts(item?.summary, 'summary_text');
+		const parts =
+			summaryParts.length > 0 ? summaryParts : normalizeOutputParts(item?.content, 'reasoning_text');
+		return parts
 			.filter((p: any) => p && 'text' in p)
 			.map((p: any) => p.text ?? '')
 			.join('');

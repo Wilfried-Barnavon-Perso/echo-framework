@@ -21,6 +21,16 @@ const config = {
 		version: {
 			name: (() => {
 				const { hash } = resolveBuildInfo();
+				try {
+					const uiVersion = fs
+						.readFileSync(new URL('./UI_VERSION', import.meta.url), 'utf8')
+						.trim();
+					if (uiVersion) {
+						return hash ? `${uiVersion}+${hash.slice(0, 8)}` : uiVersion;
+					}
+				} catch {
+					// Fallback to package.json if UI_VERSION is absent or unreadable.
+				}
 				if (hash) return hash;
 				try {
 					return (
@@ -32,6 +42,9 @@ const config = {
 				}
 			})(),
 			pollInterval: 60000
+		},
+		serviceWorker: {
+			register: false
 		}
 	},
 	vitePlugin: {

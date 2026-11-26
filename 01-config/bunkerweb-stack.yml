@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 6.5.3.1
+# VERSION : 6.22.1.1
 # ==============================================================================
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Relais dynamique X-Echo-Sso-Secret depuis echo-auth-manager sur echo-user-manager sans secret stocké dans BunkerWeb.
+# 6.21.11.1: Injection exclusive de ECHO_AUTH_ENCRYPTION_KEY et montage /opt/ECHO/owui-libs:/app/echo_libs:ro dans echo-auth-manager.
 # 6.5.3.1: Alignement du routage reverse-proxy et IPAM (.100) sur echo-webui.
 # 5.236.5.1: Déclaration du service echo-user-manager (my.${ECHO_DOMAIN}, IP .27, Forward Auth /api/verify) et extension CSP form-action.
 # 5.236.3.1: Alignement explicite de USE_ANTIBOT="no" conformément au schéma BunkerWeb v1.6.17.
-# 5.236.2.1: Mise à niveau de BunkerWeb en v1.6.17 (correctifs NGINX 1.30.6 et timeouts MariaDB).
-# 5.231.36.1: Fix du nommage de l'image echo-auth-manager (suppression du double préfixe echo-echo-* via directive image: explicite).
 
 # ==============================================================================
 # 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
@@ -226,12 +226,14 @@ services:
       - TZ=Europe/Paris
       - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
       - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+      - ECHO_AUTH_ENCRYPTION_KEY=${ECHO_AUTH_ENCRYPTION_KEY:-}
       - AUTH_DB_PATH=/app/auth-data/auth.db
     volumes:
       - echo-auth-data:/app/auth-data
       - /opt/ECHO/docker-echo-auth-manager/auth_server.py:/app/auth_server.py:ro
       - /opt/ECHO/docker-echo-auth-manager/static:/app/static:ro
       - /opt/ECHO/docker-echo-auth-manager/templates:/app/templates:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/login\")' 2>/dev/null || exit 1"]
@@ -300,8 +302,8 @@ services:
       # 🛡️ ECHO AUTH : Forward Auth + SSO Secret
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
-      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
-      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$sso_secret $$upstream_http_x_echo_sso_secret"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret $$sso_secret"
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
             internal;

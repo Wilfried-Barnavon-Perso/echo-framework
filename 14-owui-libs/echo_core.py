@@ -4,18 +4,19 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.10.0.1
+version: 6.23.10.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.10.1: Troncature intra-ligne UTF-8 dans paginate_lines_window (truncated_lines) et factorisation de extract_llm_response_text, dehydrate_inline_base64_blobs et rehydrate_inline_base64_blobs.
+# 6.21.12.1: Checkpoints de compaction v2 multi-bornes (normalize_checkpoint_payload, prune_checkpoint_payload, get_session_checkpoints sans création de DB fantôme), diffusion WS echo_context_checkpoint et marquage has_earlier_messages dans EchoCompactionEngine.
 # 6.10.0.1: Propagation de ECHO_AUTOMATION_CONTEXT avec reset finally dans @echo_tool (async et sync).
 # 6.7.20.1: Chargeur XML sous cache st_mtime_ns (load_echo_commands_registry, load_assembled_system_prompt) et extraction normalisée extract_leading_slash_commands.
 # 6.7.11.1: Factorisation de apply_tool_spillover et paginate_lines_window.
-# 6.7.10.2: Application des 3 régimes SSOT, préservation de _skip_truncation sous ECHO_SUBAGENT_CONTEXT/is_nested dans _apply_final_spillover et directive PAS 800 lignes.
-# 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
 import os
 import re
+import hashlib
 import copy
 import uuid
 import time
@@ -620,6 +621,7 @@ def paginate_lines_window(
             "next_start_line": None,
             "next_end_line": None,
             "out_of_range": False,
+            "truncated_lines": [],
         }
 
     if s > total_lines:
@@ -633,18 +635,36 @@ def paginate_lines_window(
             "next_start_line": None,
             "next_end_line": None,
             "out_of_range": True,
+            "truncated_lines": [],
         }
 
     req_e = int(end_line) if end_line is not None else (s + lim_lines - 1)
     max_e = min(total_lines, req_e, s + lim_lines - 1)
 
     selected: List[str] = []
+    truncated_lines: List[int] = []
     acc_bytes = 0
     actual_e = s - 1
     for ln_no in range(s, max_e + 1):
         entry = f"L{ln_no}: {lines[ln_no - 1]}" if with_line_numbers else lines[ln_no - 1]
-        entry_bytes = len(entry.encode("utf-8")) + 1
-        if acc_bytes + entry_bytes > lim_bytes and selected:
+        raw_utf8 = entry.encode("utf-8")
+        entry_bytes = len(raw_utf8) + 1
+        if acc_bytes + entry_bytes > lim_bytes:
+            if not selected:
+                head_b = max(256, lim_bytes // 2)
+                tail_b = max(128, lim_bytes // 4)
+                head_str = raw_utf8[:head_b].decode("utf-8", errors="ignore")
+                tail_str = raw_utf8[-tail_b:].decode("utf-8", errors="ignore")
+                omitted_chars = max(0, len(entry) - len(head_str) - len(tail_str))
+                marker = (
+                    f" ... [LIGNE {ln_no} TRONQUÉE : {len(raw_utf8)} octets > plafond {lim_bytes} octets "
+                    f"({omitted_chars} caractères omis — utiliser code_executor pour inspecter cette ligne intégralement)] ... "
+                )
+                truncated_entry = f"{head_str}{marker}{tail_str}"
+                selected.append(truncated_entry)
+                truncated_lines.append(ln_no)
+                acc_bytes += len(truncated_entry.encode("utf-8")) + 1
+                actual_e = ln_no
             break
         selected.append(entry)
         acc_bytes += entry_bytes
@@ -664,7 +684,103 @@ def paginate_lines_window(
         "next_start_line": next_s,
         "next_end_line": next_e,
         "out_of_range": False,
+        "truncated_lines": truncated_lines,
     }
+
+
+_INLINE_B64_RE_CACHE: Dict[int, re.Pattern] = {}
+_B64_SLOT_TOKEN_RE = re.compile(r"__ECHO_B64_SLOT_\d+_[0-9a-f]{8}__")
+
+
+def extract_llm_response_text(
+    data: Optional[dict],
+    *,
+    strip_fences: bool = False,
+) -> Tuple[str, bool, Optional[str]]:
+    """Extrait le texte final (hors parts `thought`) et détecte une troncature `MAX_TOKENS`."""
+    if not isinstance(data, dict):
+        return "", False, None
+    target = data.get("response", data) if isinstance(data.get("response"), dict) else data
+    candidates = target.get("candidates")
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        return "", False, None
+
+    cand0 = candidates[0]
+    raw_fr = cand0.get("finishReason")
+    finish_reason = str(raw_fr).strip() if raw_fr is not None else None
+    is_truncated = finish_reason == "MAX_TOKENS"
+
+    content = cand0.get("content")
+    parts = content.get("parts", []) if isinstance(content, dict) else []
+    if not isinstance(parts, list):
+        parts = []
+    text_parts = [
+        p.get("text", "")
+        for p in parts
+        if isinstance(p, dict) and not p.get("thought") and isinstance(p.get("text"), str)
+    ]
+    raw = "".join(text_parts)
+    if strip_fences:
+        raw = raw.strip()
+        if raw.startswith("```"):
+            fence_lines = raw.split("\n")
+            if len(fence_lines) >= 3 and fence_lines[-1].strip() == "```":
+                raw = "\n".join(fence_lines[1:-1])
+    return raw, is_truncated, finish_reason
+
+
+def dehydrate_inline_base64_blobs(
+    text: str,
+    min_chars: Optional[int] = None,
+) -> Tuple[str, Dict[str, str]]:
+    """Remplace les payloads `data:...;base64,` volumineux par des marqueurs déterministes réversibles."""
+    if not text:
+        return text or "", {}
+    if min_chars is None:
+        from echo_constants import ECHO_CODEX_INLINE_BLOB_MIN_CHARS
+        threshold = max(1, int(ECHO_CODEX_INLINE_BLOB_MIN_CHARS))
+    else:
+        threshold = max(1, int(min_chars))
+
+    pattern = _INLINE_B64_RE_CACHE.get(threshold)
+    if pattern is None:
+        pattern = re.compile(
+            rf"(data:[a-zA-Z0-9.+/-]+;base64,)([A-Za-z0-9+/=\s]{{{threshold},}})"
+        )
+        _INLINE_B64_RE_CACHE[threshold] = pattern
+
+    slot_map: Dict[str, str] = {}
+
+    def _replace(match: re.Match) -> str:
+        prefix = match.group(1)
+        payload = match.group(2)
+        core_b64 = payload.rstrip()
+        trailing_ws = payload[len(core_b64):]
+        if len(core_b64) < threshold:
+            return match.group(0)
+        sha8 = hashlib.sha256(core_b64.encode("utf-8")).hexdigest()[:8]
+        token = f"__ECHO_B64_SLOT_{len(slot_map)}_{sha8}__"
+        slot_map[token] = core_b64
+        return f"{prefix}{token}{trailing_ws}"
+
+    dehydrated = pattern.sub(_replace, text)
+    return dehydrated, slot_map
+
+
+def rehydrate_inline_base64_blobs(
+    text: str,
+    slot_map: Dict[str, str],
+) -> Tuple[str, List[str]]:
+    """Réinjecte les payloads Base64 masqués et signale tout marqueur résiduel ou altéré."""
+    restored = text or ""
+    for token, raw_b64 in (slot_map or {}).items():
+        if token in restored:
+            restored = restored.replace(token, raw_b64)
+
+    dangling = _B64_SLOT_TOKEN_RE.findall(restored)
+    if "__ECHO_B64_SLOT_" in restored and not dangling:
+        dangling = ["__ECHO_B64_SLOT_"]
+    return restored, dangling
 
 
 def wrap_tool_output(
@@ -1784,6 +1900,55 @@ class EchoCompactionEngine:
         flush_user_group()
         return merged_messages
 
+    @staticmethod
+    def _extract_checkpoint_summary_entry(ckpt_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Extrait une entrée normalisée de point de contrôle à partir d'un dict v1 ou v2."""
+        from echo_constants import _extract_checkpoint_summary_entry
+
+        return _extract_checkpoint_summary_entry(ckpt_dict)
+
+    @classmethod
+    def normalize_checkpoint_payload(cls, raw_or_dict: Any) -> Optional[Dict[str, Any]]:
+        """Normalise un payload context_checkpoint v1/v2 en schéma v2."""
+        from echo_constants import normalize_checkpoint_payload
+
+        return normalize_checkpoint_payload(raw_or_dict)
+
+    @classmethod
+    def prune_checkpoint_payload(
+        cls,
+        raw_or_dict: Any,
+        *,
+        cutoff_ts: Optional[int] = None,
+        dead_msg_ids: Optional[Set[str]] = None,
+        live_msg_ids: Optional[Set[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Élague les entrées de checkpoints selon cutoff_ts, dead_msg_ids et live_msg_ids."""
+        from echo_constants import prune_checkpoint_payload
+
+        return prune_checkpoint_payload(
+            raw_or_dict,
+            cutoff_ts=cutoff_ts,
+            dead_msg_ids=dead_msg_ids,
+            live_msg_ids=live_msg_ids,
+        )
+
+    @classmethod
+    def get_session_checkpoints(cls, user_id: str, chat_id: str) -> List[Dict[str, Any]]:
+        """Lit les points de contrôle normalisés d'une session sans créer de DB fantôme."""
+        if not user_id or not chat_id:
+            return []
+        from echo_paths import get_echo_db_path
+
+        db_path = get_echo_db_path(user_id=user_id, chat_id=chat_id)
+        if not db_path or not os.path.isfile(db_path):
+            return []
+
+        state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        raw_ckpt = state_mgr.get_session_setting("context_checkpoint")
+        ckpt = cls.normalize_checkpoint_payload(raw_ckpt)
+        return list(ckpt.get("checkpoints") or []) if ckpt else []
+
     @classmethod
     def resolve_active_window(
         cls,
@@ -1857,18 +2022,19 @@ class EchoCompactionEngine:
         4. Appelle EchoGeminiClient.call_distillation en surchargeant le thinking à "low" pour Prometheus et en préservant le thinking nominal en cascade.
         5. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
         """
-        from echo_constants import COMPACTION_MIN_TURNS_REQUIRED, get_descending_cascade, ECHO_MODELS_REGISTRY
+        from echo_constants import (
+            COMPACTION_MIN_TURNS_REQUIRED,
+            ECHO_COMPACTION_CHECKPOINT_VERSION,
+            ECHO_COMPACTION_MAX_CHECKPOINTS,
+            ECHO_MODELS_REGISTRY,
+            get_descending_cascade,
+        )
         from echo_prompts import SYS_COMPACTION_DISTILL
         from echo_gemini_client import EchoGeminiClient
 
         state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
         raw_ckpt = state_mgr.get_session_setting("context_checkpoint")
-        existing_ckpt = None
-        if raw_ckpt:
-            try:
-                existing_ckpt = std_json.loads(raw_ckpt)
-            except Exception:
-                existing_ckpt = None
+        existing_ckpt = cls.normalize_checkpoint_payload(raw_ckpt)
 
         break_ids: Set[str] = set()
         if existing_ckpt:
@@ -1878,6 +2044,11 @@ class EchoCompactionEngine:
                 break_ids.add(str(existing_ckpt["head_last_msg_id"]))
             for tid in existing_ckpt.get("tail_anchor_ids") or []:
                 break_ids.add(str(tid))
+            for ck_entry in existing_ckpt.get("checkpoints") or []:
+                if ck_entry.get("pivot_msg_id"):
+                    break_ids.add(str(ck_entry["pivot_msg_id"]))
+                if ck_entry.get("head_last_msg_id"):
+                    break_ids.add(str(ck_entry["head_last_msg_id"]))
 
         turns = cls.split_into_turns(past_messages, state_mgr=state_mgr, break_on_ids=break_ids)
         min_req = (
@@ -1994,8 +2165,37 @@ class EchoCompactionEngine:
             timestamp_str=now_str,
         )
 
+        created_at = int(time.time())
+        checkpoint_tokens = estimate_token_size(summary_xml)
+        ckpt_entry = cls._extract_checkpoint_summary_entry(
+            {
+                "compaction_count": compaction_count,
+                "pivot_turn_idx": plan["new_pivot_turn_idx"],
+                "pivot_msg_id": plan["pivot_msg_id"],
+                "head_last_msg_id": plan.get("head_last_msg_id"),
+                "tail_anchor_ids": plan.get("tail_anchor_ids", []),
+                "keep_recent_turns": plan["keep_recent_turns"],
+                "checkpoint_tokens": checkpoint_tokens,
+                "created_at": created_at,
+            }
+        )
+
+        prev_checkpoints = list((existing_ckpt or {}).get("checkpoints") or [])
+        new_pivot_id = ckpt_entry.get("pivot_msg_id")
+        dedup_checkpoints = [
+            c
+            for c in prev_checkpoints
+            if not (
+                (c.get("pivot_msg_id"), c.get("compaction_count"))
+                == (new_pivot_id, compaction_count)
+                or (new_pivot_id and c.get("pivot_msg_id") == new_pivot_id)
+            )
+        ]
+        dedup_checkpoints.append(ckpt_entry)
+        checkpoints_list = dedup_checkpoints[-ECHO_COMPACTION_MAX_CHECKPOINTS:]
+
         new_ckpt = {
-            "version": 1,
+            "version": ECHO_COMPACTION_CHECKPOINT_VERSION,
             "compaction_count": compaction_count,
             "pivot_turn_idx": plan["new_pivot_turn_idx"],
             "pivot_msg_id": plan["pivot_msg_id"],
@@ -2004,13 +2204,32 @@ class EchoCompactionEngine:
             "tail_anchor_ids": plan.get("tail_anchor_ids", []),
             "summary_md": summary_md.strip(),
             "summary_xml": summary_xml,
-            "checkpoint_tokens": estimate_token_size(summary_xml),
+            "checkpoint_tokens": checkpoint_tokens,
             "tail_tokens_est": plan["tail_tokens_est"],
-            "created_at": int(time.time()),
+            "created_at": created_at,
+            "checkpoints": checkpoints_list,
         }
         state_mgr.save_session_setting(
             "context_checkpoint", std_json.dumps(new_ckpt).decode("utf-8")
         )
+
+        try:
+            from echo_window_manager import get_window_manager
+
+            await get_window_manager().broadcast(
+                user_id,
+                {
+                    "type": "echo_context_checkpoint",
+                    "chat_id": chat_id,
+                    "payload": {
+                        "chat_id": chat_id,
+                        "compaction_count": compaction_count,
+                        "checkpoints": checkpoints_list,
+                    },
+                },
+            )
+        except Exception as e:
+            logger.debug(f"ECHO Compaction: Broadcast window manager ignoré ({e})")
 
         # Enregistre les métriques de compaction dans context_stats
         new_est_prompt = (
@@ -2044,7 +2263,8 @@ class EchoCompactionEngine:
             "model_used": model_used,
             "delta_turns_count": plan["delta_turns_count"],
             "keep_recent_turns": plan["keep_recent_turns"],
-            "checkpoint_tokens": estimate_token_size(summary_xml),
+            "checkpoint_tokens": checkpoint_tokens,
             "tail_tokens_est": plan["tail_tokens_est"],
+            "checkpoints": checkpoints_list,
         }
 

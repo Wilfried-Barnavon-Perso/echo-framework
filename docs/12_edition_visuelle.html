@@ -186,14 +186,14 @@
     <details class="tech-spec" id="dossier-ingenierie">
       <summary>Dossier d'Ingénierie : Moteurs Visuels, Boucle Image, Codex Dulwich (14 Outils) &amp; CodeMirror 6</summary>
 
-      <h3>1. Rendu Visuel Interactif &amp; Imagerie (<code>universal_visual_generator.py</code> v6.18.23.1 &amp; <code>echo_visuals.py</code> v5.237.19.1)</h3>
+      <h3>1. Rendu Visuel Interactif &amp; Imagerie (<code>universal_visual_generator.py</code> v6.24.1.1 &amp; <code>echo_visuals.py</code> v5.237.19.1)</h3>
       <ul>
         <li><strong><code>generate_rich_visualization</code> (17 moteurs)</strong> : Pilote par Data Islands isolés sous <code>MODEL_APOLLO</code> (<code>thinking="medium"</code>) les 17 moteurs (<code>mermaid</code>, <code>sketch</code>, <code>markmap</code>, <code>bpmn</code>, <code>gantt</code>, <code>cytoscape</code>, <code>timeline</code>, <code>vega</code>, <code>wavedrom</code>, <code>leaflet</code>, <code>svg</code>, <code>echarts</code> 2D/3D-GL, <code>science</code> Plotly 2D/3D, <code>aframe</code>, <code>astro</code>, <code>bio</code> 3Dmol.js, <code>chem</code>).</li>
         <li><strong>Contrôle Qualité Zéro-Disque</strong> : Boucle jusqu'à <code>GEN_SCHEMA_MAX_TRIES = 2</code> essais : assemblage <code>EchoUI.build_rich_view_html</code>, rasterisation incognito 100 % RAM via <code>render_ephemeral_html</code> &rarr; <code>POST /render_ephemeral_view</code> (<code>browser_api.py</code> v6.16.0.1, viewport <code>1200&times;800</code>, settle <code>250 ms</code>, capture erreurs JS/DOM), et audit multimodal par <code>_run_visual_critic</code> (<code>SYS_VISUAL_SCHEMA_CRITIC</code>, <code>response_schema=VisualCriticOutput</code>, approbation dès <code>score &gt;= 6</code>).</li>
         <li><strong><code>generate_image</code> &amp; <code>close_image_session</code></strong> : Fil multimodal persistant <code>dlg_img_&lt;hex8&gt;</code> dans <code>cognitive_threads</code>. Accepte jusqu'à <code>IMAGE_GEN_MAX_INPUT_IMAGES = 10</code> images sources encodées via <code>load_image_as_base64</code>. Boucle générateur <code>MODEL_IMAGE_GEN</code> (<code>SYS_VISUAL_IMAGE_GEN</code>, ratios <code>1:1</code>, <code>3:4</code>, <code>4:3</code>, <code>9:16</code>, <code>16:9</code>) &harr; critique <code>MODEL_APOLLO</code> (<code>SYS_VISUAL_IMAGE_CRITIC</code>, <code>VisualCriticOutput</code>, <code>GEN_IMG_MAX_TRIES = 3</code>). Nom court <code>&lt; 15</code> caractères (<code>_sanitize_image_short_name</code>), commits Git séquentiels sur <code>CODEX_WORKSPACE_GENERATED</code> (<code>"generated"</code>), indexation <code>echo_resources</code> (<code>resource_type="generated"</code>), externalisation <code>echo-asset://</code> dans <code>tools_output/embeds/</code> et affichage via <code>EchoUI.image_viewer</code> avec galerie multi-essais.</li>
       </ul>
 
-      <h3>2. Noyau Codex &amp; Arsenal Git (<code>echo_codex_tool.py</code> v6.21.1.1 &amp; <code>echo_codex_git.py</code> v6.18.1.1)</h3>
+      <h3>2. Noyau Codex &amp; Arsenal Git (<code>echo_codex_tool.py</code> v6.23.10.1 &amp; <code>echo_codex_git.py</code> v6.18.1.1)</h3>
       <ul>
         <li><strong>14 outils exposés</strong> : <code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>create_codex_directory</code>, <code>move_codex</code>, <code>transfer_codex</code>, <code>list_codex</code>, <code>list_other_chats_ids</code>, <code>search_codex</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code>, <code>open_codex_ui</code>.</li>
         <li><strong>Gouvernance &amp; Concurrence</strong> : Registre SSOT <code>ECHO_CODEX_WORKSPACES</code> (<code>main</code>, <code>plans</code>, <code>generated</code> versionnés via <code>dulwich</code> avec <code>core.autocrlf = false</code> ; <code>sandbox</code> non versionné). Verrou asynchrone partagé <code>get_codex_lock(user_id, chat_id)</code> couvrant mutations et synchronisation SQLite (<code>sync_codex_registry_save</code> / <code>delete</code> / <code>relocate</code>).</li>
@@ -215,7 +215,7 @@
       <a href="13_memoire_actions.html">13. Mémoire &amp; Actions &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

@@ -4,16 +4,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 6.18.23.1
+version: 6.23.2.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.2.1: Ajout de delete_thread_step(sub_sid, step_index) sous _write_tx pour le rollback atomique des étapes orphelines.
+# 6.21.9.1: Notification bump_cognition_seq(self.chat_id) dans delete_thread pour rafraîchissement temps réel via WS.
 # 6.18.23.1: Support de parent_id avec COALESCE dans save_message_shadow/save_shadow, ajout de sync_shadow_parent_ids et remontée causale get_shadow_branch_lineage.
 # 6.10.0.1: Recherche étendue à storage_path dans get_resources, ajout de _detach_or_delete_codex_rows, delete_codex_prefix_resources et relocate_codex_resources (préservation des uploads Vault sur suppression/déplacement).
 # 6.7.18.1: Paramètre allow_single_fallback dans get_vault_credential (arrêt repli silencieux LIMIT 1 par défaut).
-# 6.7.0.1: Déduplication de thoughtSignature hors de content_json dans save_thread_step et réhydratation universelle (incluant inlineData) dans get_thread_history.
-# 6.6.30.1: Ajout du context manager _write_tx() (BEGIN IMMEDIATE) sur les transactions d'écriture et mixtes lecture/écriture.
 import contextlib
 import functools
 import os
@@ -820,10 +820,30 @@ class EchoStateManager:
         try:
             with self._write_tx() as conn:
                 conn.execute("DELETE FROM cognitive_threads WHERE sub_sid = ?", (sub_sid,))
+            if self.chat_id:
+                from echo_subagent_hub import bump_cognition_seq
+                bump_cognition_seq(self.chat_id)
         except EchoDbMissingError:
             pass
         except Exception as e:
             print(f"[EchoStateManager] delete_thread error: {e}")
+
+    @_session_scope()
+    def delete_thread_step(self, sub_sid: str, step_index: int):
+        """Annule (rollback) une étape précise d'un thread cognitif (ex: tour user rejeté sans réponse model)."""
+        try:
+            with self._write_tx() as conn:
+                conn.execute(
+                    "DELETE FROM cognitive_threads WHERE sub_sid = ? AND step_index = ?",
+                    (sub_sid, step_index),
+                )
+            if self.chat_id:
+                from echo_subagent_hub import bump_cognition_seq
+                bump_cognition_seq(self.chat_id)
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] delete_thread_step error: {e}")
 
     # ==========================================================================
     # REGISTRE UNIFIÉ — ECHO_RESOURCES

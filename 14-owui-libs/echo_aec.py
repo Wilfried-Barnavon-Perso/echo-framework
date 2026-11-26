@@ -4,16 +4,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 6.7.20.1
+version: 6.21.7.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.7.1: Ajout de EchoAEC.render_voice_mode_directive pour l'injection SSOT de la modalité vocale directe bornée au tour courant.
 # 6.7.20.1: Ajout de EchoAEC.render_command_directive pour l'émission certifiée de <artifact id="AEC_commande"> (Priorité 4).
 # 6.6.3.1: Ajout du champ optionnel <genre> dans EchoAEC.render_identity_context.
 # 5.235.5.2: Délégation purge et drainage transactionnel à EchoStateManager, suffixe de provenance hors_branche et suppression des accès directs identity.db.
 # 5.231.28.1: Réintroduction de EchoAEC.render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
-# 5.231.20.1: Suffixe UUID sur event_id dans EchoAEC.record_event pour éliminer les collisions intra-milliseconde.
 
 import time
 import uuid
@@ -152,6 +152,20 @@ class EchoAEC:
     def render_directive(message: str, source: str = "Système") -> str:
         """Génère la balise XML <artifact id="AEC_directive">."""
         return f'<artifact id="AEC_directive" source="{source}">\n{message}\n</artifact>\n\n'
+
+    @staticmethod
+    def render_voice_mode_directive(source: str = "Système") -> str:
+        """Génère la directive AEC de modalité vocale directe bornée au tour courant."""
+        message = (
+            "Modalité Vocale Directe (tour courant uniquement) : L'Utilisateur interagit à l'oral en mode appel. "
+            "Le Modèle DOIT favoriser l'usage de MODEL_ZEPHYR sauf nécessité analytique supérieure. "
+            "Le Modèle DOIT formuler une réponse CONCISE, NATURELLE et DIRECTE, adapter toute salutation ou "
+            "présentation initiale à l'échange parlé sans réciter de commandes slash, et n'utiliser AUCUN balisage "
+            "Markdown, ni puces ou listes, ni bloc ou citation de code, ni Emoji. "
+            "Si la réponse dépasse deux phrases, le Modèle DOIT séparer ses idées par un saut de ligne en courts "
+            "paragraphes d'une à deux phrases afin de permettre la synthèse vocale au fil de l'eau."
+        )
+        return EchoAEC.render_directive(message, source=source)
 
     @staticmethod
     def render_command_directive(command_slash: str, directive_text: str, source: str = "Système") -> str:

@@ -102,15 +102,25 @@
     <figure class="doc-figure">
       <img src="images/v6_selecteur_paliers.png" alt="Infobulle du sélecteur Écho v6 affichant Cortex Cognitif Dynamique et les 4 paliers" class="doc-screenshot">
       <figcaption class="doc-caption">
-        Le sélecteur unique Écho v6 affiche les quatre paliers cognitifs gérés dynamiquement (Zéphyr, Apollon, Prométhée, Athéna).
+        La pilule unique <strong>Écho</strong> affiche en direct le palier cognitif actif (Zéphyr, Apollon, Prométhée ou Athéna) et son infobulle <em>Cortex Auto/Manual</em>.
       </figcaption>
     </figure>
 
     <p>
       Vous n'avez pas à choisir manuellement un identifiant de modèle technique avant chaque message : le sélecteur est
-      verrouillé sur <strong>Écho</strong>. Si vous souhaitez borner le palier maximal ou figer un palier précis pour
+      verrouillé sur <strong>Écho</strong>, dont la pilule reflète en temps réel le palier mobilisé. Si vous souhaitez borner le palier maximal ou figer un palier précis pour
       une conversation, cliquez sur l'icône des <strong>Vannes</strong> à gauche du compositeur.
     </p>
+    <p>
+      Dans les discussions très longues, l'affichage reste fluide grâce au <strong>fenêtrage automatique</strong> : seuls les échanges récents et les repères visuels de compaction sont chargés d'emblée, tandis qu'un bouton dédié permet de remonter et charger à la demande les messages plus anciens.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_compositeur_cortex_auto.png" alt="Synthèse d'ECHO et barre compositeur actualisée affichant la pilule active Écho Zéphyr, l'infobulle Cortex Auto Zéphyr, le badge WebGPU et la jauge de contexte" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Barre compositeur en action : pilule active <strong>Écho | Zéphyr</strong> et infobulle <strong>Cortex Auto · Zéphyr</strong>, badge <strong>WebGPU</strong> actif, jauge contextuelle et indicateur supérieur des sous-agents.
+      </figcaption>
+    </figure>
 
     <figure class="doc-figure">
       <img src="images/v6_commandes_slash.png" alt="Menu d'autocomplétion des 9 commandes slash ECHO dans la zone de saisie" class="doc-screenshot">
@@ -339,7 +349,7 @@
       <summary>Dossier d'Ingénierie : Architecture ECHO-UI, Stockage, Audio &amp; Portail Personnel</summary>
       <h4>1. Socle Applicatif ECHO-UI</h4>
       <ul>
-        <li><strong>Version et licence :</strong> Composant <code>16-docker-echo-webui</code> (<code>UI_VERSION</code> <code>6.20.3.1</code>), fork maintenu d'Open WebUI <code>v0.13.2</code> soumis à la Clause 4 (plafond technique strict <code>ECHO_MAX_USERS = 50</code> dans <code>auths.py</code>).</li>
+        <li><strong>Version et licence :</strong> Composant <code>16-docker-echo-webui</code> (<code>UI_VERSION</code> <code>6.23.9.1</code>), fork maintenu d'Open WebUI <code>v0.13.2</code> soumis à la Clause 4 (plafond technique strict <code>ECHO_MAX_USERS = 50</code> dans <code>auths.py</code>).</li>
         <li><strong>Profil utilisateur et identité :</strong> <code>identity_bridge.py</code> (<code>v6.18.9.1</code>) maintient <code>webui.db</code> comme source de vérité unique du genre grammatical (<code>M</code>/<code>F</code>/<code>X</code>) et synchronise les avatars genrés par défaut (<code>user-echo-homme.png</code>, <code>user-echo-femme.png</code>, <code>user-echo-neutre.png</code>) avec <code>identity.db</code>.</li>
         <li><strong>Configuration initiale :</strong> <code>01-config/model-config.json</code> et <code>01-config/webui-settings.json</code> épinglent <code>echo_orchestrator</code>, désactivent le compactage natif Open WebUI (<code>ENABLE_CONTEXT_COMPACTION=false</code>) et déclarent le serveur terminal PTY <code>echo-coding-worker</code>.</li>
       </ul>
@@ -347,7 +357,7 @@
       <h4>2. Transferts, Audio In-Process &amp; Portail <code>my.</code></h4>
       <ul>
         <li><strong>Stockage et streaming 4 Go :</strong> <code>storage.py</code> (<code>EchoStorageProvider</code>) utilise <code>EchoStagedMultiPartParser</code> avec tampon 4 MiB dans <code>.tmp_uploads</code>, adoption atomique <code>os.replace()</code>, plafond <code>ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096</code> et court-circuit <code>skip_owui_processing</code> lorsque <code>bypass_embedding_and_retrieval=True</code>.</li>
-        <li><strong>Pont vocal :</strong> <code>14-owui-libs/echo_audio.py</code> (<code>v6.6.14.1</code>) sert <code>/echo/v1/audio/transcriptions</code> (STT via <code>MODEL_ZEPHYR</code>, max 14 Mo, sniffing magic bytes) et <code>/echo/v1/audio/speech</code> (TTS <code>edge-tts</code> sur <code>fr-FR-VivienneMultilingualNeural</code>, vitesse <code>1.0</code>, pitch <code>-2Hz</code>).</li>
+        <li><strong>Pont vocal :</strong> <code>14-owui-libs/echo_audio.py</code> (<code>v6.21.7.1</code>) sert <code>/echo/v1/audio/transcriptions</code> (STT via <code>MODEL_ZEPHYR</code>, max 14 Mo, sniffing magic bytes) et <code>/echo/v1/audio/speech</code> (TTS <code>edge-tts</code> sur <code>fr-FR-VivienneMultilingualNeural</code>, vitesse <code>1.0</code>, pitch <code>-2Hz</code>).</li>
         <li><strong>Portail self-service :</strong> Conteneur <code>27-docker-user-manager</code> (exposé sous <code>my.${ECHO_DOMAIN}</code> via BunkerWeb Forward Auth, port <code>3002</code>), générant les exports <code>.tar.xz</code> en basse priorité (<code>nice 19</code>, <code>ionice</code> idle, <code>XZ_OPT="-T2 -1"</code>) avec TTL 15 minutes et protection contre suppression pendant téléchargement actif.</li>
       </ul>
     </details>
@@ -358,7 +368,7 @@
       <a href="03_exemples_prompts.html">3. Exemples de Prompts &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description"
-    content="Présentation générale de l'arsenal des 106 outils d'ECHO v6 : domaines fonctionnels, exécution parallèle, gestion des sorties volumineuses et garde-fous.">
+    content="Présentation générale de l'arsenal des 87 outils d'ECHO v6 : domaines fonctionnels, exécution parallèle, gestion des sorties volumineuses et garde-fous.">
   <title>ECHO v6 - 9. L'Arsenal des Outils</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -20,7 +20,7 @@
       <h4>Pourquoi des outils spécialisés ?</h4>
       <p>
         Un modèle de langage seul ne peut ni vérifier une page Web publiée ce matin, ni exécuter un calcul Python exact,
-        ni consulter votre agenda ou vos fichiers locaux. L'Arsenal d'ECHO met à disposition <strong>106 actions
+        ni consulter votre agenda ou vos fichiers locaux. L'Arsenal d'ECHO met à disposition <strong>87 actions
           spécialisées</strong> réparties en <strong>19 boîtes d'outils</strong>, afin que l'assistant agisse sur des
         faits
         vérifiés plutôt que de supposer une réponse.
@@ -106,8 +106,8 @@
       <div class="card">
         <h3>Manuels consultés à la demande</h3>
         <p>
-          Plutôt que d'encombrer la mémoire de travail de l'assistant avec 106 notices techniques permanentes, un
-          conseiller interne consulte l'un des <strong>11 manuels opérationnels</strong> uniquement lorsqu'une procédure
+          Plutôt que d'encombrer la mémoire de travail de l'assistant avec 87 notices techniques permanentes, un
+          conseiller interne consulte l'un des <strong>12 manuels opérationnels</strong> uniquement lorsqu'une procédure
           complexe ou une option de l'interface le requiert.
         </p>
       </div>
@@ -152,20 +152,20 @@
     </div>
 
     <details class="tech-spec" id="dossier-ingenierie">
-      <summary>Dossier d'Ingénierie : Cartographie des 19 Modules (106 Outils), Décorateur <code>@echo_tool</code> &amp;
+      <summary>Dossier d'Ingénierie : Cartographie des 19 Modules (87 Outils), Décorateur <code>@echo_tool</code> &amp;
         Régimes de Délestage</summary>
 
       <h3>1. Séparation Interface / Connaissance (<code>12-owui-tools/</code> &amp;
         <code>14-owui-libs/tool_guides/</code>)</h3>
       <p>
-        Les <strong>106 méthodes publiques</strong> réparties dans les <strong>19 modules Python</strong> de
+        Les <strong>87 méthodes publiques</strong> réparties dans les <strong>19 modules Python</strong> de
         <code>12-owui-tools/</code> exposent des docstrings réduites à une phrase fonctionnelle pure, diminuant
         d'environ <strong>80 %</strong> l'empreinte du schéma OpenAPI envoyé au LLM. La documentation détaillée
         (contrats
-        d'arguments, prérequis, gestion d'erreurs et guide ECHO-UI) est externalisée dans les <strong>11 manuels
+        d'arguments, prérequis, gestion d'erreurs et guide ECHO-UI) est externalisée dans les <strong>12 manuels
           Markdown</strong> de <code>14-owui-libs/tool_guides/*.md</code>, indexés par
         <code>EchoToolGuidesManager</code>
-        (<code>echo_tool_guides.py</code> v6.17.2.1, invalidation par <code>st_mtime_ns</code>) et consultés par
+        (<code>echo_tool_guides.py</code> v6.24.0.1, invalidation par <code>st_mtime_ns</code>) et consultés par
         <code>tool_advisor</code> (<code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).
       </p>
 
@@ -209,9 +209,8 @@
           </tr>
           <tr>
             <td><code>code_executor_tool.py</code></td>
-            <td>4</td>
-            <td><code>code_executor</code>, <code>control_sandbox_execution</code>, <code>kill_sandbox_execution</code>,
-              <code>ssh_executor</code></td>
+            <td>3</td>
+            <td><code>code_executor</code>, <code>control_sandbox_execution</code>, <code>ssh_executor</code></td>
             <td><code>code_and_files.md</code></td>
           </tr>
           <tr>
@@ -280,12 +279,9 @@
           </tr>
           <tr>
             <td><code>n8n_orchestrator_tool.py</code></td>
-            <td>12</td>
-            <td><code>create_n8n_template</code>, <code>modify_n8n_template</code>, <code>delete_n8n_template</code>,
-              <code>prepare_n8n_workflow</code>, <code>modify_n8n_workflow</code>, <code>delete_n8n_workflow</code>,
-              <code>run_n8n_oneshot_workflow</code>, <code>deploy_n8n_daemon</code>, <code>search_n8n_hub</code>,
-              <code>download_n8n_hub_template</code>, <code>query_n8n_documentation</code>,
-              <code>delegate_to_n8n_grapher</code></td>
+            <td>5</td>
+            <td><code>manage_n8n_template</code>, <code>manage_n8n_workflow</code>, <code>n8n_hub</code>,
+              <code>query_n8n_documentation</code>, <code>delegate_to_n8n_grapher</code></td>
             <td><code>n8n_workflows.md</code></td>
           </tr>
           <tr>
@@ -308,24 +304,20 @@
           </tr>
           <tr>
             <td><code>generalist_tools.py</code></td>
-            <td>23</td>
+            <td>12</td>
             <td><code>ask_user_input</code>, <code>wait_timer</code>, <code>list_ui_folders</code>,
-              <code>list_ui_tags</code>, <code>create_ui_tasks</code>, <code>update_ui_task</code>,
-              <code>search_ui_chats</code>, <code>view_ui_chat</code>, <code>create_ui_automation</code>,
-              <code>update_ui_automation</code>, <code>toggle_ui_automation</code>, <code>delete_ui_automation</code>,
-              <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>create_ui_calendar_event</code>,
-              <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>,
-              <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>,
-              <code>delete_ui_calendar_event</code>, <code>read_tool_output</code>, <code>delete_tool_output</code>,
-              <code>tool_advisor</code></td>
-            <td><code>ui_calendar_and_automations.md</code> (+ <code>echo_ui_guide.md</code>)</td>
+              <code>list_ui_tags</code>, <code>list_ui_chats</code>, <code>read_ui_chat_transcript</code>,
+              <code>manage_ui_calendar</code>, <code>manage_ui_automations</code>, <code>manage_ui_tasks</code>,
+              <code>read_tool_output</code>, <code>delete_tool_output</code>, <code>tool_advisor</code></td>
+            <td><code>ui_calendar_and_automations.md</code> (+ <code>echo_ui_guide.md</code>,
+              <code>ui_conversations.md</code>)</td>
           </tr>
         </tbody>
       </table>
 
       <h3>2. Décorateur <code>@echo_tool</code>, Contextes &amp; Parallélisme</h3>
       <ul>
-        <li><strong>Standardisation <code>@echo_tool</code> (<code>echo_core.py</code> v6.10.0.1)</strong> : Compatible
+        <li><strong>Standardisation <code>@echo_tool</code> (<code>echo_core.py</code> v6.23.10.1)</strong> : Compatible
           <code>async def</code> et <code>def</code>, injecte <code>__user__</code> et <code>__metadata__</code> dans
           <code>__signature__</code>, pose le garde-fou anti-réentrance <code>_ECHO_IN_TOOL_CALL</code> et centralise le
           drainage AEC (<code>_drain_tool_aec_events</code> protégé par <code>_get_aec_drain_lock(chat_id)</code>).</li>
@@ -335,11 +327,11 @@
           automatisation les appels interactifs et destructeurs (<code>ask_user_input</code>,
           <code>process_plan(user_already_validated=False)</code>, <code>manage_identity</code>,
           <code>delete_user_skill</code>).</li>
-        <li><strong>Listes Système Sous-Agents (<code>echo_constants.py</code> v6.19.0.1)</strong> :
+        <li><strong>Listes Système Sous-Agents (<code>echo_constants.py</code> v6.24.0.1)</strong> :
           <code>DELEGATE_AGENT_BLACKLIST</code> interdit aux sous-agents les outils récursifs/UI/long-terme
           (<code>delegate_deep_research</code>, <code>delegate_to_n8n_grapher</code>, <code>ask_data_broker</code>,
-          <code>control_subagents</code>, <code>ask_user_input</code>, <code>create_ui_tasks</code>,
-          <code>update_ui_task</code>, <code>open_codex_ui</code>, <code>open_browser_ui</code>,
+          <code>control_subagents</code>, <code>ask_user_input</code>, <code>manage_ui_tasks</code>,
+          <code>open_codex_ui</code>, <code>open_browser_ui</code>,
           <code>generate_rich_visualization</code>, <code>generate_image</code>, <code>close_image_session</code>,
           <code>show_image_to_user</code>, <code>delete_user_skill</code>, <code>manage_identity</code>,
           <code>update_meta_artifact</code>, <code>delete_meta_artifact_item</code>). À l'inverse,
@@ -376,7 +368,7 @@
       <a href="10_planification_execution.html">10. Planification &amp; Exécution &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

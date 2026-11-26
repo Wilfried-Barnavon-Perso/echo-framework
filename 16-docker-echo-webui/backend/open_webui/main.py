@@ -331,6 +331,8 @@ class SPAStaticFiles(StaticFiles):
         if full_path.endswith('.html'):
             # Stale cached HTML references chunks from an older build
             response.headers['Cache-Control'] = 'no-cache'
+        elif full_path.endswith('service-worker.js') or full_path.endswith('version.json'):
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         return response
 
 

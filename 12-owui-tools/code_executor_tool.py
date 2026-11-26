@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.21.1.1
+version: 6.24.0.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
 # 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
 # 6.19.0.1: Isolation paresseuse des exécutions sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 # 6.17.4.1: Propagation du jeton HMAC sandbox_callback_token lors de l'exécution et alignement Option B (sans Pacemaker WS/BidiRouter).
 # 6.16.0.2: Retrait bidi_polling/poller, raccordement /wait_ready, offsets WM, abort léger et garde expose_app(background=True).
-# 6.15.2.1: Durcissement Option A : garde pré-vol serve_forever(), handshake ready/crash, boucle poller réveillée par wake_event, arrêt sur unknown x3 et cleanup scopé par run_id.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -237,18 +237,6 @@ class Tools:
             )
         except Exception as e:
             return f"❌ Erreur lors du contrôle Sandbox : {str(e)}"
-
-    @echo_tool
-    async def kill_sandbox_execution(
-        self,
-        run_id: Optional[str] = None,
-        __user__: Optional[dict] = None,
-        __metadata__: Optional[dict] = None,
-    ) -> dict | str:
-        """Interrompt immédiatement le processus ciblé par run_id (ou tous les processus actifs) dans la Sandbox de la session."""
-        return await self.control_sandbox_execution(
-            action="kill", run_id=run_id, __user__=__user__, __metadata__=__metadata__
-        )
 
     @echo_tool
     async def code_executor(

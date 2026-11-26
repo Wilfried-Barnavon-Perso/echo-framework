@@ -342,7 +342,8 @@ class ChatResponse(BaseModel):
     tasks: list | None = None
     summary: str | None = None
     current_message_id: str | None = None
-    context_usage: dict | None = None
+    window_meta: dict | None = None
+    tree_index: dict | None = None
 
     @field_validator('variables', mode='before')
     @classmethod
@@ -701,6 +702,9 @@ class ChatTable:
     ) -> ChatModel | None:
         await self.require_chat_creation_permission(user_id, db=db)
         async with get_async_db_context(db) as session:
+            chat_payload = self._clean_null_bytes(form_data.chat)
+            if isinstance(chat_payload, dict) and isinstance(chat_payload.get('history'), dict):
+                chat_payload = {k: v for k, v in chat_payload.items() if k != 'messages'}  # [ECHO-V6-HOOK]
             chat = ChatModel(
                 **{
                     'id': id,
@@ -708,7 +712,7 @@ class ChatTable:
                     'title': self._clean_null_bytes(
                         form_data.chat['title'] if 'title' in form_data.chat else 'New Chat'
                     ),
-                    'chat': self._clean_null_bytes(form_data.chat),
+                    'chat': chat_payload,
                     'folder_id': form_data.folder_id,
                     'meta': internal_meta or {},
                     'timer_at': timer_at,
@@ -900,7 +904,25 @@ class ChatTable:
 
                 stored = chat_item.chat or {}
                 updated = {**stored, **chat}
+                if isinstance(updated.get('history'), dict) and bool(updated['history'].get('messages')):
+                    updated.pop('messages', None)  # [ECHO-V6-HOOK]
                 if 'history' in chat:
+                    # [ECHO-V6-HOOK] Garde anti-écrasement des détails paresseux (ChatMessage prioritaire)
+                    incoming_history = chat.get('history')
+                    if isinstance(incoming_history, dict) and isinstance(incoming_history.get('messages'), dict):
+                        from open_webui.echo.chat_windowing import restore_lazy_message_fields
+
+                        stored_msgs = (stored.get('history') or {}).get('messages') or {}
+                        restored_incoming_msgs = dict(incoming_history['messages'])
+                        for mid, incoming_msg in restored_incoming_msgs.items():
+                            if isinstance(incoming_msg, dict) and incoming_msg.get('_echoLazyDetails'):
+                                existing_row = await session.get(ChatMessage, f'{id}-{mid}')
+                                if existing_row is not None:
+                                    stored_msg = ChatMessages.row_to_message_dict(id, existing_row)
+                                else:
+                                    stored_msg = stored_msgs.get(mid)
+                                restored_incoming_msgs[mid] = restore_lazy_message_fields(stored_msg, incoming_msg)
+                        chat = {**chat, 'history': {**incoming_history, 'messages': restored_incoming_msgs}}
                     # The caller built its history from an earlier read; merge so messages saved since then survive.
                     updated['history'] = self.merge_history(stored.get('history'), chat['history'])
                     for mid, message in (stored.get('history', {}).get('messages') or {}).items():
@@ -1555,8 +1577,7 @@ class ChatTable:
                     message_id, id, saved_message.get('user_id') or chat_item.user_id, saved_message, db=session
                 )
                 chat['history'] = history
-                if isinstance(chat.get('messages'), list):
-                    chat['messages'] = chat_message_list(chat)
+                chat.pop('messages', None)  # [ECHO-V6-HOOK]
                 chat_item.chat = chat  # chat is a fresh dict when the column was empty
                 chat_item.title = self._clean_null_bytes(chat.get('title', 'New Chat'))
                 chat_item.current_message_id = self.get_current_message_id(chat)
@@ -2050,12 +2071,12 @@ class ChatTable:
         if not rows:
             return
 
-        history = chat_dict.setdefault('history', {})
-        if not isinstance(history, dict):
-            return
-        messages = history.setdefault('messages', {})
-        if not isinstance(messages, dict):
-            return
+        if not isinstance(chat_dict.get('history'), dict):
+            chat_dict['history'] = {}
+        history = chat_dict['history']
+        if not isinstance(history.get('messages'), dict):
+            history['messages'] = {}
+        messages = history['messages']
 
         for row in rows:
             row_dict = ChatMessages.row_to_message_dict(chat_id, row)
@@ -2082,8 +2103,7 @@ class ChatTable:
                 elif msg_id not in children:
                     children.append(msg_id)
 
-        if isinstance(chat_dict.get('messages'), list):
-            chat_dict['messages'] = chat_message_list(chat_dict)
+        chat_dict.pop('messages', None)  # [ECHO-V6-HOOK]
 
     # retrieve conversation
     async def get_chat_by_id(

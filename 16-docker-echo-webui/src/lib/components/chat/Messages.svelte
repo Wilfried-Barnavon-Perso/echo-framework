@@ -6,10 +6,20 @@
 	const dispatch = createEventDispatcher();
 
 	import { toast } from 'svelte-sonner';
-	import { deleteChatMessageById, updateChatById } from '$lib/apis/chats';
-	import { copyToClipboard, extractCurlyBraceWords, getDeepestChildId } from '$lib/utils';
+	import { deleteChatMessageById, getChatById, updateChatById } from '$lib/apis/chats';
+	import type { EchoCompactionCheckpoint } from '$lib/apis/echo/chat_actions';
+	import {
+		appendChildToWindowedHistory,
+		copyToClipboard,
+		extractCurlyBraceWords,
+		getBranchSiblingIds,
+		getDeepestChildId,
+		getDeepestTreeChildId,
+		sanitizeHistory
+	} from '$lib/utils';
 	import { getOutputText } from './Messages/structuredOutput';
 
+	import EchoCompactionBoundary from './Messages/EchoCompactionBoundary.svelte';
 	import Message from './Messages/Message.svelte';
 	import Loader from '../common/Loader.svelte';
 	import Spinner from '../common/Spinner.svelte';
@@ -60,8 +70,51 @@
 	export let onInsertToNote: ((content: string) => void) | null = null;
 
 	export let messagesCount: number | null = 8;
+	export let treeIndex: Record<string, any> | null = null;
+	export let windowMeta: Record<string, any> | null = null;
+	export let checkpoints: EchoCompactionCheckpoint[] = [];
+	export let onLoadOlderWindow:
+		| ((opts?: { beforeId?: string; toCheckpointId?: string }) => Promise<void>)
+		| null = null;
+	export let onEnsureBranchLoaded: ((targetId: string) => Promise<void>) | null = null;
+	export let ensureMessageDetails: ((id: string) => Promise<void>) | null = null;
 	let messagesLoading = false;
+	let loadingOlderWindow = false;
 	let lastLoadedChatId = chatId;
+
+	$: checkpointByPivotId = new Map(
+		(checkpoints ?? [])
+			.filter((ckpt) => ckpt?.pivot_msg_id)
+			.map((ckpt) => [String(ckpt.pivot_msg_id), ckpt])
+	);
+	$: hasUnrenderedLocalOlder = Boolean(
+		messages.at(0)?.parentId && history.messages?.[messages.at(0).parentId]
+	);
+
+	const handleLoadOlderWindow = async (ckpt?: EchoCompactionCheckpoint | null) => {
+		if (loadingOlderWindow || !onLoadOlderWindow) return;
+		const element = getMessagesContainer();
+		const firstMsgEl = element?.querySelector('.message-listitem') as HTMLElement | null;
+		const previousTop = firstMsgEl?.getBoundingClientRect().top ?? 0;
+		loadingOlderWindow = true;
+		try {
+			await onLoadOlderWindow({
+				beforeId: windowMeta?.oldest_loaded_id ?? messages[0]?.id ?? undefined,
+				toCheckpointId: ckpt?.checkpoint_id
+			});
+			messagesCount = (messagesCount ?? 8) + 8;
+			buildMessages();
+			await tick();
+			if (element && firstMsgEl?.isConnected) {
+				element.scrollTop += firstMsgEl.getBoundingClientRect().top - previousTop;
+			}
+		} catch (error) {
+			console.error('[Messages] handleLoadOlderWindow failed', error);
+			toast.error(`${error}`);
+		} finally {
+			loadingOlderWindow = false;
+		}
+	};
 
 	const getMessagesContainer = () => document.getElementById(messagesContainerId);
 
@@ -205,10 +258,15 @@
 		if (!$temporaryChatEnabled) {
 			history = history;
 			await tick();
-			const res = await updateChatById(localStorage.token, chatId, {
-				history: history,
-				messages: messages
-			});
+			const res = await updateChatById(
+				localStorage.token,
+				chatId,
+				{
+					history: history
+				},
+				null,
+				{ light: true }
+			);
 
 			// Keep local plain-content edits aligned with the saved chat response.
 			if (res?.chat?.history?.messages) {
@@ -224,30 +282,28 @@
 		}
 	};
 
-	const gotoMessage = async (message, idx) => {
-		// Determine the correct sibling list (either parent's children or root messages)
-		let siblings;
-		if (message.parentId !== null) {
-			siblings = history.messages[message.parentId].childrenIds;
-		} else {
-			siblings = Object.values(history.messages)
-				.filter((msg) => msg.parentId === null)
-				.map((msg) => msg.id);
-		}
-
-		// Clamp index to a valid range
-		idx = Math.max(0, Math.min(idx, siblings.length - 1));
-
-		let messageId = siblings[idx];
-
-		// If we're navigating to a different message
-		if (message.id !== messageId) {
-			history.currentId = getDeepestChildId(history, messageId);
+	const navigateToSibling = async (
+		message: any,
+		targetMessageId: string | undefined,
+		focusSelector?: string
+	) => {
+		if (targetMessageId && message.id !== targetMessageId) {
+			const leafId = getDeepestTreeChildId(history, treeIndex, targetMessageId) ?? targetMessageId;
+			if ((!history.messages[leafId] || !history.messages[targetMessageId]) && onEnsureBranchLoaded) {
+				await onEnsureBranchLoaded(leafId);
+			}
+			const childId = getDeepestChildId(history, targetMessageId);
+			if (childId && history.messages[childId]) {
+				history.currentId = childId;
+			}
 		}
 
 		await tick();
 
-		// Optional auto-scroll
+		if (focusSelector) {
+			document.querySelector<HTMLElement>(focusSelector)?.focus();
+		}
+
 		if ($settings?.scrollOnBranchChange ?? true) {
 			const element = getMessagesContainer();
 			autoScroll = element
@@ -258,96 +314,44 @@
 				scrollToBottom();
 			}, 100);
 		}
+	};
+
+	const gotoMessage = async (message, idx) => {
+		const siblings = getBranchSiblingIds(history, treeIndex, message);
+		if (!siblings.length) return;
+
+		idx = Math.max(0, Math.min(idx, siblings.length - 1));
+		const messageId = siblings[idx];
+		await navigateToSibling(message, messageId);
 	};
 
 	const showPreviousMessage = async (message) => {
 		const refocus = document.activeElement?.classList.contains('previous-message-button');
-		let messageId = message.id;
+		const siblings = getBranchSiblingIds(history, treeIndex, message);
+		if (!siblings.length) return;
 
-		if (message.parentId !== null) {
-			messageId =
-				history.messages[message.parentId].childrenIds[
-					Math.max(history.messages[message.parentId].childrenIds.indexOf(message.id) - 1, 0)
-				];
-
-			if (message.id !== messageId) {
-				history.currentId = getDeepestChildId(history, messageId);
-			}
-		} else {
-			let childrenIds = Object.values(history.messages)
-				.filter((message) => message.parentId === null)
-				.map((message) => message.id);
-			messageId = childrenIds[Math.max(childrenIds.indexOf(message.id) - 1, 0)];
-
-			if (message.id !== messageId) {
-				history.currentId = getDeepestChildId(history, messageId);
-			}
-		}
-
-		await tick();
-
-		if (refocus) {
-			document
-				.querySelector<HTMLElement>(`#message-${messageId} .previous-message-button`)
-				?.focus();
-		}
-
-		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = getMessagesContainer();
-			autoScroll = element
-				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
-				: false;
-
-			setTimeout(() => {
-				scrollToBottom();
-			}, 100);
-		}
+		const currentIdx = siblings.indexOf(message.id);
+		const messageId = siblings[Math.max((currentIdx >= 0 ? currentIdx : 0) - 1, 0)];
+		await navigateToSibling(
+			message,
+			messageId,
+			refocus ? `#message-${messageId} .previous-message-button` : undefined
+		);
 	};
 
 	const showNextMessage = async (message) => {
 		const refocus = document.activeElement?.classList.contains('next-message-button');
-		let messageId = message.id;
+		const siblings = getBranchSiblingIds(history, treeIndex, message);
+		if (!siblings.length) return;
 
-		if (message.parentId !== null) {
-			messageId =
-				history.messages[message.parentId].childrenIds[
-					Math.min(
-						history.messages[message.parentId].childrenIds.indexOf(message.id) + 1,
-						history.messages[message.parentId].childrenIds.length - 1
-					)
-				];
-
-			if (message.id !== messageId) {
-				history.currentId = getDeepestChildId(history, messageId);
-			}
-		} else {
-			let childrenIds = Object.values(history.messages)
-				.filter((message) => message.parentId === null)
-				.map((message) => message.id);
-			messageId =
-				childrenIds[Math.min(childrenIds.indexOf(message.id) + 1, childrenIds.length - 1)];
-
-			if (message.id !== messageId) {
-				history.currentId = getDeepestChildId(history, messageId);
-			}
-		}
-
-		await tick();
-
-		if (refocus) {
-			document.querySelector<HTMLElement>(`#message-${messageId} .next-message-button`)?.focus();
-		}
-
-		if ($settings?.scrollOnBranchChange ?? true) {
-			const element = getMessagesContainer();
-			autoScroll = element
-				? element.scrollHeight - element.scrollTop <= element.clientHeight + 50
-				: false;
-
-			setTimeout(() => {
-				scrollToBottom();
-			}, 100);
-		}
+		const currentIdx = siblings.indexOf(message.id);
+		const messageId =
+			siblings[Math.min((currentIdx >= 0 ? currentIdx : 0) + 1, siblings.length - 1)];
+		await navigateToSibling(
+			message,
+			messageId,
+			refocus ? `#message-${messageId} .next-message-button` : undefined
+		);
 	};
 
 	const rateMessage = async (messageId, rating) => {
@@ -386,10 +390,7 @@
 				let messageParentId = history.messages[messageId].parentId;
 
 				if (messageParentId !== null) {
-					history.messages[messageParentId].childrenIds = [
-						...history.messages[messageParentId].childrenIds,
-						userMessageId
-					];
+					appendChildToWindowedHistory(history, treeIndex, messageParentId, userMessageId);
 				}
 
 				history.messages[userMessageId] = userMessage;
@@ -428,17 +429,13 @@
 
 				// Append messageId to childrenIds of parent message
 				if (parentId !== null) {
-					history.messages[parentId].childrenIds = [
-						...history.messages[parentId].childrenIds,
-						responseMessageId
-					];
+					appendChildToWindowedHistory(history, treeIndex, parentId, responseMessageId);
 				}
 
 				await updateChat();
 			} else {
 				// Edit response message
 				if (content !== undefined) {
-					history.messages[messageId].originalContent = history.messages[messageId].content;
 					history.messages[messageId].content = content;
 				}
 				if (output !== undefined) {
@@ -465,12 +462,17 @@
 
 	const deleteMessage = async (messageId) => {
 		const messageToDelete = history.messages[messageId];
+		if (!messageToDelete) return;
 		const parentMessageId = messageToDelete.parentId;
 		const childMessageIds = messageToDelete.childrenIds ?? [];
 
+		if (parentMessageId && !history.messages[parentMessageId] && onLoadOlderWindow) {
+			await onLoadOlderWindow({ beforeId: messageId }).catch(() => {});
+		}
+
 		// Collect all grandchildren
 		const grandchildrenIds = childMessageIds.flatMap(
-			(childId) => history.messages[childId]?.childrenIds ?? []
+			(childId) => history.messages[childId]?.childrenIds ?? treeIndex?.[childId]?.childrenIds ?? []
 		);
 
 		// Update parent's children
@@ -486,20 +488,43 @@
 			if (history.messages[grandchildId]) {
 				history.messages[grandchildId].parentId = parentMessageId;
 			}
+			if (treeIndex?.[grandchildId]) {
+				treeIndex[grandchildId].parentId = parentMessageId;
+			}
 		});
 
 		// Delete the message and its children
 		[messageId, ...childMessageIds].forEach((id) => {
 			delete history.messages[id];
+			if (treeIndex) delete treeIndex[id];
 		});
+		if (treeIndex && parentMessageId && treeIndex[parentMessageId]) {
+			treeIndex[parentMessageId].childrenIds = [
+				...(treeIndex[parentMessageId].childrenIds ?? []).filter((id: string) => id !== messageId),
+				...grandchildrenIds
+			];
+		}
 
-		history.currentId = getDeepestChildId(history, parentMessageId);
+		const candidateCurrentId =
+			parentMessageId === null || history.messages[parentMessageId]
+				? getDeepestChildId(history, parentMessageId)
+				: (grandchildrenIds.find((id) => Boolean(history.messages[id])) ?? null);
+		history.currentId =
+			candidateCurrentId && history.messages[candidateCurrentId]
+				? candidateCurrentId
+				: (Object.keys(history.messages).at(-1) ?? null);
 		history = history;
 
 		if (!$temporaryChatEnabled) {
-			const res = await deleteChatMessageById(localStorage.token, chatId, messageId);
-			if (res?.chat?.history) {
-				history = res.chat.history;
+			await deleteChatMessageById(localStorage.token, chatId, messageId);
+			const fresh = await getChatById(localStorage.token, chatId, { windowed: true }).catch(
+				() => null
+			);
+			if (fresh?.chat?.history) {
+				history = fresh.chat.history;
+				if (fresh.tree_index) treeIndex = fresh.tree_index;
+				if (fresh.window_meta) windowMeta = fresh.window_meta;
+				sanitizeHistory(history, treeIndex);
 			}
 
 			await refreshChatList(localStorage.token);
@@ -527,8 +552,9 @@
 			{#key chatId}
 				<section class="w-full" aria-labelledby="chat-conversation">
 					<h2 class="sr-only" id="chat-conversation">{$i18n.t('Chat Conversation')}</h2>
-					{#if messages.at(0)?.parentId !== null}
+					{#if hasUnrenderedLocalOlder}
 						<Loader
+							pollIntervalMs={250}
 							on:visible={(e) => {
 								console.log('visible');
 								if (!messagesLoading) {
@@ -541,13 +567,32 @@
 								<div class=" ">{$i18n.t('Loading...')}</div>
 							</div>
 						</Loader>
+					{:else if windowMeta?.has_older}
+						<EchoCompactionBoundary
+							checkpoint={checkpointByPivotId.get(String(messages.at(0)?.id ?? '')) ?? null}
+							hasOlder={true}
+							loading={loadingOlderWindow}
+							onLoadOlder={handleLoadOlderWindow}
+						/>
 					{/if}
 					<div role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false">
 						<ul>
 							{#each messages as message, messageIdx (message.id)}
+								{@const boundaryCheckpoint = !(
+									messageIdx === 0 &&
+									!hasUnrenderedLocalOlder &&
+									windowMeta?.has_older
+								)
+									? (checkpointByPivotId.get(String(message.id)) ?? null)
+									: null}
+								{#if boundaryCheckpoint}
+									<EchoCompactionBoundary checkpoint={boundaryCheckpoint} hasOlder={false} />
+								{/if}
 								<Message
 									{chatId}
 									bind:history
+									{treeIndex}
+									{ensureMessageDetails}
 									selectedModels={atSelectedModel ? [atSelectedModel.id] : selectedModels}
 									messageId={message.id}
 									idx={messageIdx}

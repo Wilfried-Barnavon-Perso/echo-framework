@@ -3,16 +3,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.19.0.1
+version: 6.21.9.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.9.1: Suppression du flux SSE GET /{chat_id}/stream et du polling SQLite 0.25s (_get_cognition_state_sig) au profit du push WS echo_cognition_update.
 # 6.19.0.1: Support de l'affichage hiérarchique Phalange (phx_*, parent_sub_sid, depth) dans les payloads cognition.
 # 6.18.23.1: GC paresseux des sous-agents 'purged', exclusion d'active_count, tri bas de liste et support action 'purge_now'.
 # 6.16.0.1: Remplacement du SSE /{chat_id}/browser-live par le relais WebSocket binaire zéro-parsing /{chat_id}/browser-ws.
 # 6.15.1.1: Alignement du délai de grâce dans GET /{chat_id}/browser-frames sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
-# 6.15.0.1: Exposition de http_status dans _read_browser_frames_sync et grâce passive min_age_sec=300.0 dans GET /{chat_id}/browser-frames.
 
 from __future__ import annotations
 
@@ -28,14 +28,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 import aiohttp
 import orjson as json
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from open_webui.echo.http_utils import (
     authenticate_echo_websocket,
-    create_echo_sse_response,
-    get_echo_sse_user,
     get_echo_verified_user,
 )
 from open_webui.echo.runtime import ensure_echo_sys_path
@@ -70,7 +68,6 @@ try:
         EchoSubagentController,
         cleanup_expired_purged_subagents_sync,
         extract_turn_origin,
-        get_cognition_seq,
         is_subagent_running,
         resolve_target_sub_sids,
     )
@@ -126,7 +123,6 @@ except ImportError:
         EchoSubagentController,
         cleanup_expired_purged_subagents_sync,
         extract_turn_origin,
-        get_cognition_seq,
         is_subagent_running,
         resolve_target_sub_sids,
     )
@@ -757,36 +753,6 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
     }
 
 
-def _get_cognition_state_sig(db_path: str, chat_id: str) -> str:
-    """Signature composite lecture seule (cognition_seq, threads, call_bridge, subagent_*)."""
-    seq = get_cognition_seq(chat_id)
-    if not os.path.isfile(db_path):
-        return f"{seq}|"
-    try:
-        with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
-            t_row = conn.execute(
-                "SELECT COUNT(*), COALESCE(MAX(updated_at), 0) "
-                "FROM cognitive_threads"
-            ).fetchone()
-            c_row = conn.execute(
-                "SELECT COUNT(*), COALESCE(MAX(timestamp), 0) "
-                "FROM call_bridge"
-            ).fetchone()
-            s_row = conn.execute(
-                "SELECT COUNT(*), COALESCE(MAX(updated_at), 0), "
-                "COALESCE(SUM(LENGTH(value)), 0) "
-                "FROM echo_settings WHERE key LIKE 'subagent_%'"
-            ).fetchone()
-            return (
-                f"{seq}|"
-                f"{t_row[0]}:{t_row[1]}|"
-                f"{c_row[0]}:{c_row[1]}|"
-                f"{s_row[0]}:{s_row[1]}:{s_row[2]}"
-            )
-    except Exception:
-        return f"{seq}|"
-
-
 @router.get("/{chat_id}/snapshot")
 async def get_cognition_snapshot(
     chat_id: str,
@@ -799,44 +765,6 @@ async def get_cognition_snapshot(
     await asyncio.to_thread(cleanup_expired_purged_subagents_sync, user.id, chat_id)
     snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
     return JSONResponse(content=snapshot)
-
-
-@router.get("/{chat_id}/stream")
-async def get_cognition_stream(
-    chat_id: str,
-    request: Request,
-    user=Depends(get_echo_sse_user),
-):
-    """Diffuse les mises à jour cognitives en SSE via signature composite."""
-    safe_uid = sanitize_echo_id(user.id)
-    safe_cid = sanitize_echo_id(chat_id)
-    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-
-    async def event_generator():
-        await asyncio.to_thread(cleanup_expired_purged_subagents_sync, user.id, chat_id)
-        current_snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
-        last_seen_sig = await asyncio.to_thread(_get_cognition_state_sig, db_path, chat_id)
-        yield f"data: {json.dumps(current_snapshot).decode('utf-8')}\n\n"
-
-        keepalive_counter = 0
-        while True:
-            if await request.is_disconnected():
-                break
-
-            await asyncio.sleep(0.25)
-            keepalive_counter += 1
-
-            current_sig = await asyncio.to_thread(_get_cognition_state_sig, db_path, chat_id)
-            if current_sig != last_seen_sig:
-                current_snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
-                last_seen_sig = current_sig
-                out_sse = json.dumps(current_snapshot).decode("utf-8")
-                yield f"data: {out_sse}\n\n"
-            elif keepalive_counter >= 60:
-                keepalive_counter = 0
-                yield ": keepalive\n\n"
-
-    return create_echo_sse_response(event_generator())
 
 
 def _normalize_control_target(raw_id: str) -> str:

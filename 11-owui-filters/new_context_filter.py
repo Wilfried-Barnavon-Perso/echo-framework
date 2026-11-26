@@ -4,16 +4,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.18.23.1
+version: 6.21.7.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.7.1: Détection de features.voice sur le tour utilisateur courant et injection SSOT de EchoAEC.render_voice_mode_directive().
 # 6.18.23.1: Résolution de _echo_user_msg_parent_id pour le scellement Shadow v3 et suppression de l'interception obsolète ECHO_AUTH_PENDING_MARKER/_api_key.
 # 6.18.9.1: Lecture directe en mémoire de __user__.get("gender") sans requête SQLite sur identity.db.
 # 6.10.0.1: Détection automation_id, neutralisation du salut /help en 1er tour automatisé et injection de directive AEC autonome.
 # 6.7.20.1: Détection déterministe des commandes / ECHO en tête de requête, émission de AEC_commande (Priorité 4) et alignement de la directive d'accueil sur /help.
-# 6.7.16.1: Réutilisation inter-chats zéro-LLM des résumés VECTORIZED_SUM_UP d'identity.db avec clonage des points Qdrant vers la session cible.
 
 
 from pydantic import BaseModel, Field
@@ -413,6 +413,12 @@ class Filter:
                         "text": EchoAEC.render_directive(
                             f"Exécution autonome d'automatisation planifiée{auto_label} (id: {automation_id}) : l'Utilisateur n'est pas présent en interactif. Exécuter intégralement la consigne de façon autonome, ne pas saluer ni invoquer d'outil interactif bloquant (ask_user_input, confirmations modales), et produire un compte-rendu direct et exploitable."
                         )
+                    })
+
+                is_voice_mode = bool((body.get("features") or {}).get("voice"))
+                if idx == len(msgs) - 1 and is_voice_mode:
+                    rich_parts.append({
+                        "text": EchoAEC.render_voice_mode_directive()
                     })
 
                 if idx == len(msgs) - 1 and user_raw_texts:

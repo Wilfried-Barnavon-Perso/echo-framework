@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.config import (
@@ -44,7 +45,6 @@ from open_webui.utils.access_control import has_permission, validate_access_gran
 from open_webui.utils.access_control.folders import has_chat_move_access, has_folder_write_access
 from open_webui.utils.auth import bearer_security, get_admin_user, get_current_user, get_verified_user
 from open_webui.utils.chat_fork import build_fork_history
-from open_webui.utils.context_compaction import compact_chat_branch, get_chat_context_usage
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_message_list
 from open_webui.utils.models import get_all_models
@@ -288,10 +288,6 @@ class ChatConfigResponse(ChatConfigForm):
     DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT: str = DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT
     DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT: str = DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT
     TOOL_SEARCH_EMBEDDING_MODEL: str = ''
-
-
-class CompactChatForm(BaseModel):
-    model: str | None = None
 
 
 async def get_chat_config_values() -> dict:
@@ -1370,58 +1366,6 @@ async def get_user_chat_list_by_tag_name(
     return await add_active_state_to_chat_list(request, chats, db=db)
 
 
-# Compact Chat
-
-
-@router.post('/{id}/compact')
-async def compact_chat_by_id(
-    request: Request,
-    id: str,
-    form_data: CompactChatForm | None = None,
-    user=Depends(get_verified_user),
-    db: AsyncSession = Depends(get_async_session),
-):
-    chat = await Chats.get_chat_by_id_and_user_id(id, user.id, db=db)
-    if not chat:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
-
-    if await has_active_tasks(request.app.state.redis, id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail='Wait for the current response to finish before compacting.',
-        )
-
-    if not request.app.state.MODELS:
-        await get_all_models(request, user=user)
-
-    history = (chat.chat or {}).get('history') or {}
-    messages_map = await Chats.get_messages_map_by_chat_id(id)
-    current_message_id = chat.current_message_id or history.get('currentId')
-    message_list = get_message_list(messages_map or history.get('messages') or {}, current_message_id)
-    model_id = (form_data.model if form_data else None) or next(
-        (message.get('model') for message in reversed(message_list) if message.get('model')),
-        None,
-    )
-
-    if not model_id:
-        chat_models = (chat.chat or {}).get('models') or []
-        model_id = chat_models[0] if chat_models else None
-    if not model_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No model found for context compaction.')
-
-    result = await compact_chat_branch(request, user, chat, model_id, request.app.state.MODELS)
-    result['context_usage'] = await get_chat_context_usage(chat, model_id)
-    if result.get('compacted'):
-        await publish_event(
-            request,
-            EVENTS.CHAT_COMPACTED,
-            actor=user,
-            subject_id=id,
-            data={'dropped_messages': result.get('dropped_messages')},
-        )
-    return result
-
-
 # A view is private to its authenticated viewer, even for shared chats.
 @router.get('/{id}/view')
 async def get_chat_view(
@@ -1466,6 +1410,8 @@ async def update_chat_view(
 async def get_chat_by_id(
     id: str,
     request: Request,
+    windowed: bool = Query(default=False),
+    limit: int | None = Query(default=None),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -1484,7 +1430,16 @@ async def get_chat_by_id(
             data,
             await get_response_streams_by_chat_id(request.app.state.redis, id),
         )
-        data['context_usage'] = await get_chat_context_usage(chat)
+        if windowed:
+            from open_webui.echo.chat_windowing import build_windowed_chat_payload
+
+            data = await asyncio.to_thread(
+                build_windowed_chat_payload,
+                data,
+                user_id=chat.user_id,
+                chat_id=id,
+                limit=limit,
+            )
         return data
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
@@ -1493,11 +1448,12 @@ async def get_chat_by_id(
 # Update Chat By Id
 
 
-@router.post('/{id}', response_model=ChatResponse | None)
+@router.post('/{id}', response_model=ChatResponse | dict | None)
 async def update_chat_by_id(
     request: Request,
     id: str,
     form_data: ChatForm,
+    light: bool = Query(default=False),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -1539,6 +1495,8 @@ async def update_chat_by_id(
         )
         if chat.user_id != user.id:
             return await shared_chat_response(chat, user, db=db)
+        if light:
+            return {'id': chat.id, 'title': chat.title, 'updated_at': chat.updated_at, 'light': True}
         return ChatResponse.model_validate(chat, from_attributes=True)
     else:
         raise HTTPException(
@@ -1590,12 +1548,13 @@ class MessageForm(BaseModel):
     voice: dict | None = None
 
 
-@router.post('/{id}/messages/{message_id}', response_model=ChatResponse | None)
+@router.post('/{id}/messages/{message_id}', response_model=ChatResponse | dict | None)
 async def update_chat_message_by_id(
     request: Request,
     id: str,
     message_id: str,
     form_data: MessageForm,
+    light: bool = Query(default=False),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -1657,6 +1616,8 @@ async def update_chat_message_by_id(
         subject_id=message_id,
         data={'chat_id': id, 'content_preview': (form_data.content or '')[:300]},
     )
+    if light:
+        return {'id': chat.id, 'title': chat.title, 'updated_at': chat.updated_at, 'light': True}
     return ChatResponse.model_validate(chat, from_attributes=True)
 
 

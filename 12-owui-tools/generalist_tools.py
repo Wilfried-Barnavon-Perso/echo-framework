@@ -3,16 +3,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.20.3.1
+version: 6.24.1.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.20.3.1: Support multi_select sur ask_user_input et migration de wait_timer vers le bus WM Svelte (broadcast_wait_timer).
-# 6.17.2.1: Correctif indentation break dans tool_advisor (anti-double appel LLM), découplage get_chat_tools et propagation caller_context/excluded_tools.
-# 6.15.0.1: Typage UiTaskItem et normalisation tolérante (title/label/text/name/description -> content) + garde invalid_tasks_payload dans create_ui_tasks.
-# 6.13.2.1: Extension de la description et de la docstring de tool_advisor à l'assistance ECHO-UI (echo_ui_guide).
-# 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
+# 6.24.1.1: Validation chronologique end >= start (_parse_calendar_dt_ns / _validate_calendar_bounds) dans manage_ui_calendar et statut explicite obligatoire dans manage_ui_tasks(action="update").
+# 6.24.0.1: Consolidation polymorphe en manage_ui_calendar, manage_ui_automations et manage_ui_tasks (12 outils) et exclusion auto de echo_ui_guide dans tool_advisor.
+# 6.23.11.1: Ajout des outils list_ui_chats et read_ui_chat_transcript (découverte, état runtime et lecture paginée de transcripts).
+# 6.23.9.1: Orthogonalité stricte des modes de destination des automatisations (new_chat, existing_chat, persistent_chat), inférence automatique sur target_chat_id, sentinelle target_chat_id='reset' et factorisation des helpers.
+# 6.23.1.1: Mise à niveau PAS de tool_advisor via compute_subagent_excluded_tools (exclusion fidèle allowed_tools dans hierarchical_domains_map) et gabarits TPL_ORCHESTRATOR_CONSULTANT_* (grade can_delegate, group_id, sandbox/<peer_sid>/).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -22,6 +22,8 @@ import re
 import sys
 import json
 import inspect
+from datetime import datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field
 from typing import Any, Literal, Optional
 
@@ -38,8 +40,15 @@ from echo_constants import (
     OWUI_ORCHESTRATOR_MODEL,
 )
 from echo_paths import get_echo_session_path, sanitize_echo_id
-from echo_gemini_client import EchoGeminiClient
-from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
+from echo_chats import list_user_chats, read_user_chat_transcript
+from echo_gemini_client import EchoGeminiClient, describe_empty_llm_response
+from echo_prompts import (
+    SYS_ORCHESTRATOR_CONSULTANT,
+    TPL_ORCHESTRATOR_CONSULTANT_CALLER_MAIN,
+    TPL_ORCHESTRATOR_CONSULTANT_CALLER_SUBAGENT,
+    TPL_ORCHESTRATOR_CONSULTANT_ROLE_LEAF,
+    TPL_ORCHESTRATOR_CONSULTANT_ROLE_SUPERIOR,
+)
 from echo_tool_guides import EchoToolGuidesManager
 try:
     from echo_window_manager import get_window_manager
@@ -58,16 +67,15 @@ from open_webui.tools.builtin import (
     TaskItem as UiTaskItem,
     create_tasks as _owui_create_tasks,
     update_task as _owui_update_task,
-    search_chats as _owui_search_chats,
-    view_chat as _owui_view_chat,
     _get_user_tz,
     _ns_to_dt,
 )
 from open_webui.models.folders import Folders, FolderForm
 from open_webui.models.tags import Tags
-from open_webui.models.chats import Chats
+from open_webui.models.chats import Chats, is_internal_chat
 from open_webui.models.automations import Automations
 from open_webui.models.calendar import CalendarEvents
+from open_webui.utils.chat_id import is_saved_chat_id
 import logging
 
 log = logging.getLogger(__name__)
@@ -123,7 +131,7 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Suspend l'exécution de manière asynchrone pendant `seconds` secondes (max 300s, 1 appel max par tour)."""
+        """Suspend l'exécution de manière asynchrone pendant `seconds` secondes (max 180s, 1 appel max par tour)."""
         uid = str((__user__ or {}).get("id") or "")
         cid = str((__metadata__ or {}).get("chat_id") or "")
         events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
@@ -331,372 +339,687 @@ class Tools:
             status={"status": "success"},
         )
 
-    @echo_tool
-    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 10, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Recherche des événements dans l'agenda de l'Interface Utilisateur par mot-clé et bornes `start`/`end` (ISO 8601)."""
-        return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+    @staticmethod
+    def _normalize_id_list(raw_ids: Any) -> list[str]:
+        """Normalise une liste d'identifiants (list[str], tableau JSON, CSV ou chaîne unitaire)."""
+        if raw_ids is None:
+            return []
+        if isinstance(raw_ids, (list, tuple, set)):
+            return [str(item).strip() for item in raw_ids if item is not None and str(item).strip()]
+        if isinstance(raw_ids, str):
+            raw_str = raw_ids.strip()
+            if not raw_str:
+                return []
+            if raw_str.startswith("["):
+                try:
+                    parsed = json.loads(raw_str)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item is not None and str(item).strip()]
+                except Exception:
+                    pass
+            return [part.strip() for part in raw_str.split(",") if part.strip()]
+        return []
 
-    @echo_tool
-    async def list_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 30, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Liste les événements de l'agenda de l'Interface Utilisateur sur une période (`start`/`end` ISO 8601)."""
-        return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+    @staticmethod
+    def _ui_tool_error(msg: str, error_code: str = "invalid_arguments") -> dict:
+        """Formate une erreur structurée normalisée pour les outils UI."""
+        return wrap_tool_output(
+            text=json.dumps({"error": msg}, ensure_ascii=False),
+            status={"status": "error", "error_code": error_code, "message": msg},
+        )
 
-    @echo_tool
-    async def read_ui_calendar_events(self, event_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Lit les détails complets d'un ou plusieurs événements de l'agenda à partir de leurs `event_ids`."""
-        user_id = __user__.get("id")
-        if not user_id:
-            return {"error": "User context missing"}
-
-        if isinstance(event_ids, str):
-            clean_ids = [eid.strip() for eid in event_ids.split(",") if eid.strip()]
-        elif isinstance(event_ids, list):
-            clean_ids = [str(eid).strip() for eid in event_ids if str(eid).strip()]
+    @staticmethod
+    def _parse_calendar_dt_ns(dt_str: str, tz_obj: Any) -> int:
+        """Convertit une chaîne ISO 8601 ou 'YYYY-MM-DD HH:MM' en nanosecondes epoch UTC."""
+        if isinstance(tz_obj, str):
+            try:
+                eff_tz: tzinfo = ZoneInfo(tz_obj)
+            except Exception:
+                eff_tz = timezone.utc
+        elif tz_obj is None:
+            eff_tz = timezone.utc
+        elif isinstance(tz_obj, tzinfo) or hasattr(tz_obj, "utcoffset"):
+            eff_tz = tz_obj
         else:
-            clean_ids = []
+            eff_tz = timezone.utc
 
-        if not clean_ids:
-            return {"error": "Aucun identifiant d'évènement valide fourni."}
+        dt = datetime.fromisoformat(dt_str.strip())
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=eff_tz)
+        return int(dt.timestamp() * 1_000) * 1_000_000
 
-        try:
-            tz = _get_user_tz(__user__)
-            tasks = [CalendarEvents.get_event_by_id(eid) for eid in clean_ids]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    @classmethod
+    def _validate_calendar_bounds(
+        cls,
+        start: Optional[str],
+        end: Optional[str],
+        tz: Any,
+        existing_start_ns: Optional[int] = None,
+        existing_end_ns: Optional[int] = None,
+    ) -> Optional[dict]:
+        """Valide le format des bornes `start`/`end` et leur cohérence chronologique."""
+        start_ns: Optional[int] = None
+        if isinstance(start, str):
+            if start.strip():
+                try:
+                    start_ns = cls._parse_calendar_dt_ns(start, tz)
+                except (ValueError, TypeError) as e:
+                    return cls._ui_tool_error(
+                        f"Format de date `start` invalide : {e}. Utiliser 'YYYY-MM-DD HH:MM' ou ISO 8601."
+                    )
+        elif start is not None:
+            return cls._ui_tool_error(
+                "Format de date `start` invalide : chaîne attendue. Utiliser 'YYYY-MM-DD HH:MM' ou ISO 8601."
+            )
 
-            events = []
-            not_found = []
+        end_ns: Optional[int] = None
+        if isinstance(end, str):
+            if end.strip():
+                try:
+                    end_ns = cls._parse_calendar_dt_ns(end, tz)
+                except (ValueError, TypeError) as e:
+                    return cls._ui_tool_error(
+                        f"Format de date `end` invalide : {e}. Utiliser 'YYYY-MM-DD HH:MM' ou ISO 8601."
+                    )
+        elif end is not None:
+            return cls._ui_tool_error(
+                "Format de date `end` invalide : chaîne attendue. Utiliser 'YYYY-MM-DD HH:MM' ou ISO 8601."
+            )
 
-            for eid, res in zip(clean_ids, raw_results):
-                if isinstance(res, Exception) or res is None or res.user_id != user_id:
-                    not_found.append(eid)
-                    continue
+        eff_start = start_ns if start_ns is not None else existing_start_ns
+        eff_end = end_ns if end_ns is not None else existing_end_ns
+        if eff_start is not None and eff_end is not None and eff_end < eff_start:
+            return cls._ui_tool_error(
+                "Incohérence chronologique : la date de fin (`end`) doit être supérieure ou égale à la date de début (`start`)."
+            )
+        return None
 
-                alert_minutes = 10
-                if res.meta and "alert_minutes" in res.meta:
-                    alert_minutes = res.meta["alert_minutes"]
+    @staticmethod
+    def _aggregate_batch_results(item_ids: list[str], raw_results: list[dict], id_field: str = "id") -> dict:
+        """Agrège les retours d'une exécution batch multi-identifiants en réponse unique structurée."""
+        succeeded: list[str] = []
+        failed: list[dict] = []
+        items_out: list[dict] = []
+        for item_id, res in zip(item_ids, raw_results):
+            st_dict = res.get("status") if isinstance(res, dict) and isinstance(res.get("status"), dict) else {}
+            st_val = str(st_dict.get("status") or "success")
+            text_val = res.get("text", "") if isinstance(res, dict) else str(res)
+            entry = {id_field: item_id, "status": st_val, "result": text_val}
+            items_out.append(entry)
+            if st_val == "error":
+                failed.append({id_field: item_id, "error": st_dict.get("message") or text_val})
+            else:
+                succeeded.append(item_id)
 
-                events.append({
-                    "id": res.id,
-                    "calendar_id": res.calendar_id,
-                    "title": res.title,
-                    "description": res.description or "",
-                    "start": _ns_to_dt(res.start_at, tz) if res.start_at else None,
-                    "end": _ns_to_dt(res.end_at, tz) if res.end_at else None,
-                    "all_day": res.all_day,
-                    "rrule": res.rrule or "",
-                    "location": res.location or "",
-                    "color": res.color or "",
-                    "reminder_minutes": alert_minutes,
-                    "is_cancelled": res.is_cancelled,
-                    "attendees": [a.model_dump() if hasattr(a, "model_dump") else a for a in (res.attendees or [])],
-                    "created_at": res.created_at,
-                    "updated_at": res.updated_at
-                })
-
-            payload = {
-                "events": events,
-                "total_found": len(events)
-            }
-            if not_found:
-                payload["not_found"] = not_found
-
-            return json.dumps(payload, ensure_ascii=False)
-        except Exception as e:
-            return {"error": str(e)}
-
-    @echo_tool
-    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Crée un événement dans l'agenda de l'Interface Utilisateur (`start`/`end` au format ISO 8601 ou 'YYYY-MM-DD HH:MM')."""
-        return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
-
-    @echo_tool
-    async def update_ui_calendar_event(
-        self,
-        event_id: str,
-        title: str = None,
-        description: str = None,
-        start: str = None,
-        end: str = None,
-        all_day: bool = None,
-        location: str = None,
-        is_cancelled: bool = None,
-        reminder_minutes: int = None,
-        __request__ = None,
-        __user__: dict = {},
-        __metadata__: dict = {}
-    ) -> str:
-        """Met à jour les champs spécifiés d'un événement existant (`event_id`) dans l'agenda de l'Interface Utilisateur."""
-        return await safe_owui_call(
-            _owui_update_cal,
-            event_id=event_id,
-            title=title,
-            description=description,
-            start=start,
-            end=end,
-            all_day=all_day,
-            location=location,
-            is_cancelled=is_cancelled,
-            reminder_minutes=reminder_minutes,
-            __request__=__request__,
-            __user__=__user__,
-            __metadata__=__metadata__
+        overall_status = "success" if not failed else ("error" if not succeeded else "warning")
+        payload = {
+            "status": overall_status,
+            "total": len(item_ids),
+            "succeeded_ids": succeeded,
+            "failed": failed,
+            "results": items_out,
+        }
+        return wrap_tool_output(
+            text=json.dumps(payload, ensure_ascii=False),
+            status={
+                "status": overall_status,
+                "succeeded_count": len(succeeded),
+                "failed_count": len(failed),
+            },
         )
 
     @echo_tool
-    async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Supprime un événement de l'agenda de l'Interface Utilisateur via son `event_id`."""
-        return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
-
-    @echo_tool
-    async def create_ui_automation(
+    async def manage_ui_calendar(
         self,
-        name: str,
-        prompt: str,
-        rrule: str,
-        target_folder_name: str = "Automations",
-        target_mode: Literal["new_chat", "existing_chat", "persistent_chat"] = "new_chat",
-        target_chat_id: Optional[str] = None,
-        __request__ = None,
+        action: Literal["list", "read", "create", "update", "delete"] = "list",
+        event_ids: Optional[list[str]] = None,
+        query: str = "",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 30,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        all_day: Optional[bool] = None,
+        is_cancelled: Optional[bool] = None,
+        reminder_minutes: Optional[int] = None,
+        __request__: Any = None,
         __user__: dict = {},
-        __metadata__: dict = {}
-    ) -> str:
-        """Crée une tâche de fond planifiée (CRON au format iCalendar `rrule`) exécutant `prompt` selon `target_mode` (`new_chat`, `existing_chat`, `persistent_chat`)."""
-        user_id = __user__.get("id")
-        if not user_id:
-            return json.dumps({"error": "User context missing"})
+        __metadata__: dict = {},
+    ) -> dict | str:
+        """Gère l'agenda de l'Interface Utilisateur selon `action` (`list`, `read`, `create`, `update`, `delete`)."""
+        if action not in ("list", "read", "create", "update", "delete"):
+            return self._ui_tool_error(f"Action calendrier invalide : '{action}'. Valeurs autorisées : list, read, create, update, delete.")
 
-        resolved_chat_id = target_chat_id
-        effective_type = "chat"
+        if action == "list":
+            if (
+                event_ids is not None
+                or title is not None
+                or description is not None
+                or location is not None
+                or all_day is not None
+                or is_cancelled is not None
+                or reminder_minutes is not None
+            ):
+                return self._ui_tool_error("Paramètre(s) hors-contrat pour action='list' : seuls `query`, `start`, `end` et `limit` sont autorisés.")
+            if start is not None or end is not None:
+                bounds_err = self._validate_calendar_bounds(start, end, _get_user_tz(__user__))
+                if bounds_err is not None:
+                    return bounds_err
+            return await safe_owui_call(
+                _owui_search,
+                query=query,
+                start=start,
+                end=end,
+                count=limit,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=__metadata__,
+            )
 
-        if target_chat_id == "current":
-            resolved_chat_id = (__metadata__ or {}).get("chat_id")
-            if not resolved_chat_id or str(resolved_chat_id).startswith("local:"):
-                err_msg = "Impossible de cibler la conversation courante : chat_id absent ou temporaire ('local:')."
-                return wrap_tool_output(
-                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
-                    status={"status": "error", "message": err_msg},
-                )
-            effective_type = "persistent_chat" if target_mode == "persistent_chat" else "existing_chat"
-        elif target_mode == "existing_chat" or (target_chat_id and target_mode == "new_chat"):
-            effective_type = "existing_chat"
-        elif target_mode == "persistent_chat":
-            effective_type = "persistent_chat"
+        if action == "read":
+            if (
+                query != ""
+                or limit != 30
+                or start is not None
+                or end is not None
+                or title is not None
+                or description is not None
+                or location is not None
+                or all_day is not None
+                or is_cancelled is not None
+                or reminder_minutes is not None
+            ):
+                return self._ui_tool_error("Paramètre(s) hors-contrat pour action='read' : seul `event_ids` est autorisé.")
 
-        folder_id = None
-        if effective_type == "existing_chat":
-            if not resolved_chat_id:
-                err_msg = "target_chat_id est requis lorsque target_mode='existing_chat'."
-                return wrap_tool_output(
-                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
-                    status={"status": "error", "message": err_msg},
-                )
-        else:
-            if effective_type == "chat":
-                resolved_chat_id = None
-            if target_folder_name:
-                folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
-                for f in folders:
-                    if f.name == target_folder_name:
-                        folder_id = f.id
-                        break
+            user_id = (__user__ or {}).get("id")
+            if not user_id:
+                return self._ui_tool_error("Contexte utilisateur manquant.", error_code="missing_user")
 
-                if not folder_id:
+            clean_ids = self._normalize_id_list(event_ids)
+            if not clean_ids:
+                return self._ui_tool_error("Aucun identifiant d'évènement valide fourni dans `event_ids`.")
+
+            try:
+                tz = _get_user_tz(__user__)
+                tasks = [CalendarEvents.get_event_by_id(eid) for eid in clean_ids]
+                raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                events = []
+                not_found = []
+                for eid, res in zip(clean_ids, raw_results):
+                    if isinstance(res, Exception) or res is None or res.user_id != user_id:
+                        not_found.append(eid)
+                        continue
+                    alert_minutes = 10
+                    if res.meta and "alert_minutes" in res.meta:
+                        alert_minutes = res.meta["alert_minutes"]
+                    events.append({
+                        "id": res.id,
+                        "calendar_id": res.calendar_id,
+                        "title": res.title,
+                        "description": res.description or "",
+                        "start": _ns_to_dt(res.start_at, tz) if res.start_at else None,
+                        "end": _ns_to_dt(res.end_at, tz) if res.end_at else None,
+                        "all_day": res.all_day,
+                        "rrule": res.rrule or "",
+                        "location": res.location or "",
+                        "color": res.color or "",
+                        "reminder_minutes": alert_minutes,
+                        "is_cancelled": res.is_cancelled,
+                        "attendees": [a.model_dump() if hasattr(a, "model_dump") else a for a in (res.attendees or [])],
+                        "created_at": res.created_at,
+                        "updated_at": res.updated_at,
+                    })
+
+                payload = {"events": events, "total_found": len(events)}
+                if not_found:
+                    payload["not_found"] = not_found
+                return json.dumps(payload, ensure_ascii=False)
+            except Exception as e:
+                return self._ui_tool_error(str(e), error_code="internal_error")
+
+        if action == "create":
+            if event_ids is not None or query != "" or limit != 30 or is_cancelled is not None:
+                return self._ui_tool_error("Paramètre(s) hors-contrat pour action='create' : `event_ids`, `query`, `limit` et `is_cancelled` sont interdits.")
+            if not isinstance(title, str) or not title.strip() or not isinstance(start, str) or not start.strip():
+                return self._ui_tool_error("Les paramètres `title` et `start` non vides sont requis pour action='create'.")
+            bounds_err = self._validate_calendar_bounds(start, end, _get_user_tz(__user__))
+            if bounds_err is not None:
+                return bounds_err
+            return await safe_owui_call(
+                _owui_create_cal,
+                title=title.strip(),
+                description=description,
+                start=start.strip(),
+                end=end,
+                all_day=bool(all_day) if all_day is not None else False,
+                location=location,
+                reminder_minutes=reminder_minutes,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=__metadata__,
+            )
+
+        if action == "update":
+            if query != "" or limit != 30:
+                return self._ui_tool_error("Paramètre(s) hors-contrat pour action='update' : `query` et `limit` sont interdits.")
+            clean_ids = self._normalize_id_list(event_ids)
+            if len(clean_ids) != 1:
+                return self._ui_tool_error("action='update' exige exactement 1 identifiant dans `event_ids`.")
+            if start is not None or end is not None:
+                existing_ev = None
+                if hasattr(CalendarEvents, "get_event_by_id"):
                     try:
-                        new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
-                        folder_id = new_folder.id
-                    except Exception as e:
-                        log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
-                        folder_id = None
+                        existing_ev = await CalendarEvents.get_event_by_id(clean_ids[0])
+                    except Exception:
+                        existing_ev = None
+                existing_start_ns = getattr(existing_ev, "start_at", None)
+                existing_end_ns = getattr(existing_ev, "end_at", None)
+                bounds_err = self._validate_calendar_bounds(
+                    start,
+                    end,
+                    _get_user_tz(__user__),
+                    existing_start_ns=existing_start_ns,
+                    existing_end_ns=existing_end_ns,
+                )
+                if bounds_err is not None:
+                    return bounds_err
+            return await safe_owui_call(
+                _owui_update_cal,
+                event_id=clean_ids[0],
+                title=title,
+                description=description,
+                start=start,
+                end=end,
+                all_day=all_day,
+                location=location,
+                is_cancelled=is_cancelled,
+                reminder_minutes=reminder_minutes,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=__metadata__,
+            )
 
-        call_metadata = dict(__metadata__ or {})
+        # action == "delete"
+        if (
+            query != ""
+            or limit != 30
+            or start is not None
+            or end is not None
+            or title is not None
+            or description is not None
+            or location is not None
+            or all_day is not None
+            or is_cancelled is not None
+            or reminder_minutes is not None
+        ):
+            return self._ui_tool_error("Paramètre(s) hors-contrat pour action='delete' : seul `event_ids` est autorisé.")
+        clean_ids = self._normalize_id_list(event_ids)
+        if not clean_ids:
+            return self._ui_tool_error("Aucun identifiant d'évènement valide fourni dans `event_ids`.")
+        if len(clean_ids) == 1:
+            return await safe_owui_call(
+                _owui_delete_cal,
+                event_id=clean_ids[0],
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=__metadata__,
+            )
+        results = await asyncio.gather(*(
+            safe_owui_call(
+                _owui_delete_cal,
+                event_id=eid,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=__metadata__,
+            )
+            for eid in clean_ids
+        ))
+        return self._aggregate_batch_results(clean_ids, results, id_field="event_id")
+
+    @classmethod
+    def _automation_error(cls, msg: str) -> dict:
+        return cls._ui_tool_error(msg, error_code="automation_error")
+
+    @classmethod
+    def _resolve_current_chat_id(cls, metadata: Optional[dict]) -> tuple[Optional[str], Optional[dict]]:
+        cid = (metadata or {}).get("chat_id")
+        if not cid or str(cid).startswith("local:"):
+            return None, cls._automation_error(
+                "Impossible de cibler la conversation courante : chat_id absent ou temporaire ('local:')."
+            )
+        return str(cid), None
+
+    @staticmethod
+    async def _chat_exists_for_user(user_id: str, chat_id: Optional[str]) -> bool:
+        cleaned = (chat_id or "").strip()
+        if not cleaned or not is_saved_chat_id(cleaned):
+            return False
+        chat = await Chats.get_chat_by_id_and_user_id(cleaned, user_id)
+        return bool(chat and not is_internal_chat(chat.meta))
+
+    @staticmethod
+    async def _resolve_or_create_folder_id(user_id: str, folder_name: Optional[str]) -> Optional[str]:
+        if not folder_name:
+            return None
+        folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, "get_folders_by_user_id") else []
+        match = next((f for f in folders if f.name == folder_name), None)
+        if match:
+            return match.id
+        try:
+            new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=folder_name))
+            return new_folder.id
+        except Exception as e:
+            log.error(f"ECHO: Failed to create target folder '{folder_name}' - {e}")
+            return None
+
+    @staticmethod
+    def _with_orchestrator_model_metadata(metadata: Optional[dict]) -> dict:
+        call_metadata = dict(metadata or {})
         call_metadata["model_id"] = OWUI_ORCHESTRATOR_MODEL
         if isinstance(call_metadata.get("model"), dict):
             call_metadata["model"] = dict(call_metadata["model"], id=OWUI_ORCHESTRATOR_MODEL)
         else:
             call_metadata["model"] = {"id": OWUI_ORCHESTRATOR_MODEL}
-
-        return await safe_owui_call(
-            _owui_create_auto,
-            name=name,
-            prompt=prompt,
-            rrule=rrule,
-            folder_id=folder_id,
-            model_id=OWUI_ORCHESTRATOR_MODEL,
-            target_type=effective_type,
-            target_chat_id=resolved_chat_id,
-            __request__=__request__,
-            __user__=__user__,
-            __metadata__=call_metadata
-        )
+        return call_metadata
 
     @echo_tool
-    async def update_ui_automation(
+    async def manage_ui_automations(
         self,
-        automation_id: str,
-        name: str = None,
-        prompt: str = None,
-        rrule: str = None,
-        target_folder_name: str = None,
+        action: Literal["list", "read", "create", "update", "toggle", "delete"] = "list",
+        automation_ids: Optional[list[str]] = None,
+        name: Optional[str] = None,
+        prompt: Optional[str] = None,
+        rrule: Optional[str] = None,
+        target_folder_name: Optional[str] = None,
         target_mode: Optional[Literal["new_chat", "existing_chat", "persistent_chat"]] = None,
         target_chat_id: Optional[str] = None,
-        __request__ = None,
+        query: str = "",
+        limit: int = 30,
+        __request__: Any = None,
         __user__: dict = {},
-        __metadata__: dict = {}
-    ) -> str:
-        """Modifie les paramètres (`name`, `prompt`, `rrule`, `target_folder_name`, `target_mode`, `target_chat_id`) d'une tâche planifiée existante (`automation_id`)."""
-        user_id = __user__.get("id")
-        if not user_id:
-            return json.dumps({"error": "User context missing"})
+        __metadata__: dict = {},
+    ) -> dict | str:
+        """Gère les tâches de fond planifiées (CRON) de l'Interface Utilisateur selon `action` (`list`, `read`, `create`, `update`, `toggle`, `delete`)."""
+        if action not in ("list", "read", "create", "update", "toggle", "delete"):
+            return self._ui_tool_error(
+                f"Action automatisation invalide : '{action}'. Valeurs autorisées : list, read, create, update, toggle, delete."
+            )
 
-        resolved_chat_id = target_chat_id
-        if target_chat_id == "current":
-            resolved_chat_id = (__metadata__ or {}).get("chat_id")
-            if not resolved_chat_id or str(resolved_chat_id).startswith("local:"):
-                err_msg = "Impossible de cibler la conversation courante : chat_id absent ou temporaire ('local:')."
-                return wrap_tool_output(
-                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
-                    status={"status": "error", "message": err_msg},
+        user_id = (__user__ or {}).get("id")
+        if not user_id:
+            return self._ui_tool_error("Contexte utilisateur manquant.", error_code="missing_user")
+
+        if action == "list":
+            if (
+                automation_ids is not None
+                or name is not None
+                or prompt is not None
+                or rrule is not None
+                or target_folder_name is not None
+                or target_mode is not None
+                or target_chat_id is not None
+            ):
+                return self._ui_tool_error(
+                    "Paramètre(s) hors-contrat pour action='list' : seuls `query` et `limit` sont autorisés."
+                )
+            try:
+                result = await Automations.search_automations(user_id=user_id, query=query, limit=limit)
+                items = [
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "folder_id": item.folder_id,
+                        "rrule": item.data.get("rrule", "") if item.data else "",
+                        "target": item.data.get("target") if item.data else None,
+                        "is_active": item.is_active,
+                        "next_run_at": item.next_run_at,
+                    }
+                    for item in result.items
+                ]
+                return json.dumps(items, ensure_ascii=False)
+            except Exception as e:
+                return self._ui_tool_error(str(e), error_code="internal_error")
+
+        if action == "read":
+            if (
+                name is not None
+                or prompt is not None
+                or rrule is not None
+                or target_folder_name is not None
+                or target_mode is not None
+                or target_chat_id is not None
+                or query != ""
+                or limit != 30
+            ):
+                return self._ui_tool_error(
+                    "Paramètre(s) hors-contrat pour action='read' : seul `automation_ids` est autorisé."
+                )
+            clean_ids = self._normalize_id_list(automation_ids)
+            if not clean_ids:
+                return self._ui_tool_error("Aucun identifiant d'automatisation valide fourni dans `automation_ids`.")
+            try:
+                tasks = [Automations.get_by_id(aid) for aid in clean_ids]
+                raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                automations = []
+                not_found = []
+                for aid, res in zip(clean_ids, raw_results):
+                    if isinstance(res, Exception) or res is None or res.user_id != user_id:
+                        not_found.append(aid)
+                        continue
+                    automations.append({
+                        "id": res.id,
+                        "name": res.name,
+                        "folder_id": res.folder_id,
+                        "prompt": res.data.get("prompt", "") if res.data else "",
+                        "model_id": res.data.get("model_id", "") if res.data else "",
+                        "rrule": res.data.get("rrule", "") if res.data else "",
+                        "target": res.data.get("target") if res.data else None,
+                        "is_active": res.is_active,
+                        "last_run_at": res.last_run_at,
+                        "next_run_at": res.next_run_at,
+                        "created_at": res.created_at,
+                        "updated_at": res.updated_at,
+                    })
+
+                payload = {"automations": automations, "total_found": len(automations)}
+                if not_found:
+                    payload["not_found"] = not_found
+                return json.dumps(payload, ensure_ascii=False)
+            except Exception as e:
+                return self._ui_tool_error(str(e), error_code="internal_error")
+
+        if action == "create":
+            if automation_ids is not None or query != "" or limit != 30:
+                return self._ui_tool_error(
+                    "Paramètre(s) hors-contrat pour action='create' : `automation_ids`, `query` et `limit` sont interdits."
+                )
+            if (
+                not isinstance(name, str) or not name.strip()
+                or not isinstance(prompt, str) or not prompt.strip()
+                or not isinstance(rrule, str) or not rrule.strip()
+            ):
+                return self._ui_tool_error(
+                    "Les paramètres `name`, `prompt` et `rrule` non vides sont requis pour action='create'."
                 )
 
-        mode_map = {
-            "new_chat": "chat",
-            "existing_chat": "existing_chat",
-            "persistent_chat": "persistent_chat",
-        }
-        mapped_target_type = mode_map.get(target_mode) if target_mode is not None else None
-        if target_chat_id == "current" and mapped_target_type is None:
-            mapped_target_type = "existing_chat"
+            eff_mode = target_mode if target_mode is not None else "new_chat"
+            eff_folder_name = target_folder_name if target_folder_name is not None else "Automations"
+            raw_chat_id = target_chat_id.strip() if isinstance(target_chat_id, str) and target_chat_id.strip() else None
+            resolved_chat_id = None
 
-        folder_id = ""
-        if target_folder_name is not None and mapped_target_type != "existing_chat":
-            folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
-            folder_match = next((f for f in folders if f.name == target_folder_name), None)
-            if folder_match:
-                folder_id = folder_match.id
+            if raw_chat_id == "reset":
+                if eff_mode != "persistent_chat":
+                    return self._automation_error(
+                        "Incohérence de ciblage : target_chat_id='reset' est réservé à la réinitialisation d'une automatisation existante en target_mode='persistent_chat'."
+                    )
+                effective_type = "persistent_chat"
+            elif eff_mode == "persistent_chat":
+                if raw_chat_id is not None:
+                    return self._automation_error(
+                        "Incohérence de ciblage : target_mode='persistent_chat' crée automatiquement sa conversation dédiée et n'accepte pas target_chat_id (utiliser target_mode='existing_chat' pour cibler une conversation existante)."
+                    )
+                effective_type = "persistent_chat"
+            elif eff_mode == "existing_chat" or (raw_chat_id is not None and eff_mode == "new_chat"):
+                if not raw_chat_id:
+                    return self._automation_error(
+                        "target_chat_id ('current' ou UUID) est requis lorsque target_mode='existing_chat'."
+                    )
+                if raw_chat_id == "current":
+                    resolved_chat_id, err = self._resolve_current_chat_id(__metadata__)
+                    if err:
+                        return err
+                else:
+                    resolved_chat_id = raw_chat_id
+                effective_type = "existing_chat"
             else:
-                try:
-                    new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
-                    folder_id = new_folder.id
-                except Exception as e:
-                    log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
-                    folder_id = ""
+                effective_type = "chat"
 
-        call_metadata = dict(__metadata__ or {})
-        call_metadata["model_id"] = OWUI_ORCHESTRATOR_MODEL
-        if isinstance(call_metadata.get("model"), dict):
-            call_metadata["model"] = dict(call_metadata["model"], id=OWUI_ORCHESTRATOR_MODEL)
-        else:
-            call_metadata["model"] = {"id": OWUI_ORCHESTRATOR_MODEL}
+            folder_id = (
+                None
+                if effective_type == "existing_chat"
+                else await self._resolve_or_create_folder_id(user_id, eff_folder_name)
+            )
+            call_metadata = self._with_orchestrator_model_metadata(__metadata__)
 
-        extra_target_kwargs = {}
-        if mapped_target_type is not None:
-            extra_target_kwargs["target_type"] = mapped_target_type
-        if resolved_chat_id is not None:
-            extra_target_kwargs["target_chat_id"] = resolved_chat_id
+            return await safe_owui_call(
+                _owui_create_auto,
+                name=name.strip(),
+                prompt=prompt.strip(),
+                rrule=rrule.strip(),
+                folder_id=folder_id,
+                model_id=OWUI_ORCHESTRATOR_MODEL,
+                target_type=effective_type,
+                target_chat_id=resolved_chat_id,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=call_metadata,
+            )
 
-        return await safe_owui_call(
-            _owui_update_auto,
-            automation_id=automation_id,
-            name=name,
-            prompt=prompt,
-            rrule=rrule,
-            model_id=OWUI_ORCHESTRATOR_MODEL,
-            folder_id=folder_id,
-            **extra_target_kwargs,
-            __request__=__request__,
-            __user__=__user__,
-            __metadata__=call_metadata
-        )
+        if action == "update":
+            if query != "" or limit != 30:
+                return self._ui_tool_error(
+                    "Paramètre(s) hors-contrat pour action='update' : `query` et `limit` sont interdits."
+                )
+            clean_ids = self._normalize_id_list(automation_ids)
+            if len(clean_ids) != 1:
+                return self._ui_tool_error("action='update' exige exactement 1 identifiant dans `automation_ids`.")
+            aid = clean_ids[0]
 
-    @echo_tool
-    async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Supprime définitivement une tâche planifiée via son `automation_id`."""
-        return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+            automation = await Automations.get_by_id(aid)
+            if not automation:
+                return self._automation_error("Automation not found")
+            if automation.user_id != user_id:
+                return self._automation_error("Access denied")
 
-    @echo_tool
-    async def toggle_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
-        """Met en pause ou réactive une tâche planifiée via son `automation_id`."""
-        return await safe_owui_call(_owui_toggle_auto, automation_id=automation_id, __request__=__request__, __user__=__user__)
+            existing_target = (automation.data or {}).get("target") or {}
+            old_type = existing_target.get("type") or "chat"
+            old_chat_id = existing_target.get("chat_id")
+            raw_chat_id = target_chat_id.strip() if isinstance(target_chat_id, str) and target_chat_id.strip() else None
 
-    @echo_tool
-    async def read_ui_automations(self, automation_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Lit la configuration complète (incluant le prompt et la règle `rrule`) d'une ou plusieurs automatisations (`automation_ids`)."""
-        user_id = __user__.get("id")
-        if not user_id:
-            return {"error": "User context missing"}
+            mapped_target_type = None
+            extra_target_kwargs = {}
 
-        if isinstance(automation_ids, str):
-            clean_ids = [aid.strip() for aid in automation_ids.split(",") if aid.strip()]
-        elif isinstance(automation_ids, list):
-            clean_ids = [str(aid).strip() for aid in automation_ids if str(aid).strip()]
-        else:
-            clean_ids = []
+            if raw_chat_id == "reset":
+                if target_mode in ("new_chat", "existing_chat"):
+                    return self._automation_error(
+                        "Incohérence de ciblage : target_chat_id='reset' est réservé à target_mode='persistent_chat'."
+                    )
+                mapped_target_type = "persistent_chat"
+                extra_target_kwargs = {"target_type": "persistent_chat", "target_chat_id": None}
+            elif raw_chat_id is not None:
+                if target_mode in ("new_chat", "persistent_chat"):
+                    return self._automation_error(
+                        "Incohérence de ciblage : target_chat_id ne peut être utilisé qu'avec target_mode='existing_chat' (ou target_mode omis)."
+                    )
+                if raw_chat_id == "current":
+                    resolved_chat_id, err = self._resolve_current_chat_id(__metadata__)
+                    if err:
+                        return err
+                else:
+                    resolved_chat_id = raw_chat_id
+                mapped_target_type = "existing_chat"
+                extra_target_kwargs = {"target_type": "existing_chat", "target_chat_id": resolved_chat_id}
+            elif target_mode == "new_chat":
+                mapped_target_type = "chat"
+                extra_target_kwargs = {"target_type": "chat", "target_chat_id": None}
+            elif target_mode == "existing_chat":
+                if old_type == "existing_chat" and await self._chat_exists_for_user(user_id, old_chat_id):
+                    mapped_target_type = "existing_chat"
+                    extra_target_kwargs = {"target_type": "existing_chat"}
+                else:
+                    return self._automation_error(
+                        "target_chat_id ('current' ou UUID) est requis pour cibler une conversation existante (target_mode='existing_chat')."
+                    )
+            elif target_mode == "persistent_chat":
+                mapped_target_type = "persistent_chat"
+                if old_type == "persistent_chat" and old_chat_id and await self._chat_exists_for_user(user_id, old_chat_id):
+                    extra_target_kwargs = {"target_type": "persistent_chat"}
+                else:
+                    extra_target_kwargs = {"target_type": "persistent_chat", "target_chat_id": None}
 
+            effective_final_type = mapped_target_type or old_type
+            folder_id = ""
+            if target_folder_name is not None and effective_final_type != "existing_chat":
+                resolved_fid = await self._resolve_or_create_folder_id(user_id, target_folder_name)
+                folder_id = resolved_fid if resolved_fid is not None else ""
+
+            call_metadata = self._with_orchestrator_model_metadata(__metadata__)
+            return await safe_owui_call(
+                _owui_update_auto,
+                automation_id=aid,
+                name=name,
+                prompt=prompt,
+                rrule=rrule,
+                model_id=OWUI_ORCHESTRATOR_MODEL,
+                folder_id=folder_id,
+                **extra_target_kwargs,
+                __request__=__request__,
+                __user__=__user__,
+                __metadata__=call_metadata,
+            )
+
+        # actions "toggle" et "delete" (1..N IDs)
+        if (
+            name is not None
+            or prompt is not None
+            or rrule is not None
+            or target_folder_name is not None
+            or target_mode is not None
+            or target_chat_id is not None
+            or query != ""
+            or limit != 30
+        ):
+            return self._ui_tool_error(
+                f"Paramètre(s) hors-contrat pour action='{action}' : seul `automation_ids` est autorisé."
+            )
+        clean_ids = self._normalize_id_list(automation_ids)
         if not clean_ids:
-            return {"error": "Aucun identifiant d'automatisation valide fourni."}
+            return self._ui_tool_error("Aucun identifiant d'automatisation valide fourni dans `automation_ids`.")
 
-        try:
-            tasks = [Automations.get_by_id(aid) for aid in clean_ids]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            automations = []
-            not_found = []
-
-            for aid, res in zip(clean_ids, raw_results):
-                if isinstance(res, Exception) or res is None or res.user_id != user_id:
-                    not_found.append(aid)
-                    continue
-
-                automations.append({
-                    "id": res.id,
-                    "name": res.name,
-                    "folder_id": res.folder_id,
-                    "prompt": res.data.get("prompt", "") if res.data else "",
-                    "model_id": res.data.get("model_id", "") if res.data else "",
-                    "rrule": res.data.get("rrule", "") if res.data else "",
-                    "target": res.data.get("target") if res.data else None,
-                    "is_active": res.is_active,
-                    "last_run_at": res.last_run_at,
-                    "next_run_at": res.next_run_at,
-                    "created_at": res.created_at,
-                    "updated_at": res.updated_at
-                })
-
-            payload = {
-                "automations": automations,
-                "total_found": len(automations)
-            }
-            if not_found:
-                payload["not_found"] = not_found
-
-            return json.dumps(payload, ensure_ascii=False)
-        except Exception as e:
-            return {"error": str(e)}
-
-    @echo_tool
-    async def list_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Liste et recherche les tâches de fond planifiées (CRON) de l'Interface Utilisateur."""
-        user_id = __user__.get("id")
-        if not user_id:
-            return {"error": "User context missing"}
-            
-        try:
-            result = await Automations.search_automations(user_id=user_id, query=query, limit=limit)
-            items = []
-            for item in result.items:
-                items.append({
-                    "id": item.id,
-                    "name": item.name,
-                    "folder_id": item.folder_id,
-                    "rrule": item.data.get("rrule", "") if item.data else "",
-                    "target": item.data.get("target") if item.data else None,
-                    "is_active": item.is_active,
-                    "next_run_at": item.next_run_at
-                })
-            res_json = json.dumps(items)
-            return res_json
-        except Exception as e:
-            return {"error": str(e)}
+        target_fn = _owui_toggle_auto if action == "toggle" else _owui_delete_auto
+        if len(clean_ids) == 1:
+            extra_kw = {"__metadata__": __metadata__} if action == "delete" else {}
+            return await safe_owui_call(
+                target_fn,
+                automation_id=clean_ids[0],
+                __request__=__request__,
+                __user__=__user__,
+                **extra_kw,
+            )
+        results = await asyncio.gather(*(
+            safe_owui_call(
+                target_fn,
+                automation_id=aid,
+                __request__=__request__,
+                __user__=__user__,
+                **({"__metadata__": __metadata__} if action == "delete" else {}),
+            )
+            for aid in clean_ids
+        ))
+        return self._aggregate_batch_results(clean_ids, results, id_field="automation_id")
 
     @echo_tool
     async def list_ui_folders(self, __user__: dict = {}, __metadata__: dict = {}) -> str:
@@ -729,7 +1052,7 @@ class Tools:
                 }
             else:
                 if not cid:
-                    return {"error": "Contexte chat_id manquant pour la conversation en cours."}
+                    return self._ui_tool_error("Contexte chat_id manquant pour la conversation en cours.", error_code="missing_chat_id")
                 chat = await Chats.get_chat_by_id_and_user_id(cid, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
                 raw_tag_ids = (chat.meta or {}).get("tags", []) if chat else []
                 tag_models = await Tags.get_tags_by_ids_and_user_id(raw_tag_ids, user_id) if hasattr(Tags, "get_tags_by_ids_and_user_id") and raw_tag_ids else []
@@ -741,67 +1064,150 @@ class Tools:
                 }
             return json.dumps(data, ensure_ascii=False)
         except Exception as e:
-            return {"error": str(e)}
+            return self._ui_tool_error(str(e), error_code="internal_error")
 
     @echo_tool
-    async def create_ui_tasks(self, tasks: list[UiTaskItem], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
-        """Crée une liste de tâches visibles en temps réel dans l'interface du chat principal.
+    async def list_ui_chats(
+        self,
+        query: Optional[str] = None,
+        status: Literal["all", "running", "pending_approval", "queued", "error", "idle"] = "all",
+        folder_id: Optional[str] = None,
+        tag: Optional[str] = None,
+        include_archived: bool = False,
+        include_current: bool = True,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        __request__: Any = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+    ) -> str:
+        """Liste et recherche les conversations existantes de l'Utilisateur avec leur état d'exécution temps réel (`running`, `pending_approval`, `queued`, `error`, `idle`)."""
+        uid = (__user__ or {}).get("id")
+        cid = (__metadata__ or {}).get("chat_id")
+        redis = getattr(getattr(__request__, "app", None), "state", None)
+        redis = getattr(redis, "redis", None) if redis is not None else None
+        res = await list_user_chats(
+            user_id=uid,
+            current_chat_id=cid,
+            query=query,
+            status=status,
+            folder_id=folder_id,
+            tag=tag,
+            include_archived=include_archived,
+            include_current=include_current,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset,
+            redis=redis,
+        )
+        if res.get("status") == "error":
+            return wrap_tool_output(text=f"❌ {res.get('error')}", status=res)
+        return json.dumps(res, ensure_ascii=False)
 
-        :param tasks: Liste d'objets tâche. Chaque objet DOIT contenir `content` (str, requis), et optionnellement `status` (`pending`|`in_progress`|`completed`|`cancelled`, défaut `pending`) et `id` (str, auto-généré si omis).
-        """
+    @echo_tool
+    async def read_ui_chat_transcript(
+        self,
+        chat_id: str,
+        offset: int = 0,
+        limit: int = 20,
+        order: Literal["newest_first", "oldest_first"] = "newest_first",
+        search_pattern: Optional[str] = None,
+        include_reasoning: bool = False,
+        include_tool_calls: bool = False,
+        __request__: Any = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+    ) -> str:
+        """Lit de manière paginée et assainie le transcript de la branche active d'une conversation (`chat_id`), incluant le flux en cours si `running`."""
+        uid = (__user__ or {}).get("id")
+        cid = (__metadata__ or {}).get("chat_id")
+        redis = getattr(getattr(__request__, "app", None), "state", None)
+        redis = getattr(redis, "redis", None) if redis is not None else None
+        res = await read_user_chat_transcript(
+            user_id=uid,
+            chat_id=chat_id,
+            current_chat_id=cid,
+            offset=offset,
+            limit=limit,
+            order=order,
+            search_pattern=search_pattern,
+            include_reasoning=include_reasoning,
+            include_tool_calls=include_tool_calls,
+            redis=redis,
+        )
+        if res.get("status") == "error":
+            return wrap_tool_output(text=f"❌ {res.get('error')}", status=res)
+        return json.dumps(res, ensure_ascii=False)
+
+    @echo_tool
+    async def manage_ui_tasks(
+        self,
+        action: Literal["create", "update"],
+        tasks: Optional[list[UiTaskItem]] = None,
+        task_id: Optional[str] = None,
+        status: Optional[Literal["pending", "in_progress", "completed", "cancelled"]] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+    ) -> dict:
+        """Crée (`create`) ou met à jour (`update`) la liste de tâches visibles en temps réel dans l'interface du chat principal."""
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
             return wrap_tool_output(
                 text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de modifier la checklist UI du chat principal.",
                 status={"status": "error", "error_code": "headless_forbidden"},
             )
-        normalized_tasks = []
-        for item in tasks or []:
-            if hasattr(item, "model_dump"):
-                d = item.model_dump(exclude_none=True)
-            elif isinstance(item, str):
-                d = {"content": item}
-            elif isinstance(item, dict):
-                d = dict(item)
-            else:
-                continue
-            content = str(d.get("content") or d.get("title") or d.get("label") or d.get("text") or d.get("name") or d.get("description") or "").strip()
-            if not content:
-                continue
-            norm_item = {"content": content}
-            if d.get("id") is not None and str(d.get("id")).strip():
-                norm_item["id"] = str(d["id"]).strip()
-            if d.get("status"):
-                norm_item["status"] = str(d["status"]).strip().lower()
-            normalized_tasks.append(norm_item)
-        if bool(tasks) and not normalized_tasks:
-            return wrap_tool_output(
-                text="Erreur : Aucun item valide dans `tasks`. Chaque objet DOIT contenir une clé `content` non vide (ex: `[{\"content\": \"Étape 1\", \"status\": \"pending\"}]`).",
-                status={"status": "error", "error_code": "invalid_tasks_payload"},
-            )
-        chat_id = (__metadata__ or {}).get("chat_id")
-        return await safe_owui_call(_owui_create_tasks, tasks=normalized_tasks, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
+        if action not in ("create", "update"):
+            return self._ui_tool_error(f"Action de tâches invalide : '{action}'. Valeurs autorisées : create, update.")
 
-    @echo_tool
-    async def update_ui_task(self, task_id: str, status: str = "completed", __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
-        """Met à jour le statut d'une tâche dans la checklist UI du chat principal (`pending`, `in_progress`, `completed`, `cancelled`)."""
-        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return wrap_tool_output(
-                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de modifier la checklist UI du chat principal.",
-                status={"status": "error", "error_code": "headless_forbidden"},
-            )
         chat_id = (__metadata__ or {}).get("chat_id")
-        return await safe_owui_call(_owui_update_task, id=task_id, status=status, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
+        if action == "create":
+            if task_id is not None or status is not None:
+                return self._ui_tool_error("Paramètre(s) hors-contrat pour action='create' : `task_id` et `status` sont interdits.")
+            if not tasks:
+                return wrap_tool_output(
+                    text="Erreur : Aucun item valide dans `tasks`. Chaque objet DOIT contenir une clé `content` non vide (ex: `[{\"content\": \"Étape 1\", \"status\": \"pending\"}]`).",
+                    status={"status": "error", "error_code": "invalid_tasks_payload"},
+                )
+            normalized_tasks = []
+            for item in tasks or []:
+                if hasattr(item, "model_dump"):
+                    d = item.model_dump(exclude_none=True)
+                elif isinstance(item, str):
+                    d = {"content": item}
+                elif isinstance(item, dict):
+                    d = dict(item)
+                else:
+                    continue
+                content = str(d.get("content") or d.get("title") or d.get("label") or d.get("text") or d.get("name") or d.get("description") or "").strip()
+                if not content:
+                    continue
+                norm_item = {"content": content}
+                if d.get("id") is not None and str(d.get("id")).strip():
+                    norm_item["id"] = str(d["id"]).strip()
+                if d.get("status"):
+                    norm_item["status"] = str(d["status"]).strip().lower()
+                normalized_tasks.append(norm_item)
+            if not normalized_tasks:
+                return wrap_tool_output(
+                    text="Erreur : Aucun item valide dans `tasks`. Chaque objet DOIT contenir une clé `content` non vide (ex: `[{\"content\": \"Étape 1\", \"status\": \"pending\"}]`).",
+                    status={"status": "error", "error_code": "invalid_tasks_payload"},
+                )
+            return await safe_owui_call(_owui_create_tasks, tasks=normalized_tasks, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
 
-    @echo_tool
-    async def search_ui_chats(self, query: str, count: int = 5, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
-        """Recherche les conversations précédentes de l'Utilisateur par titre et contenu exact en base SQLite."""
-        chat_id = (__metadata__ or {}).get("chat_id")
-        return await safe_owui_call(_owui_search_chats, query=query, count=count, start_timestamp=start_timestamp, end_timestamp=end_timestamp, __request__=__request__, __user__=__user__, __chat_id__=chat_id)
-
-    @echo_tool
-    async def view_ui_chat(self, chat_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
-        """Lit l'historique chronologique complet d'une conversation précédente identifiée par `chat_id`."""
-        return await safe_owui_call(_owui_view_chat, chat_id=chat_id, __request__=__request__, __user__=__user__)
+        # action == "update"
+        if tasks is not None:
+            return self._ui_tool_error("Paramètre hors-contrat pour action='update' : `tasks` est interdit.")
+        if not isinstance(task_id, str) or not task_id.strip():
+            return self._ui_tool_error("Le paramètre `task_id` non vide est requis pour action='update'.")
+        if status is None or not isinstance(status, str) or not status.strip():
+            return self._ui_tool_error("Le paramètre `status` ('pending', 'in_progress', 'completed', 'cancelled') est requis pour action='update'.")
+        eff_status = status.strip().lower()
+        if eff_status not in ("pending", "in_progress", "completed", "cancelled"):
+            return self._ui_tool_error(f"Statut de tâche invalide : '{eff_status}'.")
+        return await safe_owui_call(_owui_update_task, id=task_id.strip(), status=eff_status, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
 
     @echo_tool
     async def tool_advisor(
@@ -840,10 +1246,11 @@ class Tools:
         user_id = __user__.get("id", "system")
 
         # Introspection Dynamique : Extraction sécurisée du registre unifié
-        from echo_subagent_hub import get_chat_tools
+        from echo_subagent_hub import compute_subagent_excluded_tools, get_chat_tools
         _tools_dict = get_chat_tools(chat_id, __metadata__)
+        all_chat_tool_names = set(_tools_dict.keys())
 
-        from echo_constants import ECHO_SUBAGENT_CONTEXT, DELEGATE_AGENT_BLACKLIST
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
         is_subagent = bool(sub_ctx.get("is_subagent"))
         if is_subagent and "sub_tools_names" in sub_ctx:
@@ -851,23 +1258,28 @@ class Tools:
             _tools_dict = {k: v for k, v in _tools_dict.items() if k in allowed}
 
         # Liste noire : Ne pas lister l'auto-référence au conseiller
-        blacklist = {"tool_advisor"}
         if is_subagent:
-            blacklist |= set(DELEGATE_AGENT_BLACKLIST)
-            sub_sid_label = sub_ctx.get("sub_sid") or "inconnu"
-            blocked_sorted = ", ".join(sorted(blacklist - {"tool_advisor"}))
-            caller_context = (
-                f"Mode : Sous-Agent headless (sub_sid={sub_sid_label}). "
-                f"Outils STRICTEMENT INTERDITS à cet appelant : {blocked_sorted}. "
-                "Seuls les outils listés dans <available_tools_signatures> sont exécutables."
-            )
+            blacklist = compute_subagent_excluded_tools(sub_ctx, all_chat_tool_names)
             excluded_for_index = blacklist - {"tool_advisor"}
-        else:
-            caller_context = (
-                "Mode : Modèle principal (Orchestrateur). "
-                "Tous les outils listés dans <available_tools_signatures> sont exécutables."
+            blocked_sorted = ", ".join(sorted(excluded_for_index)) or "aucun"
+            sub_sid_label = sub_ctx.get("sub_sid") or "inconnu"
+            group_label = sub_ctx.get("group_id") or "aucun"
+            depth_val = int(sub_ctx.get("depth") or 1)
+            role_tpl = (
+                TPL_ORCHESTRATOR_CONSULTANT_ROLE_SUPERIOR
+                if sub_ctx.get("can_delegate")
+                else TPL_ORCHESTRATOR_CONSULTANT_ROLE_LEAF
             )
+            role_clause = role_tpl.format(depth=depth_val, group_id=group_label)
+            caller_context = TPL_ORCHESTRATOR_CONSULTANT_CALLER_SUBAGENT.format(
+                sub_sid=sub_sid_label,
+                role_clause=role_clause,
+                blocked_tools=blocked_sorted,
+            )
+        else:
+            blacklist = {"tool_advisor"}
             excluded_for_index = None
+            caller_context = TPL_ORCHESTRATOR_CONSULTANT_CALLER_MAIN
 
         # Construction textuelle des signatures techniques disponibles
         tools_docs = []
@@ -892,6 +1304,7 @@ class Tools:
             objective=objective,
             target_tools=target_tools,
             error_context=error_context,
+            exclude_auto_domains={"echo_ui_guide"} if is_subagent else None,
         )
 
         system_prompt = SYS_ORCHESTRATOR_CONSULTANT.format(
@@ -934,15 +1347,17 @@ class Tools:
 
         try:
             text_result = ""
+            last_response = None
             # Boucle hybride bornée à 2 tours max (Tour 1: réponse directe ou read_tool_guide -> Tour 2: synthèse finale)
             for turn_idx in range(2):
                 payload = {
                     "contents": contents,
                     "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
                     "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
+                    "tools": internal_tools,
                 }
-                if turn_idx == 0:
-                    payload["tools"] = internal_tools
+                if turn_idx > 0:
+                    payload["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
 
                 response, _, _ = await EchoGeminiClient.call_cascade(
                     target_model_key="MODEL_APOLLO",
@@ -959,6 +1374,7 @@ class Tools:
                         text="Erreur lors de la délégation au Conseiller Outils : Aucun modèle disponible (cascade épuisée).",
                         status={"status": "error", "message": "cascade exhausted"},
                     )
+                last_response = response
 
                 candidates = response.get("candidates", [])
                 if not candidates or not candidates[0].get("content"):
@@ -980,23 +1396,21 @@ class Tools:
                                 req_targets = [req_targets]
                             await events.status(f"📖 Conseiller Outils : Lecture du manuel {', '.join(req_targets)}...")
                             guide_content = EchoToolGuidesManager.format_guides_for_targets(req_targets)
-                            fn_responses_parts.append(
-                                {
-                                    "functionResponse": {
-                                        "name": fc_name,
-                                        "response": {"result": guide_content},
-                                    }
-                                }
-                            )
+                            fn_resp = {
+                                "name": fc_name,
+                                "response": {"result": guide_content},
+                            }
+                            if fc.get("id"):
+                                fn_resp["id"] = fc["id"]
+                            fn_responses_parts.append({"functionResponse": fn_resp})
                         else:
-                            fn_responses_parts.append(
-                                {
-                                    "functionResponse": {
-                                        "name": fc_name,
-                                        "response": {"error": f"Outil interne inconnu : {fc_name}"},
-                                    }
-                                }
-                            )
+                            fn_resp = {
+                                "name": fc_name,
+                                "response": {"error": f"Outil interne inconnu : {fc_name}"},
+                            }
+                            if fc.get("id"):
+                                fn_resp["id"] = fc["id"]
+                            fn_responses_parts.append({"functionResponse": fn_resp})
                     contents.append({"role": "user", "parts": fn_responses_parts})
                     continue
 
@@ -1004,6 +1418,19 @@ class Tools:
                     if "text" in p and not p.get("thought"):
                         text_result += p["text"]
                 break
+
+            if not text_result.strip():
+                diag = describe_empty_llm_response(last_response)
+                await events.status("❌ Conseiller Outils : Réponse vide ou bloquée.", done=True)
+                return wrap_tool_output(
+                    text=f"Erreur lors de la délégation au Conseiller Outils : {diag['summary']}",
+                    status={
+                        "status": "error",
+                        "error_code": diag.get("kind") or "empty_response",
+                        "reason": diag.get("reason") or "EMPTY_RESPONSE",
+                        "message": diag["summary"],
+                    },
+                )
 
             await events.status("✅ Conseiller Outils : Recommandation opérationnelle prête.", done=True)
             return f"Recommandation du Conseiller Outils :\n\n{text_result}"

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.18.15.1
+# VERSION : 6.22.1.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -28,11 +28,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Relais dynamique X-Echo-Sso-Secret depuis echo-auth-manager et montage :ro unique /opt/ECHO/.secrets:/app/secrets:ro sur echo-admin-manager.
+# 6.22.0.1: Retrait du header Cache-Control dupliqué sur /service-worker.js.
+# 6.21.12.1: Ajout de la location = /service-worker.js (auth_request off, Cache-Control: no-store) pour le Service Worker SvelteKit.
 # 6.18.15.1: Sécurisation cookies WEBUI_SESSION_COOKIE_SECURE et WEBUI_AUTH_COOKIE_SECURE conditionnelle à ECHO_DOMAIN.
 # 6.18.2.1: Ajout de SEARXNG_CONTACT_URL, FORCE_OWNERSHIP=false et sonde légère /healthz sur echo-searxng.
-# 6.17.3.1: Exemption statique /audio dans CUSTOM_CONF_SERVER_HTTP_statics pour servir /audio/*.mp3 sans détour /api/verify.
-# 6.16.0.2: Préfixe /echo/ dans les règles Nginx JSON et location /echo/v1/wm/app/ (auth_request off, HTTP/1.1 + WS Upgrade) pour apps HMAC.
-# 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
 
 name: echo
 
@@ -199,6 +199,9 @@ services:
       # 💀 SERVICE WORKER KILL-SWITCH (PROPRE) : Retourne 404 pour forcer le navigateur à désenregistrer la PWA en silence, sans causer de race condition au rechargement.
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; return 404; }"
 
+      # 🔄 SERVICE WORKER SVELTEKIT : Bypass SSO + no-store strict pour garantir la détection des mises à jour
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_swkit=location = /service-worker.js { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
+
       # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion avec purge cache PWA (Clear-Site-Data)
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Clear-Site-Data '\"cache\"' always; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
 
@@ -289,8 +292,8 @@ services:
       # 🛡️ ECHO AUTH : Forward Auth + SSO Secret (Syntaxe Officielle BunkerWeb 1.6)
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
-      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
-      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET:-}"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$sso_secret $$upstream_http_x_echo_sso_secret"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret $$sso_secret"
       
       # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
       # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
@@ -339,7 +342,6 @@ services:
       - echo-qdrant-data:/qdrant/storage
       - echo-auth-data:/app/auth-data
       - /opt/ECHO/.secrets:/app/secrets:ro
-      - /opt/ECHO/.env:/app/host_env/.env:ro
       - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
       - echo-download-broker-data:/app/downloads:rw
       - echo-n8n-data:/app/n8n-data:rw

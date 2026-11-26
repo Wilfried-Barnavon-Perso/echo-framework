@@ -149,9 +149,10 @@
 	};
 
 	const selectPersistentChat = () => {
+		const switchingMode = target_type !== 'persistent_chat';
 		target_type = 'persistent_chat';
 		channel_id = '';
-		if (chat_exists === false) {
+		if (switchingMode || chat_exists === false) {
 			chat_id = '';
 			chat_title = '';
 			chat_exists = null;

@@ -4,11 +4,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - CORE CONFIG
-VERSION : 6.5.3.1
+VERSION : 6.21.11.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.11.1: Ajout de AUTH_MANAGER_INTERNAL_URL pour la délégation interne de vérification TOTP vers echo-auth-manager.
 # 6.5.3.1: Alignement de OWUI_INTERNAL_URL sur http://echo-webui:8080.
 # 5.239.2.1: Alignement de DEFAULT_AUTH_SETTINGS (login_retry_delay_sec, unenrolled_max_attempts, unenrolled_lockout_min).
 # 5.236.5.1: Création initiale de la configuration centrale du User Manager.
@@ -74,6 +75,9 @@ AUTH_DB_PATH = os.path.join(AUTH_DATA_DIR, "auth.db")
 AUTH_SETTINGS_PATH = os.path.join(AUTH_DATA_DIR, "auth-settings.json")
 
 WEBUI_INTERNAL_URL = "http://echo-webui:8080"
+AUTH_MANAGER_INTERNAL_URL = os.environ.get(
+    "AUTH_MANAGER_INTERNAL_URL", "http://echo-auth-manager:8000"
+).rstrip("/")
 QDRANT_URL = "http://echo-qdrant:6333"
 
 DEFAULT_AUTH_SETTINGS = {

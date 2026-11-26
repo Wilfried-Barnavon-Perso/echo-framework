@@ -28,6 +28,7 @@ import markedExtension from '$lib/utils/marked/extension';
 import markedKatexExtension from '$lib/utils/marked/katex-extension';
 import hljs from 'highlight.js';
 import { decode } from 'html-entities';
+import equal from 'fast-deep-equal';
 
 // Helper functions
 // No one thanks the foundation, but without it the
@@ -207,7 +208,136 @@ export const splitStream = (splitOn) => {
 	});
 };
 
-export const convertMessagesToHistory = (messages) => {
+type MessageSnapshot = {
+	ref: unknown;
+	content: unknown;
+	done: unknown;
+	_echoLazyDetails: unknown;
+	favorite: unknown;
+	parentId: unknown;
+	childrenLen: number | undefined;
+	models: unknown;
+	modelsLen: number | undefined;
+	files: unknown;
+	filesLen: number | undefined;
+	output: unknown;
+	outputLen: number | undefined;
+	annotation: unknown;
+	annotationRating: unknown;
+	error: unknown;
+	statusHistory: unknown;
+	statusLen: number | undefined;
+	sources: unknown;
+	sourcesLen: number | undefined;
+	codeExecutions: unknown;
+	codeExecLen: number | undefined;
+	info: unknown;
+	meta: unknown;
+};
+
+export type MessageSyncTracker = {
+	snap: MessageSnapshot | null;
+	streamingClone: Record<string, any> | null;
+};
+
+const captureMessageSnapshot = (source: Record<string, any>): MessageSnapshot => ({
+	ref: source,
+	content: source.content,
+	done: source.done,
+	_echoLazyDetails: source._echoLazyDetails,
+	favorite: source.favorite,
+	parentId: source.parentId,
+	childrenLen: source.childrenIds?.length,
+	models: source.models,
+	modelsLen: source.models?.length,
+	files: source.files,
+	filesLen: source.files?.length,
+	output: source.output,
+	outputLen: source.output?.length,
+	annotation: source.annotation,
+	annotationRating: source.annotation?.rating,
+	error: source.error,
+	statusHistory: source.statusHistory,
+	statusLen: source.statusHistory?.length,
+	sources: source.sources,
+	sourcesLen: source.sources?.length,
+	codeExecutions: source.code_executions,
+	codeExecLen: source.code_executions?.length,
+	info: source.info,
+	meta: source.meta
+});
+
+const snapshotsMatch = (a: MessageSnapshot | null, b: MessageSnapshot): boolean => {
+	if (!a) return false;
+	return (
+		a.ref === b.ref &&
+		a.content === b.content &&
+		a.done === b.done &&
+		a._echoLazyDetails === b._echoLazyDetails &&
+		a.favorite === b.favorite &&
+		a.parentId === b.parentId &&
+		a.childrenLen === b.childrenLen &&
+		a.models === b.models &&
+		a.modelsLen === b.modelsLen &&
+		a.files === b.files &&
+		a.filesLen === b.filesLen &&
+		a.output === b.output &&
+		a.outputLen === b.outputLen &&
+		a.annotation === b.annotation &&
+		a.annotationRating === b.annotationRating &&
+		a.error === b.error &&
+		a.statusHistory === b.statusHistory &&
+		a.statusLen === b.statusLen &&
+		a.sources === b.sources &&
+		a.sourcesLen === b.sourcesLen &&
+		a.codeExecutions === b.codeExecutions &&
+		a.codeExecLen === b.codeExecLen &&
+		a.info === b.info &&
+		a.meta === b.meta
+	);
+};
+
+export const createMessageSyncTracker = (initialSource: any): MessageSyncTracker => {
+	if (!initialSource || typeof initialSource !== 'object') {
+		return { snap: null, streamingClone: null };
+	}
+	return {
+		snap: captureMessageSnapshot(initialSource),
+		streamingClone: initialSource.done === false ? structuredClone(initialSource) : null
+	};
+};
+
+export const syncClonedMessage = <T extends Record<string, any>>(
+	source: T | undefined | null,
+	tracker: MessageSyncTracker
+): T | null => {
+	if (!source || typeof source !== 'object') {
+		return null;
+	}
+	const nextSnap = captureMessageSnapshot(source);
+	if (!snapshotsMatch(tracker.snap, nextSnap)) {
+		tracker.snap = nextSnap;
+		tracker.streamingClone = source.done === false ? structuredClone(source) : null;
+		return structuredClone(source);
+	}
+	if (source.done === false && !equal(tracker.streamingClone, source)) {
+		tracker.snap = nextSnap;
+		tracker.streamingClone = structuredClone(source);
+		return structuredClone(source);
+	}
+	if (source.done !== false) {
+		tracker.streamingClone = null;
+	}
+	return null;
+};
+
+export const convertMessagesToHistory = (messages: any[] = []) => {
+	if (!Array.isArray(messages)) {
+		return {
+			messages: {},
+			currentId: null
+		};
+	}
 	const history = {
 		messages: {},
 		currentId: null
@@ -244,7 +374,7 @@ export const convertMessagesToHistory = (messages) => {
 };
 
 // Rebuild missing graph fields so chats with incomplete regeneration placeholders can reopen.
-export const sanitizeHistory = (history) => {
+export const sanitizeHistory = (history: any, treeIndex: Record<string, any> | null = null) => {
 	if (!history?.messages || typeof history.messages !== 'object') return;
 
 	// Purge entries that aren't usable objects
@@ -255,14 +385,14 @@ export const sanitizeHistory = (history) => {
 	}
 
 	// Ensure every surviving node has its canonical id and a childrenIds array
-	for (const [id, message] of Object.entries(history.messages)) {
+	for (const [id, message] of Object.entries(history.messages) as [string, any][]) {
 		if (message.id !== id) message.id = id;
 		if (!Array.isArray(message.childrenIds)) message.childrenIds = [];
 	}
 
 	// Build reverse lookup: parent, indexed by child id
-	const parentByChildId = {};
-	for (const [id, message] of Object.entries(history.messages)) {
+	const parentByChildId: Record<string, string> = {};
+	for (const [id, message] of Object.entries(history.messages) as [string, any][]) {
 		for (const childId of message.childrenIds) {
 			parentByChildId[childId] = id;
 		}
@@ -275,7 +405,7 @@ export const sanitizeHistory = (history) => {
 		let latestLeafId = null;
 		let latestTimestamp = -1;
 
-		for (const [id, message] of Object.entries(history.messages)) {
+		for (const [id, message] of Object.entries(history.messages) as [string, any][]) {
 			if (message.childrenIds.length === 0 && (message.timestamp ?? 0) > latestTimestamp) {
 				latestLeafId = id;
 				latestTimestamp = message.timestamp ?? 0;
@@ -286,16 +416,18 @@ export const sanitizeHistory = (history) => {
 	}
 
 	// Reconstruct missing parentId and role
-	for (const [id, message] of Object.entries(history.messages)) {
+	for (const [id, message] of Object.entries(history.messages) as [string, any][]) {
 		// Well-formed: has role and explicit parentId (null is valid for root)
 		if (message.role && message.parentId !== undefined) continue;
 
 		if (message.parentId === undefined) {
-			message.parentId = parentByChildId[id] ?? null;
+			message.parentId = parentByChildId[id] ?? treeIndex?.[id]?.parentId ?? null;
 		}
 
 		if (!message.role) {
-			const parent = message.parentId ? history.messages[message.parentId] : null;
+			const parent = message.parentId
+				? (history.messages[message.parentId] ?? treeIndex?.[message.parentId])
+				: null;
 			message.role =
 				parent?.role === 'user'
 					? 'assistant'
@@ -307,10 +439,62 @@ export const sanitizeHistory = (history) => {
 		}
 	}
 
-	// Prune childrenIds referencing deleted/missing nodes
-	for (const message of Object.values(history.messages)) {
-		message.childrenIds = message.childrenIds.filter((childId) => history.messages[childId]);
+	// Prune childrenIds referencing deleted/missing nodes while preserving nodes present in treeIndex
+	for (const message of Object.values(history.messages) as any[]) {
+		message.childrenIds = message.childrenIds.filter(
+			(childId: string) => Boolean(history.messages[childId] || treeIndex?.[childId])
+		);
 	}
+};
+
+/**
+ * Resolve ordered sibling IDs for a message using treeIndex when available so branch
+ * counters (< 1/2 >) remain accurate across windowed chat boundaries.
+ */
+export const getBranchSiblingIds = (
+	history: any,
+	treeIndex: Record<string, any> | null,
+	message: any
+): string[] => {
+	if (!message) return [];
+	const parentId = message.parentId ?? null;
+	if (parentId !== null) {
+		const treeChildren: string[] = Array.isArray(treeIndex?.[parentId]?.childrenIds)
+			? treeIndex[parentId].childrenIds
+			: [];
+		const localChildren: string[] = Array.isArray(history?.messages?.[parentId]?.childrenIds)
+			? history.messages[parentId].childrenIds
+			: [];
+		if (treeChildren.length === 0) return localChildren;
+		if (localChildren.length === 0) return treeChildren;
+		const merged = [...treeChildren];
+		for (const cid of localChildren) {
+			if (!merged.includes(cid)) merged.push(cid);
+		}
+		return merged;
+	}
+
+	const rootEntries = new Map<string, number>();
+	if (treeIndex) {
+		for (const [id, node] of Object.entries(treeIndex)) {
+			if ((node?.parentId ?? null) === null) {
+				rootEntries.set(id, Number(node?.timestamp ?? 0));
+			}
+		}
+	}
+	for (const [id, msg] of Object.entries(history?.messages ?? {}) as [string, any][]) {
+		if ((msg?.parentId ?? null) === null && !rootEntries.has(id)) {
+			rootEntries.set(id, Number(msg?.timestamp ?? 0));
+		}
+	}
+	if (rootEntries.size > 0 && treeIndex) {
+		return Array.from(rootEntries.entries())
+			.sort((a, b) => a[1] - b[1])
+			.map(([id]) => id);
+	}
+	return Object.values(history?.messages ?? {})
+		.filter((msg: any) => (msg?.parentId ?? null) === null)
+		.map((msg: any) => msg.id);
 };
 
 export const getGravatarURL = (email) => {
@@ -1446,15 +1630,19 @@ export const createMessagesList = (history, messageId) => {
 };
 
 export const getDeepestChildId = (history, messageId) => {
+	if (!history?.messages) return messageId;
 	let deepestId = messageId;
 	const visitedMessageIds = new Set([deepestId]);
 	let childrenIds =
 		deepestId === null
-			? Object.keys(history.messages).filter((id) => history.messages[id].parentId === null)
+			? Object.keys(history.messages).filter((id) => history.messages[id]?.parentId === null)
 			: (history.messages[deepestId]?.childrenIds ?? []);
 
 	while (childrenIds.length !== 0) {
-		const childId = childrenIds.at(-1);
+		const childId = [...childrenIds].reverse().find((cid) => Boolean(history.messages[cid]));
+		if (!childId) {
+			break;
+		}
 		if (visitedMessageIds.has(childId)) {
 			console.warn('Circular dependency detected in message history', childId);
 			break;
@@ -1466,6 +1654,77 @@ export const getDeepestChildId = (history, messageId) => {
 	}
 
 	return deepestId;
+};
+
+export const getDeepestTreeChildId = (
+	history: any,
+	treeIndex: Record<string, any> | null,
+	messageId: string | null
+): string | null => {
+	const getNode = (id: string) => history?.messages?.[id] ?? treeIndex?.[id];
+	const getChildren = (id: string): string[] => {
+		const treeChildren: string[] = Array.isArray(treeIndex?.[id]?.childrenIds)
+			? treeIndex[id].childrenIds
+			: [];
+		const localChildren: string[] = Array.isArray(history?.messages?.[id]?.childrenIds)
+			? history.messages[id].childrenIds
+			: [];
+		if (treeChildren.length === 0) return localChildren;
+		if (localChildren.length === 0) return treeChildren;
+		const merged = [...treeChildren];
+		for (const cid of localChildren) {
+			if (!merged.includes(cid)) merged.push(cid);
+		}
+		return merged;
+	};
+
+	let cur = messageId;
+	const visited = new Set<string | null>([cur]);
+	let childrenIds: string[] =
+		cur === null
+			? Object.keys(treeIndex ?? history?.messages ?? {}).filter(
+					(id) => (getNode(id)?.parentId ?? null) === null
+				)
+			: getChildren(cur);
+
+	while (childrenIds.length !== 0) {
+		const childId = [...childrenIds].reverse().find((cid) => Boolean(getNode(cid)));
+		if (!childId) {
+			break;
+		}
+		if (visited.has(childId)) {
+			console.warn('Circular dependency detected in tree history', childId);
+			break;
+		}
+		visited.add(childId);
+		cur = childId;
+		childrenIds = getChildren(cur);
+	}
+
+	return cur;
+};
+
+export const appendChildToWindowedHistory = (
+	history: any,
+	treeIndex: Record<string, any> | null,
+	parentId: string | null | undefined,
+	childId: string
+) => {
+	if (!parentId || !childId) return;
+	const localParent = history?.messages?.[parentId];
+	if (localParent) {
+		const existing = Array.isArray(localParent.childrenIds) ? localParent.childrenIds : [];
+		if (!existing.includes(childId)) {
+			localParent.childrenIds = [...existing, childId];
+		}
+	}
+	const treeParent = treeIndex?.[parentId];
+	if (treeParent) {
+		const existingTree = Array.isArray(treeParent.childrenIds) ? treeParent.childrenIds : [];
+		if (!existingTree.includes(childId)) {
+			treeParent.childrenIds = [...existingTree, childId];
+		}
+	}
 };
 
 const toTokenCount = (value: unknown) => {

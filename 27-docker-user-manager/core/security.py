@@ -4,11 +4,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - CORE SECURITY & SSO
-VERSION : 6.6.3.1
+VERSION : 6.21.11.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.11.1: Délégation Zero-Key de verify_user_totp vers POST /internal/verify-totp de echo-auth-manager (suppression import pyotp).
 # 6.6.3.1: Lecture et normalisation de g.user_gender (M/F/X) depuis auth.db.
 # 5.236.5.1: Barrière Zero-Trust SSO (HMAC X-Echo-Sso-Secret, X-Webui-User) et validation Argon2id/TOTP.
 
@@ -19,8 +20,14 @@ import re
 import sqlite3
 from flask import g, request  # pyright: ignore[reportMissingImports]
 from passlib.hash import argon2  # pyright: ignore[reportMissingImports]
-import pyotp  # pyright: ignore[reportMissingImports]
-from core.config import AUTH_DB_PATH, WEBUI_DB_PATH, app
+from core.config import (
+    AUTH_DB_PATH,
+    AUTH_MANAGER_INTERNAL_URL,
+    HAS_HTTPX,
+    WEBUI_DB_PATH,
+    app,
+    httpx,
+)
 from core.utils import get_auth_settings
 
 __all__ = [
@@ -153,22 +160,22 @@ def hash_user_password(plain_password: str) -> str:
 
 
 def verify_user_totp(email: str, totp_code: str) -> bool:
-    """Vérifie le code MFA TOTP à 6 chiffres selon la fenêtre de tolérance configurée."""
+    """Délègue la vérification MFA TOTP à echo-auth-manager (Zero-Key sur auth.db)."""
     clean_code = (totp_code or "").strip().replace(" ", "")
-    if not email or not clean_code or not os.path.exists(AUTH_DB_PATH):
+    sso_secret = os.environ.get("ECHO_SSO_SECRET", "").strip()
+    if not email or not clean_code or not sso_secret or not HAS_HTTPX or httpx is None:
         return False
     try:
-        settings = get_auth_settings()
-        valid_window = int(settings.get("totp_tolerance", 1))
-        with closing(sqlite3.connect(f"file:{AUTH_DB_PATH}?mode=ro", uri=True, timeout=5.0)) as conn:
-            row = conn.execute(
-                "SELECT totp_secret FROM users WHERE email = ?",
-                (email,),
-            ).fetchone()
-            if not row or not row[0]:
-                return False
-            totp = pyotp.TOTP(row[0])
-            return bool(totp.verify(clean_code, valid_window=valid_window))
+        resp = httpx.post(
+            f"{AUTH_MANAGER_INTERNAL_URL}/internal/verify-totp",
+            headers={"X-Echo-Sso-Secret": sso_secret},
+            json={"email": email, "totp_code": clean_code},
+            timeout=5.0,
+        )
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return bool(isinstance(data, dict) and data.get("valid") is True)
     except Exception:
         return False
 

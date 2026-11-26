@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.17.4.1
-updated_at: 2026-11-21
+version: 6.24.1.1
+updated_at: 2026-11-26
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
-tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated, browserviews]
+tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, ssh_executor]
+keywords: [registre, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, ssh, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, hash, sha256, plans, generated, browserviews]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -24,19 +24,19 @@ Avant toute manipulation d'un fichier, d'un document Codex, d'un plan, d'un méd
   - Templates N8N globaux (`"n8n_template"`) : **Statique — NE PREND AUCUN STATUT** (Le Modèle DOIT toujours laisser `status=None`, sinon une erreur d'interruption est levée).
 - `workspace` (`Optional[Literal["main", "plans", "generated"]]`) : Filtre optionnel par espace Codex.
 - `resource_id` : Fournir l'ID exact pour inspecter la fiche complète d'une ressource unique.
-- **Provenance de Branche (`provenance`)** : Pour toute ressource rattachée à la session, `query_registry` annote déterministement la provenance : `"branche_active"` (associée à un message de l'arbre conversationnel vivant) ou `"hors_branche"` (produite lors d'une branche alternative ou sous un message supprimé, mais conservée sur disque conformément au principe de non-perte de production).
+- **Provenance de Branche (`provenance`)** : Pour toute ressource rattachée à la session, `query_registry` annote déterministement la provenance : `"branche active"` (associée à un message de l'arbre conversationnel vivant) ou `"hors branche active (production conservée)"` (produite lors d'une branche alternative ou sous un message supprimé, mais conservée sur disque conformément au principe de non-perte de production).
 
 ---
 
 ## 2. EXPLORATEUR DE L'ESPACE PERSONNEL
-Tous les outils ci-dessous résolvent `file_id` (ou `target`) dans l'ordre : 1) par `workspace` explicite (`"main"`, `"plans"`, `"generated"`, `"sandbox"`, `"browserviews"`) ou préfixe (`"main/..."`, `"plans/..."`, `"generated/..."`, `"sandbox/..."`, `"browserviews/..."`), 2) par ID Registre (`DOC_...`, `U_...`, `plan-...`, `dlg_img_...`), 3) par Nom de fichier dans le Registre, et 4) par Nom sur disque (`codex/main/`, `codex/plans/`, `codex/generated/`, `codex/sandbox/`, `browserviews/`, `files/`).
+Seul `show_image_to_user(target, workspace=None)` accepte un paramètre `workspace` explicite. Les 5 autres outils (`semantic_probe`, `read_multimedia_file`, `read_raw_file_content`, `get_file_metadata`, `calculate_file_hashes`) prennent `file_id` (ou `file_ids`) résolu dans l'ordre : 1) par préfixe explicite (`"main/..."`, `"plans/..."`, `"generated/..."`, `"sandbox/..."`, `"browserviews/..."`, `"files/..."`) ou URN `codex:current:...`, 2) par ID Registre (`U_...`, `plan-...`, `dlg_img_...` ou ID hexadécimal 8 caractères), 3) par Nom de fichier dans le Registre, et 4) par Nom sur disque (`codex/main/`, `codex/plans/`, `codex/generated/`, `codex/sandbox/`, `browserviews/`, `files/`). Un Sous-Agent headless ciblant ses propres fichiers sandbox **DOIT** passer le préfixe `"sandbox/<sub_sid>/..."`.
 
 ### 2.1 Matrice de Sélection de l'Outil d'Exploration
 | Besoin Opérationnel | Outil à Invoquer | Spécifications & Contraintes Critiques |
 | :--- | :--- | :--- |
 | **Extraction chirurgicale ciblée dans un fichier ou média volumineux (Texte, PDF, Image, Audio, Vidéo)** | `semantic_probe(file_id, query)` | Délègue l'extraction ciblée à `MODEL_APOLLO` selon `query` (segmentation Map-Reduce parallélisée en mémoire vive avec backpressure au-delà de 30 Mo ou 45 min). Appels parallélisables intra-tour sur fichiers distincts. |
 | **Rapport descriptif complet et horodaté d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde multimodale (`MODEL_APOLLO`) restituant une distillation complète et horodatée du média (segmentation parallèle bornée au-delà de 30 Mo ou 45 min). `instruction` optionnel pour surcharger la consigne par défaut. Appels parallélisables intra-tour sur fichiers distincts. |
-| **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` (max `12 288` octets/appel) ou `"hex"` (max `8 192` octets/appel). **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel en texte (max 16 Ko). Si un binaire lu en `"text"` est illisible, il est ABSOLUMENT INTERDIT de boucler : Le Modèle DOIT utiliser `semantic_probe` ou `read_multimedia_file`. |
+| **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` (max `12 288` octets/appel) ou `"hex"` (max `8 192` octets/appel). **CONTRAINTE CRITIQUE** : `start_line`/`end_line` sont appliqués uniquement en `output_mode="text"` avec `byte_offset=0` et sont ignorés dès `byte_offset > 0` (lecture brute par offset). Limiter à ~100 lignes par appel en texte (max 16 Ko). Si un binaire lu en `"text"` est illisible, il est ABSOLUMENT INTERDIT de boucler : Le Modèle DOIT utiliser `semantic_probe` ou `read_multimedia_file`. |
 | **Afficher une image à L'Utilisateur** | `show_image_to_user(target, workspace=None)` | Rend toute image locale (par ID Registre, par Nom de fichier ou par `workspace="main"\|"plans"\|"generated"\|"sandbox"\|"browserviews"`) ou distante (`http(s)://`) dans une Iframe interactive intégrée au message destiné à L'Utilisateur. **Outil strictement réservé au Modèle principal** : son appel depuis un Sous-Agent headless est ABSOLUMENT INTERDIT (Le Sous-Agent DOIT restituer l'identifiant, le nom ou l'URL au Modèle principal qui exécute l'affichage). L'affichage visuel étant assuré nativement par l'Iframe du Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` ou un lien d'image redondant dans sa réponse. |
 | **Métadonnées & Intégrité cryptographique** | `get_file_metadata(file_id)` / `calculate_file_hashes(file_ids, algorithm="sha256")` | `get_file_metadata` retourne taille et MIME. `calculate_file_hashes` accepte une liste `file_ids` et `algorithm` parmi `"sha256"`, `"md5"`, `"sha1"`, `"sha512"`, `"blake2b"`, `"crc32"`. |
 
@@ -54,13 +54,13 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
    - Modifier : `edit_codex(filename="script.py", ..., workspace="sandbox")`.
    - Supprimer un fichier ou dossier : `delete_codex(filename="...", workspace="sandbox", recursive=True)` (`recursive=True` REQUIS si dossier non vide).
 2. **Étape 2 — Exécuter le script** :
-   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh` ; `timeout_sec` max `3600s` ; `dependencies` installe les paquets `pip`/`npm` manquants dans `/.deps`).
+   - Le Modèle DOIT appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh` ; `timeout_sec` max `3600s` ; `dependencies` installe les paquets `pip`/`npm` manquants dans `/.deps`). Sous un Sous-Agent (`sub_sid`), l'exécution démarre dans `/sandbox/<sub_sid>` tandis que `/sandbox` complet demeure monté : Le Sous-Agent PEUT invoquer `code_executor(file_path="<peer_sid>/script.py")` ou lire `/sandbox/<peer_sid>/...` sans transiter par `codex/main`.
 3. **Étape 3 — Promotion des livrables vers `main`** :
-   - Appeler `transfer_codex(source_path="...", source_workspace="sandbox", destination_workspace="main", mode="copy"|"move")` pour versionner sous Git et indexer dans le Registre Unifié les sorties destinées à L'Utilisateur.
+   - Le Modèle DOIT appeler `transfer_codex(source_path="...", source_workspace="sandbox", destination_workspace="main", mode="copy"|"move")` pour versionner sous Git et indexer dans le Registre Unifié les sorties finales destinées à L'Utilisateur (usage de `codex/main` comme SAS temporaire entre sous-agents **ABSOLUMENT INTERDIT**).
 
 ### 3.2 Environnement Système, Quotas & Pilotage des Processus (`run_id`)
 - **Points de montage du système de fichiers Sandbox** :
-  - `/sandbox` (**Lecture & Écriture persistante**) : Répertoire de travail courant.
+  - `/sandbox` (**Lecture & Écriture persistante**) : Répertoire de travail courant pour Le Modèle principal (sous un Sous-Agent `sub_sid`, le répertoire courant initial est `/sandbox/<sub_sid>` et `/sandbox` complet reste monté pour accéder directement aux fichiers des pairs via `/sandbox/<peer_sid>/...`).
   - `/main`, `/plans`, `/generated`, `/files`, `/browserviews` (**Lecture seule**) : Espaces Codex, fichiers téléversés par L'Utilisateur et captures de navigation web.
   - `/echo_libs_sandbox` (**Lecture seule**) : Librairies natives (`echo_monitor.py`, `echo_monitor.js`) injectées dans `PYTHONPATH` et `NODE_PATH`.
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Manuel technique interne de la Sandbox.
@@ -71,10 +71,12 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
   - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `echo_monitor.expose_app()` (refus immédiat par garde pré-vol).
   - `background=True` (**OBLIGATOIRE pour tout serveur `echo_monitor.expose_app()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
   - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor.expose_app()` est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité proxy et un **plafond absolu de `4h` (`14400s`)**.
-- **Pilotage via `control_sandbox_execution(action, run_id=None, wait_sec=0)`** :
-  - `action="status"` : Liste tous les `run_id` actifs et récemment terminés de la session (ou détaille un `run_id` précis).
-  - `action="listen"` : Récupère les nouvelles sorties incrémentales `stdout_chunk` / `stderr_chunk` du `run_id` (en attendant jusqu'à `wait_sec` secondes, max `60s`, si le processus est en cours).
-  - `action="kill"` (ou `kill_sandbox_execution(run_id=None)`) : Détruit immédiatement le groupe de processus (`SIGKILL`) du `run_id` cible (ou tous les processus actifs de la session si `run_id` est omis).
+- **Pilotage via `control_sandbox_execution(action="status", run_id=None, wait_sec=0)`** :
+  - **Périmètre exclusif Coding Worker** : `control_sandbox_execution` pilote exclusivement les processus `code_executor` (`run_*`) du Coding Worker ; l'arrêt d'une exécution asynchrone ou d'un démon N8N **DOIT** utiliser `manage_n8n_workflow(action="stop", ...)`.
+  - **Cloisonnement `sub_sid`** : Sous un Sous-Agent (`sub_sid`), l'accès aux processus est strictement cloisonné aux `run_id` possédés par ce Sous-Agent.
+  - `action="status"` (défaut) : Liste tous les `run_id` actifs et récemment terminés de la session (ou détaille un `run_id` précis).
+  - `action="listen"` : Récupère les nouvelles sorties incrémentales `stdout_chunk` / `stderr_chunk` du `run_id` (en attendant jusqu'à `wait_sec` secondes, max `60s`, si le processus est en cours). Si `run_id` est omis et qu'un unique processus actif existe, Le Système résout automatiquement ce `run_id`.
+  - `action="kill"` : Détruit immédiatement le groupe de processus (`SIGKILL`) du `run_id` cible (ou tous les processus actifs possédés si `run_id` est omis).
 
 ### 3.3 Interfaces Interactives & Serveurs Web Temps Réel (`echo_monitor`)
 Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l'onglet natif **Applications**, Le Modèle DOIT utiliser `echo_monitor`.
@@ -104,5 +106,5 @@ Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l
 
 ### 3.4 Exécution SSH Distante (`ssh_executor`)
 1. **Découverte préalable** : Le Modèle DOIT appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.
-2. **Exécution sécurisée sans exposition de secret (MPSI)** : Le Modèle DOIT appeler `ssh_executor(account_id="...", command="...", timeout_sec=60)`. Les identifiants sont injectés côté serveur dans un environnement isolé sans exposition au Modèle (répertoire courant `/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated` et `/files` en lecture seule).
+2. **Exécution sécurisée sans exposition de secret (MPSI)** : Le Modèle DOIT appeler `ssh_executor(account_id="...", command="...", timeout_sec=60)` (`timeout_sec` borné sur le Worker à `5..900s`). Les identifiants sont injectés côté serveur dans un environnement isolé sans exposition au Modèle (répertoire courant `/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated`, `/files` et `/browserviews` en lecture seule).
 3. **Interdiction absolue (MPSI)** : Il est ABSOLUMENT INTERDIT de demander à L'Utilisateur un mot de passe ou une clé privée SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir dans l'onglet **Coffre & Identité**.

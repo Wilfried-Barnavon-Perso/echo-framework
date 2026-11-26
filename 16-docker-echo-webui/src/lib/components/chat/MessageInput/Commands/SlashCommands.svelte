@@ -19,16 +19,12 @@
 
 	export let query = '';
 	export let onSelect: (e: any) => void = () => {};
-	export let canCompact = false;
-	export let compactDisabled = false;
 	export let canComments = false;
 	export let canFork = false;
 	export let forkDisabled = false;
 	export let canTemporary = false;
 	export let temporaryEnabled = false;
 	export let hasChatContent = false;
-	export let contextPercent = 0;
-	export let contextHasThreshold = false;
 	void hasChatContent;
 
 	let selectedIdx = 0;
@@ -59,17 +55,9 @@
 		}
 	});
 
-	$: contextCirclePercent = contextHasThreshold
-		? Math.min(Math.max(0, Math.round(contextPercent)), 100)
-		: 0;
-	$: contextCircleOffset = 50.27 * (1 - contextCirclePercent / 100);
-
 	$: commandItems = [
 		...(canTemporary && matchesCmd(['temporary'], query)
 			? [{ type: 'command', data: { id: 'temporary' } }]
-			: []),
-		...(canCompact && matchesCmd(['compact'], query)
-			? [{ type: 'command', data: { id: 'compact' } }]
 			: []),
 		...(canFork && $visibleControls['chat.fork'] && matchesCmd(['fork', 'dupliquer'], query)
 			? [{ type: 'command', data: { id: 'fork' } }]
@@ -132,9 +120,6 @@
 
 	export const select = async () => {
 		const item = filteredItems[selectedIdx];
-		if (item?.type === 'command' && item.data?.id === 'compact' && compactDisabled) {
-			return;
-		}
 		if (item?.type === 'command' && item.data?.id === 'fork' && forkDisabled) {
 			return;
 		}
@@ -179,67 +164,6 @@
 						<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
 							{temporaryEnabled ? $i18n.t('On') : $i18n.t('Off')}
 						</span>
-					</span>
-				</button>
-			</Tooltip>
-		{:else if item.data.id === 'compact'}
-			<Tooltip
-				content={$i18n.t('Shorten older messages so this chat can keep going.')}
-				placement="top"
-			>
-				<button
-					type="button"
-					aria-label={$i18n.t('Compact: shorten older messages so this chat can keep going.')}
-					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
-						{commandIdx === selectedIdx
-						? 'app-interactive-active selected-command-option-button'
-						: ''} disabled:opacity-50"
-					disabled={compactDisabled}
-					on:mousedown={(e) => e.preventDefault()}
-					on:click={() => {
-						if (!compactDisabled) {
-							onSelect(item);
-						}
-					}}
-					on:mouseenter={() => {
-						selectedIdx = commandIdx;
-					}}
-					on:focus={() => {}}
-					data-selected={commandIdx === selectedIdx}
-				>
-					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-						{#if contextHasThreshold}
-							<svg class="size-3.5 -rotate-90" viewBox="0 0 20 20" aria-hidden="true">
-								<circle
-									cx="10"
-									cy="10"
-									r="8"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="2"
-									class="opacity-20"
-								/>
-								<circle
-									cx="10"
-									cy="10"
-									r="8"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="2"
-									stroke-linecap="round"
-									stroke-dasharray="50.27"
-									style={`stroke-dashoffset: ${contextCircleOffset};`}
-								/>
-							</svg>
-						{/if}
-					</span>
-					<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-						<span class="min-w-0 flex-1 truncate">{$i18n.t('Compact')}</span>
-						{#if contextHasThreshold}
-							<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
-								{$i18n.t('{{percent}}% full', { percent: contextCirclePercent })}
-							</span>
-						{/if}
 					</span>
 				</button>
 			</Tooltip>

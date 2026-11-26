@@ -3,16 +3,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.19.0.1
+version: 6.23.0.1
 description: Composant système interne : ECHO Agent Engine (Délégation par tranches supervisées & Contrôleur unifié).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.0.1: Ajout de cohort_id dans delegate_to_agent (Cohorte légère phx_*) et de allowed_tools dynamique dans control_subagents.
 # 6.19.0.1: Ajout de can_delegate dans delegate_to_agent, filter_type="phalanx" et action handoff (HandoffSpec) dans control_subagents.
 # 6.7.7.1: Alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120) pour delegate_to_agent et control_subagents.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Refactorisation de delegate_to_agent sur EchoSubagentController (tranches supervisées) et création de l'outil unifié control_subagents (fusion des 8 outils de maintenance).
-# 6.6.2.1: Mise à jour temps réel de subagent_meta.model_key via update_subagent_meta_fields lors des cascades et appels à new_cognitive_level.
 
 import sys
 from typing import Any, List, Literal, Optional
@@ -36,6 +36,7 @@ from echo_core import (  # noqa: E402
 )
 from echo_events import EchoEvents  # noqa: E402
 from echo_gemini_client import EchoGeminiClient  # noqa: E402
+from echo_paths import sanitize_echo_id  # noqa: E402
 from echo_protocol import HandoffSpec  # noqa: E402
 from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_subagent_hub import (  # noqa: E402
@@ -77,6 +78,7 @@ class Tools:
         ] = None,
         allowed_tools: Optional[List[str]] = None,
         can_delegate: bool = False,
+        cohort_id: Optional[str] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: Optional[dict] = None,
@@ -115,6 +117,13 @@ class Tools:
             eff_model = target_model_key or "MODEL_APOLLO"
             eff_can_delegate = bool(can_delegate)
             eff_default_worker = None
+
+        if cohort_id and str(cohort_id).strip():
+            clean_cid = sanitize_echo_id(str(cohort_id).strip(), fallback="cohort").replace("_", "-")
+            norm_gid = clean_cid if clean_cid.startswith("phx_") else f"phx_{clean_cid}"
+            if (not parent_ctx.get("is_subagent")) or (not group_id):
+                group_id = norm_gid
+                engine = "phalanx"
 
         if eff_can_delegate:
             eff_slice_turns = ECHO_AUTONOMOUS_MAX_TURNS
@@ -180,6 +189,7 @@ class Tools:
         target_model_key: Optional[
             Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"]
         ] = None,
+        allowed_tools: Optional[List[str]] = None,
         handoff: Optional[HandoffSpec] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
@@ -198,6 +208,7 @@ class Tools:
             filter_type=filter_type,
             directive=directive,
             target_model_key=target_model_key,
+            allowed_tools=allowed_tools,
             handoff=handoff,
             key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
             max_retries=self.valves.MAX_RETRIES,

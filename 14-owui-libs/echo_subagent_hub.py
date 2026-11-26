@@ -4,16 +4,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.20.0.1
+version: 6.23.3.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.20.0.1: Propagation des directives SOBRIÉTÉ TOKENS dans phalanx_ctx à tous les membres (Stratège, Capitaine, Hoplite).
-# 6.19.0.2: Support complet Phalange multi-niveaux (can_delegate, depth, handoff HandoffSpec plafond 4, coopération latérale status/collect/steer et préfixes phx_).
-# 6.18.23.1: Rétention en lecture seule 1440m ('purged') sur close, exclusion LLM dans resolve_target_sub_sids/run_or_resume/dispatch_message, action purge_now et GC cleanup_expired_purged_subagents_sync.
-# 6.16.0.2: Remplacement SSE par registre browser-live WebSocket et purge enqueue_human_message/pop_next_human_message.
-# 6.15.1.1: Alignement du délai de grâce dans BrowserToolDispatcher sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
+# 6.23.3.1: Factorisation de _list_known_sub_sids unifiant cognitive_threads et subagent_meta:* dans _expand_descendant_sids et resolve_target_sub_sids (visibilité status/resume/close après rollback du step 0).
+# 6.23.2.1: Diagnostic agnostique des blocages/réponses vides via describe_empty_llm_response/PromptBlockedError et rollback du step user non répondu dans run_or_resume/run_cognitive_step.
+# 6.23.1.1: Extension plafond sub_sid (96 car.), préservation quota nominal (15/300s) sur resume, helper factorisé compute_subagent_excluded_tools, consommation gabarits PAS echo_prompts et libellé status outils/synthèse statique.
+# 6.23.0.1: Enveloppe <ECHO_MESSAGE>, séparation subagent_sys:<sid>, allowed_tools dynamique (resolve_updated_allowed_tools/refresh_allowed_tools), déblocage DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS, wake_box pair sans deadlock et ré-export echo_browser_lib.
+# 6.21.9.1: Migration de _SUBAGENT_LOCKS vers weakref.WeakValueDictionary et déclenchement de notify_cognition_update dans bump_cognition_seq.
 
 from __future__ import annotations
 
@@ -28,27 +28,27 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple
 
 from echo_constants import (
-    BROWSER_CLIP_EXT,
-    BROWSER_CLIP_MIME,
-    BROWSER_TRANSIENT_GRACE_SEC,
-    BROWSER_VIEWS_DIR_NAME,
-    BROWSER_VIEW_STATUS,
     CONTEXT_TRUNCATE_THRESHOLD,
+    COUNCIL_STATE_PREFIX,
     DEFAULT_VISION_GRID_STEP,
     DELEGATE_AGENT_BLACKLIST,
     DELEGATE_AGENT_SYSTEM_TOOLS,
+    DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS,
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
     ECHO_LLM_CALL_TIMEOUT,
-    ECHO_MAX_CONCURRENT_BROWSERS,
     ECHO_MAX_CONTEXT_SIZE,
     ECHO_MAX_PARALLEL_SUBAGENTS,
     ECHO_MAX_PARALLEL_TOOLS_PER_TURN,
     ECHO_MAX_PHALANX_DEPTH,
     ECHO_MAX_PHALANX_HANDOFFS,
+    ECHO_MAX_SUBAGENT_SID_LEN,
+    ECHO_MSG_CLOSE_TAG,
+    ECHO_MSG_OPEN_PREFIX,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
     ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CONTEXT,
@@ -56,6 +56,9 @@ from echo_constants import (
     ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS,
     ECHO_TOOLS_CACHE_MAX_SIZE,
     PRUNE_CONTENT_THRESHOLD,
+    SUBAGENT_META_PREFIX,
+    SUBAGENT_QUEUE_PREFIX,
+    SUBAGENT_SYS_PREFIX,
     build_subagent_system_appendix,
     get_allowed_models,
     get_generation_config,
@@ -66,6 +69,14 @@ import echo_constants as _echo_constants
 
 ECHO_SUBAGENT_PURGED_RETENTION_MINUTES: int = int(
     getattr(_echo_constants, "ECHO_SUBAGENT_PURGED_RETENTION_MINUTES", 1440) or 1440
+)
+from echo_browser_lib import (
+    _BROWSER_SEMAPHORES,
+    BrowserToolDispatcher,
+    deploy_browser_navigation_monitor,
+    format_browser_dom_view,
+    get_global_browser_semaphore,
+    prune_browser_heavy_context,
 )
 from echo_core import split_thought_process
 from echo_protocol import HandoffSpec
@@ -81,6 +92,10 @@ HANDOFF_CLOSE_TAG = "</CONTRAT_RELAIS>"
 PHALANX_HANDOFF_COUNT_PREFIX = "phalanx_handoffs:"
 
 _LEGACY_ORCH_PREFIX = "RÉPONSE DE L'ORCHESTRATEUR :"
+_ECHO_MSG_RE = re.compile(
+    r"<ECHO_MESSAGE(?:\s+([^>]*))?>\s*(.*?)\s*</ECHO_MESSAGE>", re.DOTALL
+)
+_ECHO_ATTR_RE = re.compile(r'([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"')
 _HUMAN_RE = re.compile(
     r"<REQUETE_UTILISATEUR>\s*(.*?)\s*</REQUETE_UTILISATEUR>", re.DOTALL
 )
@@ -93,10 +108,8 @@ _PEER_RE = re.compile(
 _HANDOFF_RE = re.compile(
     r"<CONTRAT_RELAIS(?:\s+[^>]*)?>\s*(.*?)\s*</CONTRAT_RELAIS>", re.DOTALL
 )
-_VALID_SID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,48}$")
-
-SUBAGENT_META_PREFIX = "subagent_meta:"
-SUBAGENT_QUEUE_PREFIX = "subagent_queue:"
+_VALID_SID_RE = re.compile(rf"^[a-zA-Z0-9_-]{{3,{ECHO_MAX_SUBAGENT_SID_LEN}}}$")
+_SENTINEL = object()
 
 SubagentStatus = Literal[
     "running",
@@ -125,9 +138,8 @@ SUBAGENT_STATUSES: tuple[str, ...] = (
 
 _REG_LOCK = threading.Lock()
 _QUEUE_LOCK = threading.Lock()
-_SUBAGENT_LOCKS: dict[tuple[int, str, str], asyncio.Lock] = {}
+_SUBAGENT_LOCKS: weakref.WeakValueDictionary[tuple[int, str, str], asyncio.Lock] = weakref.WeakValueDictionary()
 _CHAT_SEMAPHORES: dict[tuple[int, str, int], asyncio.Semaphore] = {}
-_BROWSER_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 _RUNNING_SUBAGENTS: set[tuple[str, str]] = set()
 _RUNNING_TASKS: dict[tuple[str, str], asyncio.Task] = {}
 _SUSPEND_FLAGS: set[tuple[str, str]] = set()
@@ -196,7 +208,12 @@ def bump_cognition_seq(chat_id: str) -> int:
     with _REG_LOCK:
         val = _COGNITION_SEQ.get(key, 0) + 1
         _COGNITION_SEQ[key] = val
-        return val
+    try:
+        from echo_window_manager import get_window_manager
+        get_window_manager().notify_cognition_update(key, val)
+    except Exception:
+        pass
+    return val
 
 
 def get_cognition_seq(chat_id: str) -> int:
@@ -215,12 +232,27 @@ def _strip_legacy_orch_prefix(text: str) -> str:
     return clean
 
 
+def format_echo_message(
+    content: str,
+    *,
+    sender: str = "orchestrator",
+    kind: Literal["task", "steer", "handoff", "human"] = "task",
+) -> str:
+    """Encapsule un message sous-agent dans l'enveloppe unifiée <ECHO_MESSAGE> (idempotente)."""
+    clean = (content or "").strip()
+    if clean.startswith(ECHO_MSG_OPEN_PREFIX) and clean.endswith(ECHO_MSG_CLOSE_TAG):
+        return clean
+    safe_sender = re.sub(r'["<>]', "", str(sender or "").strip()) or "orchestrator"
+    safe_kind = kind if kind in ("task", "steer", "handoff", "human") else "task"
+    return f'{ECHO_MSG_OPEN_PREFIX} from="{safe_sender}" kind="{safe_kind}">\n{clean}\n{ECHO_MSG_CLOSE_TAG}'
+
+
 def wrap_orchestrator_turn(text: str) -> str:
     """Encapsule une directive orchestrateur dans les balises XML dédiées."""
     clean = _strip_legacy_orch_prefix(text)
     if clean.startswith(ORCH_OPEN_TAG) and clean.endswith(ORCH_CLOSE_TAG):
         return clean
-    return f"{ORCH_OPEN_TAG}\n{clean}\n{ORCH_CLOSE_TAG}"
+    return format_echo_message(clean, sender="orchestrator", kind="task")
 
 
 def wrap_human_turn(text: str) -> str:
@@ -228,7 +260,7 @@ def wrap_human_turn(text: str) -> str:
     clean = (text or "").strip()
     if clean.startswith(HUMAN_OPEN_TAG) and clean.endswith(HUMAN_CLOSE_TAG):
         return clean
-    return f"{HUMAN_OPEN_TAG}\n{clean}\n{HUMAN_CLOSE_TAG}"
+    return format_echo_message(clean, sender="user", kind="human")
 
 
 def wrap_peer_turn(text: str, sender_sid: str = "") -> str:
@@ -236,13 +268,27 @@ def wrap_peer_turn(text: str, sender_sid: str = "") -> str:
     clean = (text or "").strip()
     if clean.startswith(PEER_OPEN_TAG) and clean.endswith(PEER_CLOSE_TAG):
         return clean
-    safe_sender = re.sub(r'["<>]', "", str(sender_sid or "").strip())
-    return f'<MESSAGE_PAIR de="{safe_sender}">\n{clean}\n{PEER_CLOSE_TAG}'
+    safe_sender = re.sub(r'["<>]', "", str(sender_sid or "").strip()) or "peer"
+    return format_echo_message(clean, sender=safe_sender, kind="steer")
 
 
 def extract_turn_origin(text: str) -> tuple[str, str]:
     """Détermine l'origine ('handoff' | 'peer' | 'human' | 'orchestrator') et le texte nettoyé."""
     raw = text or ""
+    echo_match = _ECHO_MSG_RE.search(raw)
+    if echo_match:
+        attrs_raw = echo_match.group(1) or ""
+        body = echo_match.group(2).strip()
+        attrs = {k.lower(): v.strip() for k, v in _ECHO_ATTR_RE.findall(attrs_raw)}
+        msg_kind = attrs.get("kind", "").lower()
+        msg_from = attrs.get("from", "")
+        if msg_kind == "handoff":
+            return "handoff", body
+        if msg_kind == "human" or msg_from == "user":
+            return "human", body
+        if msg_kind == "steer" and msg_from not in ("orchestrator", "user", ""):
+            return "peer", body
+        return "orchestrator", body
     hf_match = _HANDOFF_RE.search(raw)
     if hf_match:
         return "handoff", hf_match.group(1).strip()
@@ -263,12 +309,12 @@ def validate_or_create_sub_sid(
     prefix: str = "dlg",
     skill_id: Optional[str] = None,
 ) -> str:
-    """Valide un sub_sid explicite (^[a-zA-Z0-9_-]{3,48}$) ou en génère un déterministe."""
+    """Valide un sub_sid explicite (^[a-zA-Z0-9_-]{3,96}$) ou en génère un déterministe."""
     if sub_sid:
         candidate = str(sub_sid).strip()
         if _VALID_SID_RE.match(candidate):
             return candidate
-        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", candidate)[:48]
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", candidate)[:ECHO_MAX_SUBAGENT_SID_LEN]
         if len(sanitized) >= 3:
             return sanitized
     if skill_id:
@@ -303,17 +349,6 @@ def get_chat_subagent_semaphore(chat_id: str, depth: int = 0) -> asyncio.Semapho
         if sem is None:
             sem = asyncio.Semaphore(ECHO_MAX_PARALLEL_SUBAGENTS)
             _CHAT_SEMAPHORES[key] = sem
-        return sem
-
-
-def get_global_browser_semaphore() -> asyncio.Semaphore:
-    """Retourne le sémaphore global d'instances Playwright Chromium."""
-    loop_id = _get_loop_id()
-    with _REG_LOCK:
-        sem = _BROWSER_SEMAPHORES.get(loop_id)
-        if sem is None:
-            sem = asyncio.Semaphore(ECHO_MAX_CONCURRENT_BROWSERS)
-            _BROWSER_SEMAPHORES[loop_id] = sem
         return sem
 
 
@@ -393,11 +428,41 @@ def pop_kill_flag(chat_id: str, sub_sid: str) -> bool:
         return False
 
 
+def save_subagent_system_prompt(
+    state_manager: Any, sub_sid: str, prompt_text: str
+) -> None:
+    """Persiste le prompt système d'un sous-agent dans echo_settings (subagent_sys:<sid>)."""
+    if not sub_sid or not prompt_text:
+        return
+    text = str(prompt_text)
+    if not text.strip():
+        return
+    state_manager.save_session_setting(f"{SUBAGENT_SYS_PREFIX}{sub_sid}", text)
+
+
+def get_subagent_system_prompt(
+    state_manager: Any, sub_sid: str
+) -> Optional[str]:
+    """Lit le prompt système d'un sous-agent depuis echo_settings (subagent_sys:<sid>)."""
+    if not sub_sid:
+        return None
+    raw = state_manager.get_session_setting(f"{SUBAGENT_SYS_PREFIX}{sub_sid}")
+    return str(raw) if raw else None
+
+
 def save_subagent_meta(
     state_manager: Any, sub_sid: str, meta: dict
 ) -> dict:
     """Persiste les métadonnées d'un sous-agent dans echo_settings avec défauts SSOT."""
     payload = dict(meta or {})
+    raw_final_sys = payload.pop("final_system", None)
+    raw_sys_prompt = payload.pop("system_prompt", None)
+    sys_candidate = raw_final_sys if raw_final_sys else raw_sys_prompt
+    if sys_candidate:
+        sys_str = str(sys_candidate)
+        if sys_str.strip() and get_subagent_system_prompt(state_manager, sub_sid) != sys_str:
+            save_subagent_system_prompt(state_manager, sub_sid, sys_str)
+
     payload.setdefault("sub_sid", sub_sid)
     eng_cfg = ECHO_SUBAGENT_ENGINES_REGISTRY.get(
         str(payload.get("engine") or ""), {}
@@ -478,11 +543,23 @@ def extract_response_parts_and_text(
     """
     if not isinstance(res, dict):
         return [{"text": fallback_error}], fallback_error
+    from echo_gemini_client import describe_empty_llm_response
+
     candidates = res.get("candidates") or []
     if not candidates or not isinstance(candidates[0], dict):
+        diag = describe_empty_llm_response(res)
+        if diag["kind"] != "empty":
+            msg = f"❌ {diag['summary']}"
+            return [{"text": msg}], msg
         return [{"text": fallback_error}], fallback_error
     raw_parts = (candidates[0].get("content") or {}).get("parts") or []
     if not isinstance(raw_parts, list):
+        return [{"text": fallback_error}], fallback_error
+    if not raw_parts:
+        diag = describe_empty_llm_response(res)
+        if diag["kind"] != "empty":
+            msg = f"❌ {diag['summary']}"
+            return [{"text": msg}], msg
         return [{"text": fallback_error}], fallback_error
 
     normalized_parts: List[dict] = []
@@ -530,7 +607,7 @@ def update_subagent_meta_fields(
     """Fusionne les champs fournis dans les métadonnées du sous-agent et persiste."""
     meta = get_subagent_meta(state_manager, sub_sid) or {"sub_sid": sub_sid}
     for k, v in fields.items():
-        if v is not None or k == "checkpoint_reason":
+        if v is not None or k in ("checkpoint_reason", "allowed_tools"):
             meta[k] = v
     return save_subagent_meta(state_manager, sub_sid, meta)
 
@@ -562,7 +639,7 @@ def update_subagent_status(
 
 
 def _hard_delete_subagents_sync(state_manager: Any, sids: List[str]) -> int:
-    """Supprime atomiquement cognitive_threads et echo_settings (meta/queue) pour une liste de sub_sid."""
+    """Supprime atomiquement cognitive_threads et echo_settings (meta/queue/sys et council_state orphelin) pour une liste de sub_sid."""
     clean_sids = [str(s).strip() for s in (sids or []) if str(s).strip()]
     if not clean_sids:
         return 0
@@ -570,9 +647,16 @@ def _hard_delete_subagents_sync(state_manager: Any, sids: List[str]) -> int:
     if not db_path or not os.path.exists(db_path):
         return 0
     keys: List[str] = []
+    council_cids: set[str] = set()
     for sid in clean_sids:
         keys.append(f"{SUBAGENT_META_PREFIX}{sid}")
         keys.append(f"{SUBAGENT_QUEUE_PREFIX}{sid}")
+        keys.append(f"{SUBAGENT_SYS_PREFIX}{sid}")
+        if sid.startswith("thread_council_"):
+            rest = sid[len("thread_council_"):]
+            cid = rest.split("_", 1)[0] if "_" in rest else rest
+            if cid:
+                council_cids.add(cid)
     placeholders_sids = ",".join("?" for _ in clean_sids)
     placeholders_keys = ",".join("?" for _ in keys)
     with state_manager._write_tx() as conn:
@@ -584,6 +668,35 @@ def _hard_delete_subagents_sync(state_manager: Any, sids: List[str]) -> int:
             f"DELETE FROM echo_settings WHERE key IN ({placeholders_keys})",
             tuple(keys),
         )
+        if council_cids:
+            rem_threads = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT sub_sid FROM cognitive_threads WHERE sub_sid LIKE 'thread_council_%'"
+                ).fetchall()
+            ]
+            rem_meta_keys = [
+                r[0][len(SUBAGENT_META_PREFIX):]
+                for r in conn.execute(
+                    "SELECT key FROM echo_settings WHERE key LIKE ?",
+                    (f"{SUBAGENT_META_PREFIX}thread_council_%",),
+                ).fetchall()
+            ]
+            remaining_council_sids = set(rem_threads) | set(rem_meta_keys)
+            orphan_state_keys = [
+                f"{COUNCIL_STATE_PREFIX}{cid}"
+                for cid in council_cids
+                if not any(
+                    rsid.startswith(f"thread_council_{cid}_")
+                    for rsid in remaining_council_sids
+                )
+            ]
+            if orphan_state_keys:
+                ph_orphan = ",".join("?" for _ in orphan_state_keys)
+                conn.execute(
+                    f"DELETE FROM echo_settings WHERE key IN ({ph_orphan})",
+                    tuple(orphan_state_keys),
+                )
     bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
     return len(clean_sids)
 
@@ -988,6 +1101,54 @@ def build_subagent_cognitive_level_decl(
     }
 
 
+def resolve_updated_allowed_tools(
+    current_allowed: Optional[List[str]],
+    update_spec: Optional[List[str]],
+    available_names: Optional[List[str]] = None,
+) -> Optional[List[str]]:
+    """Résout la nouvelle liste `allowed_tools` (None, [], ['none'], ['*'], patch +/- ou remplacement)."""
+    if update_spec is None:
+        return list(current_allowed) if current_allowed is not None else None
+
+    cleaned = [str(x).strip() for x in update_spec if str(x or "").strip()]
+    if not cleaned or (len(cleaned) == 1 and cleaned[0].lower() == "none"):
+        return []
+    if cleaned == ["*"]:
+        return None
+
+    is_diff = any(item.startswith(("+", "-")) for item in cleaned)
+    if not is_diff:
+        return list(dict.fromkeys(cleaned))
+
+    if current_allowed is None:
+        if available_names is None and not any(item.startswith("-") for item in cleaned):
+            return None
+        base = list(
+            dict.fromkeys(str(x).strip() for x in (available_names or []) if str(x or "").strip())
+        )
+    else:
+        base = list(
+            dict.fromkeys(str(x).strip() for x in current_allowed if str(x or "").strip())
+        )
+
+    for item in cleaned:
+        if item == "*":
+            base = list(
+                dict.fromkeys(str(x).strip() for x in (available_names or []) if str(x or "").strip())
+            )
+        elif item.startswith("+"):
+            t = item[1:].strip()
+            if t and t not in base:
+                base.append(t)
+        elif item.startswith("-"):
+            t = item[1:].strip()
+            base = [x for x in base if x != t]
+        else:
+            if item and item not in base:
+                base.append(item)
+    return base
+
+
 def resolve_delegate_tools(
     chat_id: str,
     allowed_tools: Optional[List[str]] = None,
@@ -1004,8 +1165,7 @@ def resolve_delegate_tools(
 
     eff_blacklist = set(DELEGATE_AGENT_BLACKLIST)
     if can_delegate:
-        eff_blacklist.discard("delegate_to_agent")
-        eff_blacklist.discard("control_subagents")
+        eff_blacklist -= set(DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS)
     elif is_phalanx_member:
         eff_blacklist.discard("control_subagents")
     eff_blacklist_frozen = frozenset(eff_blacklist)
@@ -1016,7 +1176,7 @@ def resolve_delegate_tools(
             for k, v in tools_dict.items()
             if k not in eff_blacklist_frozen
             and (
-                not allowed_tools
+                allowed_tools is None
                 or k in allowed_tools
                 or k in DELEGATE_AGENT_SYSTEM_TOOLS
                 or k == "new_cognitive_level"
@@ -1031,7 +1191,7 @@ def resolve_delegate_tools(
             for k, v in raw_sub.items()
             if k not in eff_blacklist_frozen
             and (
-                not allowed_tools
+                allowed_tools is None
                 or k in allowed_tools
                 or k in DELEGATE_AGENT_SYSTEM_TOOLS
                 or k == "new_cognitive_level"
@@ -1040,10 +1200,26 @@ def resolve_delegate_tools(
     return sub_tools, body_tools_specs
 
 
+def compute_subagent_excluded_tools(
+    sub_ctx: Optional[dict],
+    all_tool_names: Any = (),
+    *,
+    always_exclude: frozenset = frozenset({"tool_advisor"}),
+) -> set[str]:
+    """Calcule de façon déterministe l'ensemble des outils interdits au sous-agent appelant."""
+    ctx = sub_ctx or {}
+    active = set(ctx.get("sub_tools_names") or ())
+    excluded = set(always_exclude) | (set(DELEGATE_AGENT_BLACKLIST) - active)
+    if "sub_tools_names" in ctx:
+        excluded |= (set(all_tool_names or ()) - active)
+    return excluded
+
+
 def build_function_declarations(
     sub_tools: dict[str, dict[str, Any]],
     body_tools_specs: Optional[list] = None,
     blacklist: frozenset = DELEGATE_AGENT_BLACKLIST,
+    allowed_tools: Optional[List[str]] = None,
 ) -> List[dict]:
     """Construit la liste des functionDeclarations Gemini pour les outils du sous-agent."""
     decls: List[dict] = []
@@ -1066,6 +1242,13 @@ def build_function_declarations(
             f = t.get("function", {})
             fn_name = f.get("name", "")
             if not fn_name or fn_name in blacklist:
+                continue
+            if (
+                allowed_tools is not None
+                and fn_name not in allowed_tools
+                and fn_name not in DELEGATE_AGENT_SYSTEM_TOOLS
+                and fn_name != "new_cognitive_level"
+            ):
                 continue
             decls.append({
                 "name": fn_name,
@@ -1090,6 +1273,27 @@ def _classify_sid_filter_type(sid: str, meta: Optional[dict] = None) -> str:
     return "agent"
 
 
+def _list_known_sub_sids(state: Any, chat_id: str) -> List[str]:
+    """Retourne l'union ordonnée des sub_sid présents dans cognitive_threads et dans subagent_meta:*."""
+    threads = state.list_threads(chat_id) or []
+    known: list[str] = [t["sub_sid"] for t in threads if t.get("sub_sid")]
+    seen = set(known)
+    try:
+        with state._get_connection(readonly=True) as conn:
+            rows = conn.execute(
+                "SELECT key FROM echo_settings WHERE key LIKE ?",
+                (f"{SUBAGENT_META_PREFIX}%",),
+            ).fetchall()
+        for (key,) in rows:
+            sid = str(key[len(SUBAGENT_META_PREFIX) :] or "").strip()
+            if sid and sid not in seen:
+                known.append(sid)
+                seen.add(sid)
+    except Exception:
+        pass
+    return known
+
+
 def _expand_descendant_sids(
     state: Any, chat_id: str, root_sids: List[str]
 ) -> List[str]:
@@ -1097,8 +1301,7 @@ def _expand_descendant_sids(
     expanded: list[str] = list(dict.fromkeys(root_sids or []))
     if not expanded:
         return expanded
-    threads = state.list_threads(chat_id) or []
-    all_sids = [t["sub_sid"] for t in threads if t.get("sub_sid")]
+    all_sids = _list_known_sub_sids(state, chat_id)
     meta_by_sid = {sid: (get_subagent_meta(state, sid) or {}) for sid in all_sids}
     seen = set(expanded)
     changed = True
@@ -1121,6 +1324,7 @@ def resolve_target_sub_sids(
     target_ids: Optional[List[str]] = None,
     filter_type: str = "all",
     include_purged: bool = False,
+    lateral_ok: bool = False,
 ) -> List[str]:
     """
     Résout une liste d'identifiants (sub_sid unitaires, council_id, phalanx_id) appartenant à chat_id.
@@ -1128,8 +1332,7 @@ def resolve_target_sub_sids(
     Applique un scopage hiérarchique strict lorsque l'appelant est un sous-agent.
     """
     eff_filter = "phalanx" if filter_type == "supervisor" else filter_type
-    threads = state.list_threads(chat_id) or []
-    all_sids: list[str] = [t["sub_sid"] for t in threads if t.get("sub_sid")]
+    all_sids: list[str] = _list_known_sub_sids(state, chat_id)
     if include_purged and target_ids:
         for raw_tid in target_ids:
             cand = str(raw_tid or "").strip()
@@ -1229,11 +1432,16 @@ def resolve_target_sub_sids(
         caller_sid = str(caller_ctx.get("sub_sid") or "")
         caller_group_id = caller_ctx.get("group_id")
         caller_depth = int(caller_ctx.get("depth") or 1)
-        if caller_ctx.get("can_delegate"):
-            explicit_group_target = bool(
-                caller_group_id
-                and target_ids
-                and any(
+        can_del = bool(caller_ctx.get("can_delegate"))
+        if lateral_ok:
+            if not caller_group_id:
+                if not can_del:
+                    return []
+                descendants = set(_expand_descendant_sids(state, chat_id, [caller_sid]))
+                descendants.discard(caller_sid)
+                resolved = [sid for sid in resolved if sid in descendants]
+            else:
+                is_group_target = (not target_ids) or any(
                     str(t or "").strip()
                     in (
                         caller_group_id,
@@ -1244,37 +1452,33 @@ def resolve_target_sub_sids(
                         str(t or "").strip().startswith("phx_")
                         and str(t or "").strip()[4:] == caller_group_id
                     )
-                    for t in target_ids
-                )
-            )
-            if explicit_group_target:
-                resolved = [
-                    sid
-                    for sid in resolved
-                    if sid != caller_sid
-                    and (meta_cache.get(sid) or {}).get("group_id") == caller_group_id
-                ]
-            else:
-                descendants = set(_expand_descendant_sids(state, chat_id, [caller_sid]))
-                descendants.discard(caller_sid)
-                resolved = [
-                    sid
-                    for sid in resolved
-                    if sid in descendants
                     or (
-                        bool(caller_group_id)
-                        and (meta_cache.get(sid) or {}).get("group_id") == caller_group_id
-                        and int((meta_cache.get(sid) or {}).get("depth") or 1) > caller_depth
+                        str(t or "").strip().startswith("thread_phalanx_")
+                        and str(t or "").strip()[len("thread_phalanx_"):] == caller_group_id
                     )
+                    for t in (target_ids or [])
+                )
+                resolved = [
+                    sid
+                    for sid in resolved
+                    if (meta_cache.get(sid) or {}).get("group_id") == caller_group_id
+                    and (meta_cache.get(sid) or {}).get("status") != "purged"
+                    and (not is_group_target or sid != caller_sid)
                 ]
         else:
-            if not caller_group_id:
+            if not can_del:
                 return []
+            descendants = set(_expand_descendant_sids(state, chat_id, [caller_sid]))
+            descendants.discard(caller_sid)
             resolved = [
                 sid
                 for sid in resolved
-                if (meta_cache.get(sid) or {}).get("group_id") == caller_group_id
-                and (meta_cache.get(sid) or {}).get("status") != "purged"
+                if sid in descendants
+                or (
+                    bool(caller_group_id)
+                    and (meta_cache.get(sid) or {}).get("group_id") == caller_group_id
+                    and int((meta_cache.get(sid) or {}).get("depth") or 1) > caller_depth
+                )
             ]
 
     return resolved
@@ -1351,6 +1555,7 @@ class StandardToolDispatcher:
         can_delegate: bool = False,
         default_worker_model: Optional[str] = None,
         current_model_key: str = "MODEL_APOLLO",
+        allowed_tools: Optional[List[str]] = None,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
@@ -1360,7 +1565,7 @@ class StandardToolDispatcher:
         self.chat_id = chat_id
         self.user_id = user_id
         self.state = state
-        self.sub_tools = sub_tools or {}
+        self._base_sub_tools: dict[str, dict[str, Any]] = dict(sub_tools or {})
         self.body_tools_specs = body_tools_specs or []
         self.events = events
         self.depth = int(depth or 1)
@@ -1370,20 +1575,70 @@ class StandardToolDispatcher:
         self.current_model_key = current_model_key or "MODEL_APOLLO"
         self.pending_handoff: Optional[dict] = None
         self._handoff_box: list[dict] = []
+        self.pending_wakes: list[dict] = []
+        self._wake_box: list[dict] = []
         self._user = __user__
         self._metadata = __metadata__
         self._event_emitter = __event_emitter__
         self._event_call = __event_call__
         eff_disp_blacklist = set(DELEGATE_AGENT_BLACKLIST)
         if self.can_delegate:
-            eff_disp_blacklist.discard("delegate_to_agent")
-            eff_disp_blacklist.discard("control_subagents")
+            eff_disp_blacklist -= set(DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS)
         elif str(self.group_id or "").startswith("phx_"):
             eff_disp_blacklist.discard("control_subagents")
+        self._eff_blacklist_frozen: frozenset = frozenset(eff_disp_blacklist)
+        self._active_allowed_tools: Optional[List[str]] = (
+            list(allowed_tools) if allowed_tools is not None else None
+        )
+        self.sub_tools: dict[str, dict[str, Any]] = {
+            k: v
+            for k, v in self._base_sub_tools.items()
+            if k not in self._eff_blacklist_frozen
+            and (
+                self._active_allowed_tools is None
+                or k in self._active_allowed_tools
+                or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                or k == "new_cognitive_level"
+            )
+        }
         self._fn_decls = build_function_declarations(
             self.sub_tools,
             self.body_tools_specs,
-            blacklist=frozenset(eff_disp_blacklist),
+            blacklist=self._eff_blacklist_frozen,
+            allowed_tools=self._active_allowed_tools,
+        )
+
+    def refresh_allowed_tools(self, new_allowed: Optional[List[str]]) -> None:
+        """Met à jour dynamiquement la whitelist d'outils et les déclarations Gemini en vol."""
+        norm_allowed = list(new_allowed) if new_allowed is not None else None
+        fresh_tools, fresh_specs = resolve_delegate_tools(
+            chat_id=self.chat_id,
+            allowed_tools=norm_allowed,
+            __metadata__=self._metadata,
+            __user__=self._user,
+            can_delegate=self.can_delegate,
+            is_phalanx_member=bool(str(self.group_id or "").startswith("phx_")),
+            current_model_key=self.current_model_key,
+            user_id=self.user_id,
+        )
+        merged_pool = {**self._base_sub_tools, **(fresh_tools or {})}
+        self._active_allowed_tools = norm_allowed
+        self.sub_tools = {
+            k: v
+            for k, v in merged_pool.items()
+            if k not in self._eff_blacklist_frozen
+            and (
+                norm_allowed is None
+                or k in norm_allowed
+                or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                or k == "new_cognitive_level"
+            )
+        }
+        self._fn_decls = build_function_declarations(
+            self.sub_tools,
+            fresh_specs or self.body_tools_specs,
+            blacklist=self._eff_blacklist_frozen,
+            allowed_tools=norm_allowed,
         )
 
     def get_tool_declarations(self) -> List[dict]:
@@ -1526,6 +1781,7 @@ class StandardToolDispatcher:
                     "can_delegate": self.can_delegate,
                     "default_worker_model": self.default_worker_model,
                     "handoff_box": self._handoff_box,
+                    "wake_box": self._wake_box,
                 })
                 try:
                     if inspect.iscoroutinefunction(target_fn):
@@ -1642,6 +1898,21 @@ class StandardToolDispatcher:
         )
         if self._handoff_box:
             self.pending_handoff = self._handoff_box[-1]
+        if self._wake_box:
+            existing_wake_sids = {
+                w.get("target_sid")
+                for w in self.pending_wakes
+                if isinstance(w, dict)
+            }
+            for _w in self._wake_box:
+                if (
+                    isinstance(_w, dict)
+                    and _w.get("target_sid")
+                    and _w["target_sid"] not in existing_wake_sids
+                ):
+                    self.pending_wakes.append(_w)
+                    existing_wake_sids.add(_w["target_sid"])
+            self._wake_box.clear()
 
         response_parts = []
         err_streak = 0
@@ -1679,773 +1950,6 @@ class StandardToolDispatcher:
             len(allowed_calls),
             err_streak,
             escalated_model,
-            last_fn_name,
-        )
-
-
-def prune_browser_heavy_context(
-    history_list: List[dict], threshold: int, is_zooming: bool = False
-) -> None:
-    """Élagage proactif des payloads DOM/A11y/inlineData anciens dans l'historique navigateur."""
-    heavy_keys = ("dom_map", "a11y_tree", "content", "html", "search_dom")
-    for i, msg in enumerate(history_list):
-        if "parts" in msg and not is_zooming and i < len(history_list) - 4:
-            msg["parts"] = [
-                p for p in msg["parts"] if "inlineData" not in p
-            ]
-        for part in msg.get("parts", []):
-            if "functionResponse" in part:
-                fr = part["functionResponse"]
-                resp = fr.get("response", {})
-                if isinstance(resp, dict):
-                    for key in heavy_keys:
-                        if key in resp:
-                            val = resp[key]
-                            if isinstance(val, str) and (
-                                "[PURGED" in val or "[TRUNCATED" in val
-                            ):
-                                continue
-                            if isinstance(val, str) and len(val) > threshold:
-                                resp[key] = (
-                                    val[:threshold]
-                                    + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-                                )
-                            elif (
-                                not isinstance(val, str)
-                                and len(str(val)) > threshold
-                            ):
-                                resp[key] = "[PURGED_OBSOLETE_UI_STATE]"
-            if "text" in part:
-                text = part["text"]
-                if (
-                    isinstance(text, str)
-                    and text.startswith("Voici les éléments interactifs actuels")
-                    and "[TRUNCATED" not in text
-                    and len(text) > threshold
-                ):
-                    part["text"] = (
-                        text[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-                    )
-
-
-def format_browser_dom_view(res_view: dict) -> str:
-    """Formate la carte DOM et l'état de navigation pour injection dans l'historique navigateur."""
-    dom_data = res_view.get("metadata", [])
-    dom_text = json.dumps(dom_data, ensure_ascii=False)[:60000]
-    vp = res_view.get("viewport")
-    vp_text = (
-        f"\nDimensions de l'écran (Viewport) : {vp['width']}x{vp['height']} pixels."
-        if vp
-        else ""
-    )
-    url = res_view.get("url") or ""
-    url_text = f"\nURL active : {url}" if url else ""
-    http_status = res_view.get("http_status")
-    http_status_text = (res_view.get("http_status_text") or "").strip()
-    http_line = ""
-    if http_status is not None:
-        status_str = f"{http_status} {http_status_text}".strip()
-        http_line = (
-            f"\n⚠️ Statut HTTP : {status_str}"
-            if int(http_status) >= 400
-            else f"\nStatut HTTP : {status_str}"
-        )
-    nav_error = res_view.get("nav_error")
-    nav_warning = res_view.get("nav_warning")
-    alert_lines = ""
-    if nav_error:
-        alert_lines += f"\n⚠️ Erreur de navigation : {nav_error}"
-    if nav_warning:
-        alert_lines += f"\n⚠️ Avertissement de navigation : {nav_warning}"
-    return (
-        f"Voici les éléments interactifs actuels (Carte DOM) :"
-        f"{url_text}{http_line}{alert_lines}{vp_text}\n{dom_text}"
-    )
-
-
-async def deploy_browser_navigation_monitor(
-    res_view: dict,
-    chat_id: str,
-    uid: str,
-    show_browser_hud: bool = True,
-    browser_session_id: Optional[str] = None,
-    open_tab_on_deploy: bool = False,
-) -> None:
-    """Enregistre la capture dans browserviews/ et la diffuse via EchoWindowManager."""
-    import os
-    import pybase64 as base64
-    from echo_browser_lib import enforce_transient_clip_budget
-    from echo_paths import (
-        generate_echo_file_id,
-        get_echo_session_path,
-        sanitize_echo_id,
-    )
-    from echo_state_manager import EchoStateManager
-    from echo_window_manager import get_window_manager
-
-    b64 = res_view.get("screenshot_b64", "")
-    clip_b64 = res_view.get("clip_b64", "")
-    clip_duration_ms = int(res_view.get("clip_duration_ms") or 0)
-    clip_size_bytes = int(res_view.get("clip_size_bytes") or 0)
-    eff_session_id = browser_session_id or chat_id
-    file_id = ""
-    filename = ""
-    clip_filename = ""
-    ts_now = int(time.time())
-
-    if b64:
-        try:
-            file_id = generate_echo_file_id(uid, chat_id)
-            filename = f"{file_id}_frame.jpg"
-            state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
-            vault_path = get_echo_session_path(
-                uid, chat_id, BROWSER_VIEWS_DIR_NAME
-            )
-            os.makedirs(vault_path, exist_ok=True)
-            filepath = os.path.join(vault_path, filename)
-
-            def _write_bytes(data: bytes, path: str) -> None:
-                with open(path, "wb") as f:
-                    f.write(data)
-
-            img_data = base64.b64decode(b64)
-            await asyncio.to_thread(_write_bytes, img_data, filepath)
-
-            if file_id and clip_b64:
-                clip_data = base64.b64decode(clip_b64)
-                clip_filename = f"{file_id}{BROWSER_CLIP_EXT}"
-                clip_filepath = os.path.join(vault_path, clip_filename)
-                await asyncio.to_thread(_write_bytes, clip_data, clip_filepath)
-                clip_size_bytes = len(clip_data)
-
-            state_manager.save_resource(
-                id=file_id,
-                name=filename,
-                resource_type="browserview",
-                status=BROWSER_VIEW_STATUS["TRANSIENT"],
-                mime="image/jpeg",
-                storage_path=f"{BROWSER_VIEWS_DIR_NAME}/{filename}",
-                metadata={
-                    "kind": "browser_frame",
-                    "session_id": eff_session_id,
-                    "url": res_view.get("url", ""),
-                    "action": res_view.get("action", ""),
-                    "http_status": res_view.get("http_status"),
-                    "http_status_text": res_view.get("http_status_text") or "",
-                    "timestamp": ts_now,
-                    "retained": False,
-                    "clip_filename": clip_filename or None,
-                    "clip_mime": BROWSER_CLIP_MIME if clip_filename else None,
-                    "clip_duration_ms": clip_duration_ms if clip_filename else 0,
-                    "clip_size_bytes": clip_size_bytes if clip_filename else 0,
-                },
-            )
-        except Exception as e:
-            print(f"[BrowserMonitor] Échec persistance capture ({uid}/{chat_id}): {e}")
-            file_id = ""
-            clip_filename = ""
-        try:
-            await asyncio.to_thread(enforce_transient_clip_budget, uid, chat_id)
-        except Exception as e:
-            print(f"[BrowserMonitor] Échec purge quota clips ({uid}/{chat_id}): {e}")
-
-    if not show_browser_hud:
-        return
-
-    wm = get_window_manager()
-    if open_tab_on_deploy and file_id:
-        await wm.open_tab(
-            uid,
-            chat_id,
-            "echo-browser",
-            {"sessionId": eff_session_id, "frameId": file_id, "auto": True},
-        )
-    safe_cid = sanitize_echo_id(chat_id)
-    await wm.broadcast_browser_frame(
-        uid,
-        chat_id,
-        {
-            "session_id": eff_session_id,
-            "file_id": file_id,
-            "filename": filename,
-            "url": res_view.get("url", ""),
-            "action": res_view.get("action", ""),
-            "http_status": res_view.get("http_status"),
-            "http_status_text": res_view.get("http_status_text") or "",
-            "timestamp": ts_now,
-            "status": BROWSER_VIEW_STATUS["TRANSIENT"],
-            "retained": False,
-            "image_url": (
-                f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/image"
-                if file_id
-                else ""
-            ),
-            "clip_url": (
-                f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/clip"
-                if clip_filename
-                else ""
-            ),
-            "clip_duration_ms": clip_duration_ms if clip_filename else 0,
-            "clip_size_bytes": clip_size_bytes if clip_filename else 0,
-        },
-    )
-
-
-class BrowserToolDispatcher:
-    """
-    Dispatcher spécialisé pour le Navigateur Autonome Playwright.
-    Peut être instancié directement par navigation_engine_tool.py OU automatiquement
-    par EchoSubagentController lors d'un resume/kill/close à froid sur un thread_web_*.
-    """
-
-    def __init__(
-        self,
-        sid: str,
-        browser_session_id: str,
-        chat_id: str,
-        user_id: str,
-        events: Any,
-        http_timeout: int = 120,
-        browser_mode: str = "desktop",
-        show_browser_hud: bool = True,
-        use_multimodal_vision: bool = True,
-        vision_grid_step: int = DEFAULT_VISION_GRID_STEP,
-        prune_threshold: int = PRUNE_CONTENT_THRESHOLD,
-        analyze_page_cb: Any = None,
-        archive_page_cb: Any = None,
-    ):
-        from echo_browser_lib import BROWSER_TOOLS_SCHEMA, EchoBrowserLib
-
-        self.sid = sid
-        self.browser_session_id = browser_session_id or sid
-        self.chat_id = chat_id
-        self.user_id = user_id
-        self.events = events
-        self.http_timeout = http_timeout
-        self.browser_mode = browser_mode
-        self.show_browser_hud = show_browser_hud
-        self.use_vision = use_multimodal_vision
-        self.vision_grid_step = vision_grid_step
-        self.prune_threshold = prune_threshold
-        self.analyze_page_cb = analyze_page_cb
-        self.archive_page_cb = archive_page_cb
-
-        self.browser = EchoBrowserLib(
-            self.http_timeout,
-            self.browser_session_id,
-            self.user_id,
-            vision_grid_step=self.vision_grid_step,
-            chat_id=self.chat_id,
-        )
-        self.registry = self.browser.get_registry()
-        self.vision_requested = False
-        self.is_zooming = False
-        self.zoom_attempts = 0
-        self.last_view: Optional[dict] = None
-        self._sem_acquired = False
-        self.last_url: str = ""
-        self.last_http_status: Optional[int] = None
-        self.last_http_status_text: str = ""
-        self.navigation_statuses: List[dict] = []
-
-        schema_extensions = [
-            {
-                "name": "action_analyze_page",
-                "description": "Analyse intelligemment le contenu textuel complet de la page actuelle en tâche de fond sans saturer la mémoire de travail.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "L'objectif de l'analyse.",
-                        }
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "action_archive_page",
-                "description": "Archive silencieusement tout le texte de la page actuelle dans la mémoire à long terme (RAG).",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        ]
-        self._fn_decls = list(BROWSER_TOOLS_SCHEMA) + schema_extensions
-
-    def get_tool_declarations(self) -> List[dict]:
-        return self._fn_decls
-
-    def _record_http_telemetry(self, payload: Optional[dict]) -> None:
-        if not isinstance(payload, dict):
-            return
-        url = str(payload.get("url") or "").strip()
-        code = payload.get("http_status")
-        text = str(payload.get("http_status_text") or "").strip()
-        if url:
-            self.last_url = url
-        if code is not None:
-            self.last_http_status = code
-            self.last_http_status_text = text
-            entry = {
-                "url": url or self.last_url,
-                "http_status": code,
-                "http_status_text": text,
-            }
-            if not self.navigation_statuses or self.navigation_statuses[-1] != entry:
-                self.navigation_statuses.append(entry)
-                if len(self.navigation_statuses) > 25:
-                    self.navigation_statuses = self.navigation_statuses[-25:]
-
-    def get_telemetry_metadata(self) -> dict:
-        if (
-            not self.last_url
-            and self.last_http_status is None
-            and not self.navigation_statuses
-        ):
-            return {}
-        return {
-            "final_url": self.last_url,
-            "http_status": self.last_http_status,
-            "http_status_text": self.last_http_status_text,
-            "navigation_statuses": list(self.navigation_statuses),
-        }
-
-    def get_thinking_override(
-        self, is_slice_exhausted: bool, last_fn_name: str
-    ) -> Optional[str]:
-        return (
-            "high"
-            if (
-                is_slice_exhausted
-                or last_fn_name in ("action", "action_inspect_page")
-            )
-            else "low"
-        )
-
-    async def acquire_browser_slot(self) -> None:
-        if not self._sem_acquired:
-            sem = get_global_browser_semaphore()
-            await sem.acquire()
-            self._sem_acquired = True
-
-    def release_browser_slot(self) -> None:
-        if self._sem_acquired:
-            self._sem_acquired = False
-            try:
-                get_global_browser_semaphore().release()
-            except ValueError:
-                pass
-
-    async def ensure_engine_ready(
-        self, start_url: Optional[str] = None, open_tab: bool = False
-    ) -> Optional[dict]:
-        from echo_browser_lib import (
-            cleanup_expired_browserviews,
-            req_to_browser,
-        )
-
-        res = await req_to_browser(
-            self.http_timeout,
-            "/action",
-            {"session_id": self.browser_session_id, "action": "ping"},
-            self.user_id,
-        )
-        if (
-            res.get("message") == "RESTART_REQUIRED"
-            or res.get("error_type") == "SESSION_NOT_FOUND"
-        ):
-            if self.events:
-                await self.events.status(
-                    "🌐 Moteur de navigation initialisation...", done=False
-                )
-            start_res = await req_to_browser(
-                self.http_timeout,
-                "/start_session",
-                {
-                    "session_id": self.browser_session_id,
-                    "chat_id": self.chat_id or self.browser_session_id,
-                    "idle_timeout": 900,
-                    "mode": self.browser_mode,
-                },
-                self.user_id,
-            )
-            if start_res.get("status") != "success":
-                return None
-
-        if self.show_browser_hud:
-            from echo_window_manager import get_window_manager
-
-            get_window_manager().register_browser_session(
-                self.user_id, self.chat_id, self.browser_session_id
-            )
-
-        await cleanup_expired_browserviews(self.user_id, self.chat_id, min_age_sec=BROWSER_TRANSIENT_GRACE_SEC)
-        nav_res: Optional[dict] = None
-        if start_url:
-            if self.events:
-                await self.events.status(
-                    f"🌐 Navigation vers {start_url}...", done=False
-                )
-            nav_res = await self.browser.action_browser_control(
-                command="navigate", value=start_url
-            )
-        if self.events:
-            await self.events.status(
-                f"📸 [{self.sid}] Extraction de la carte DOM...", done=False
-            )
-        res_view = await self.browser.highlight()
-        if isinstance(res_view, dict) and isinstance(nav_res, dict):
-            if nav_res.get("status") == "error":
-                res_view["nav_error"] = nav_res.get("message")
-            if nav_res.get("warning"):
-                res_view["nav_warning"] = nav_res.get("warning")
-            if res_view.get("http_status") is None and nav_res.get("http_status") is not None:
-                res_view["http_status"] = nav_res.get("http_status")
-                res_view["http_status_text"] = nav_res.get("http_status_text") or ""
-        if isinstance(res_view, dict) and res_view.get("http_status") is not None:
-            self._record_http_telemetry(res_view)
-        else:
-            self._record_http_telemetry(nav_res)
-            self._record_http_telemetry(res_view)
-        self.last_view = res_view
-        await deploy_browser_navigation_monitor(
-            res_view,
-            self.chat_id,
-            self.user_id,
-            show_browser_hud=self.show_browser_hud,
-            browser_session_id=self.browser_session_id,
-            open_tab_on_deploy=open_tab,
-        )
-        return res_view
-
-    async def on_before_slice(self) -> None:
-        await self.acquire_browser_slot()
-        if self.show_browser_hud:
-            from echo_window_manager import get_window_manager
-
-            get_window_manager().register_browser_session(
-                self.user_id, self.chat_id, self.browser_session_id
-            )
-
-    async def on_after_slice(self, final_status: str) -> None:
-        self.release_browser_slot()
-
-    async def on_cleanup(self) -> None:
-        from echo_browser_lib import cleanup_expired_browserviews
-
-        await self.on_after_slice("killed")
-        if self.show_browser_hud:
-            try:
-                from echo_window_manager import get_window_manager
-
-                get_window_manager().unregister_browser_session(
-                    self.user_id, self.chat_id, self.browser_session_id
-                )
-            except Exception:
-                pass
-        try:
-            await self.browser.reset_session()
-        except Exception:
-            pass
-        try:
-            await cleanup_expired_browserviews(
-                self.user_id,
-                self.chat_id,
-                force_discard_sids={self.browser_session_id, self.sid},
-            )
-        except Exception:
-            pass
-
-    async def execute_tool_calls(
-        self,
-        tool_calls: List[dict],
-        remaining_slice_calls: int,
-        current_model_key: str,
-        history: List[dict],
-    ) -> tuple[List[dict], int, int, Optional[str], str]:
-        allowed_calls = tool_calls[:ECHO_MAX_PARALLEL_TOOLS_PER_TURN]
-        excess_calls = tool_calls[ECHO_MAX_PARALLEL_TOOLS_PER_TURN:]
-
-        response_parts: List[dict] = []
-        last_view = None
-        last_fn_name = "action"
-        err_streak = 0
-
-        try:
-            await self.browser.start_screencast()
-        except Exception:
-            pass
-
-        screencast_stopped = False
-
-        async def _stop_and_collect_clip() -> dict:
-            nonlocal screencast_stopped
-            if screencast_stopped:
-                return {}
-            screencast_stopped = True
-            sc_res: Any = {}
-            try:
-                sc_res = await self.browser.stop_screencast()
-            except Exception:
-                sc_res = {}
-            return sc_res if isinstance(sc_res, dict) else {}
-
-        def _attach_clip_fields(target_view: dict, sc_res: dict) -> None:
-            if not isinstance(target_view, dict) or not isinstance(sc_res, dict):
-                return
-            for k in ("clip_b64", "clip_mime", "clip_duration_ms", "clip_size_bytes"):
-                if sc_res.get(k):
-                    target_view[k] = sc_res[k]
-
-        def _propagate_http_fields(target_view: Any, src_res: Any) -> None:
-            if isinstance(target_view, dict) and isinstance(src_res, dict):
-                if target_view.get("http_status") is None and src_res.get("http_status") is not None:
-                    target_view["http_status"] = src_res.get("http_status")
-                    target_view["http_status_text"] = src_res.get("http_status_text") or ""
-                if not target_view.get("url") and src_res.get("url"):
-                    target_view["url"] = src_res.get("url")
-
-        try:
-            for index, fc in enumerate(allowed_calls):
-                fn_name = fc.get("name", "")
-                fn_args = dict(fc.get("args", {}) or {})
-                fn_id = fc.get("id")
-                is_last_tool = index == len(allowed_calls) - 1
-
-                if fn_args.get("action_type") in ("download", "save_target"):
-                    fn_args["download_file_id"] = f"DL_{uuid.uuid4().hex[:8]}"
-
-                if self.events:
-                    await self.events.status(
-                        f"🖱️ [{self.sid}] {fn_name}({fn_args})", done=False
-                    )
-
-                _resp: dict = {"status": "error", "message": "Outil inconnu."}
-                is_err = False
-
-                if fn_name in self.registry:
-                    try:
-                        action_res = await self.registry[fn_name](**fn_args)
-                        if action_res.get("_trigger_vision"):
-                            self.vision_requested = True
-                            grid = action_res.get("grid", False)
-                            zb = action_res.get("zoom_box")
-                            if action_res.get("is_zoom"):
-                                self.is_zooming = True
-                                self.zoom_attempts += 1
-                                cx, cy = action_res.get("cx"), action_res.get("cy")
-                                _resp = {
-                                    "status": "success",
-                                    "message": (
-                                        f"Zoom appliqué (Essai {self.zoom_attempts}/3). L'image jointe est rognée sur la zone cible. "
-                                        f"Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). "
-                                        f"Si le point central de ce viseur est STRICTEMENT sur la cible, le Sous-Agent DOIT utiliser "
-                                        f"action_interact_dom(x={cx}, y={cy}, action_type='click')."
-                                    ),
-                                }
-                            elif action_res.get("is_zoom_out"):
-                                self.is_zooming = False
-                                self.zoom_attempts = 0
-                                _resp = {
-                                    "status": "success",
-                                    "message": "Zoom annulé. Retour à la vue globale.",
-                                }
-                            else:
-                                _resp = {
-                                    "status": "success",
-                                    "message": "Capture d'écran demandée. Elle est jointe à ce message.",
-                                }
-
-                            if grid:
-                                last_view = await self.browser.vision_capture(
-                                    grid=True, zoom_box=zb
-                                )
-                            else:
-                                last_view = await self.browser.highlight()
-
-                            hud_view = (
-                                await self.browser.highlight() if grid else last_view
-                            )
-                            _propagate_http_fields(last_view, action_res)
-                            if hud_view is not last_view:
-                                _propagate_http_fields(hud_view, action_res)
-                            if is_last_tool:
-                                sc_res = await _stop_and_collect_clip()
-                                _attach_clip_fields(hud_view, sc_res)
-                            await deploy_browser_navigation_monitor(
-                                hud_view,
-                                self.chat_id,
-                                self.user_id,
-                                show_browser_hud=self.show_browser_hud,
-                                browser_session_id=self.browser_session_id,
-                            )
-                            self._record_http_telemetry(hud_view or last_view)
-                            last_fn_name = fn_name
-                        elif action_res.get("status") != "error":
-                            if fn_name in (
-                                "action_interact_dom",
-                                "action_interact_a11y",
-                                "action_browser_control",
-                            ):
-                                self.is_zooming = False
-                                self.zoom_attempts = 0
-                            if is_last_tool:
-                                if (
-                                    "metadata" in action_res
-                                    and "screenshot_b64" in action_res
-                                ):
-                                    last_view = action_res
-                                else:
-                                    last_view = await self.browser.highlight()
-                                _propagate_http_fields(last_view, action_res)
-                                sc_res = await _stop_and_collect_clip()
-                                _attach_clip_fields(last_view, sc_res)
-                                await deploy_browser_navigation_monitor(
-                                    last_view,
-                                    self.chat_id,
-                                    self.user_id,
-                                    show_browser_hud=self.show_browser_hud,
-                                    browser_session_id=self.browser_session_id,
-                                )
-                                _resp = {
-                                    "status": "success",
-                                    "dom_map": last_view.get("metadata", []),
-                                }
-                            else:
-                                _resp = {
-                                    "status": "success",
-                                    "message": "Action exécutée avec succès.",
-                                }
-                            primary = last_view if (is_last_tool and isinstance(last_view, dict)) else {}
-                            url_val = primary.get("url") or action_res.get("url")
-                            if url_val:
-                                _resp["url"] = url_val
-                            http_code = primary.get("http_status")
-                            http_text = primary.get("http_status_text") or ""
-                            if http_code is None:
-                                http_code = action_res.get("http_status")
-                                http_text = action_res.get("http_status_text") or ""
-                            if http_code is not None:
-                                _resp["http_status"] = http_code
-                                _resp["http_status_text"] = http_text
-                            warn_val = primary.get("warning") or action_res.get("warning")
-                            if warn_val:
-                                _resp["warning"] = warn_val
-                            self._record_http_telemetry(last_view if is_last_tool else action_res)
-                            self._record_http_telemetry(action_res)
-                            if action_res.get("status") == "downloading":
-                                _resp["message"] = (
-                                    f"📥 Téléchargement asynchrone démarré. Identifiant : {fn_args.get('download_file_id')}."
-                                )
-                            for k_extra in ("search_result", "content", "value"):
-                                if k_extra in action_res:
-                                    _resp[k_extra] = action_res[k_extra]
-                            last_fn_name = fn_name
-                        else:
-                            _resp = {
-                                "status": "error",
-                                "error": action_res.get("message"),
-                            }
-                            is_err = True
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        _resp = {"status": "error", "error": str(e)}
-                        is_err = True
-                elif fn_name == "action_analyze_page" and self.analyze_page_cb:
-                    try:
-                        current_url_resp = await self.browser.action_inspect_page(
-                            target="url"
-                        )
-                        raw_res = await self.analyze_page_cb(
-                            current_url_resp.get("url", ""),
-                            fn_args.get("query", ""),
-                        )
-                        _resp = {"status": "success", "result": raw_res}
-                    except Exception as e:
-                        _resp = {"status": "error", "error": str(e)}
-                        is_err = True
-                elif fn_name == "action_archive_page" and self.archive_page_cb:
-                    try:
-                        current_url_resp = await self.browser.action_inspect_page(
-                            target="url"
-                        )
-                        raw_res = await self.archive_page_cb(
-                            current_url_resp.get("url", "")
-                        )
-                        _resp = {"status": "success", "result": raw_res}
-                    except Exception as e:
-                        _resp = {"status": "error", "error": str(e)}
-                        is_err = True
-                else:
-                    is_err = True
-
-                if is_err:
-                    err_streak += 1
-                else:
-                    err_streak = 0
-
-                _fr: dict = {"name": fn_name, "response": _resp}
-                if fn_id:
-                    _fr["id"] = fn_id
-                response_parts.append({"functionResponse": _fr})
-        finally:
-            if not screencast_stopped:
-                await _stop_and_collect_clip()
-
-        for fc in excess_calls:
-            fn_id = fc.get("id")
-            _efr: dict = {
-                "name": fc.get("name", "unknown"),
-                "response": {
-                    "status": "exceeded_parallel_per_turn_limit",
-                    "message": (
-                        f"Limite par tour atteinte ({ECHO_MAX_PARALLEL_TOOLS_PER_TURN} appels simultanés max par tour). "
-                        "Réémettre au tour suivant si nécessaire."
-                    ),
-                },
-            }
-            if fn_id:
-                _efr["id"] = fn_id
-            response_parts.append({"functionResponse": _efr})
-
-        if last_view:
-            self.last_view = last_view
-        if (
-            last_view
-            and self.use_vision
-            and self.vision_requested
-            and last_view.get("screenshot_b64")
-        ):
-            target_fr = None
-            for rp in reversed(response_parts):
-                if (
-                    "functionResponse" in rp
-                    and rp["functionResponse"].get("name") == last_fn_name
-                ):
-                    target_fr = rp["functionResponse"]
-                    break
-            if not target_fr and response_parts:
-                target_fr = response_parts[-1]["functionResponse"]
-            if target_fr:
-                target_fr["response"]["message"] = (
-                    "Capture d'écran disponible. Le Sous-Agent DOIT analyser la capture."
-                )
-                response_parts.append({
-                    "inlineData": {
-                        "mimeType": "image/jpeg",
-                        "data": last_view["screenshot_b64"],
-                    }
-                })
-            self.vision_requested = False
-
-        prune_browser_heavy_context(
-            history, self.prune_threshold, self.is_zooming
-        )
-        return (
-            response_parts,
-            len(allowed_calls),
-            err_streak,
-            None,
             last_fn_name,
         )
 
@@ -2545,7 +2049,7 @@ class EchoAgentRunner:
             smart_truncate_history,
             wrap_tool_output,
         )
-        from echo_gemini_client import EchoGeminiClient
+        from echo_gemini_client import EchoGeminiClient, PromptBlockedError, describe_empty_llm_response
 
         eff_max_turns = int(
             slice_max_turns if slice_max_turns is not None else slice_max_calls
@@ -2585,6 +2089,14 @@ class EchoAgentRunner:
                 for k, v in tele.items():
                     status_dict.setdefault(k, v)
             return status_dict
+
+        def _attach_post_hooks(out_dict: dict) -> dict:
+            p_wakes = list(getattr(dispatcher, "pending_wakes", None) or [])
+            if p_wakes and isinstance(out_dict, dict):
+                st = out_dict.get("status")
+                if isinstance(st, dict):
+                    st["_post_wakes"] = p_wakes
+            return out_dict
 
         await dispatcher.on_before_slice()
         final_status_for_hook = "idle"
@@ -2630,6 +2142,20 @@ class EchoAgentRunner:
                                 f"💬 [{sid}] {len(injected_parts)} directive(s) en file intégrée(s) en vol..."
                             )
 
+                # Synchronisation dynamique en vol (allowed_tools & model_key modifiés par steer)
+                live_meta = get_subagent_meta(state, sid) or {}
+                if live_meta:
+                    if hasattr(dispatcher, "refresh_allowed_tools"):
+                        live_allowed = live_meta.get("allowed_tools")
+                        if live_allowed != getattr(dispatcher, "_active_allowed_tools", _SENTINEL):
+                            dispatcher.refresh_allowed_tools(live_allowed)
+                    live_model = live_meta.get("model_key")
+                    if live_model and live_model != current_model_key:
+                        current_model_key = live_model
+                        is_cascaded_fallback = False
+                        if hasattr(dispatcher, "current_model_key"):
+                            dispatcher.current_model_key = live_model
+
                 # 1. Vérification de pause manuelle (suspend)
                 if is_subagent_suspend_requested(chat_id, sid):
                     clear_subagent_suspend(chat_id, sid)
@@ -2654,7 +2180,7 @@ class EchoAgentRunner:
                             f"⏸️ [{sid}] Mis en pause ({slice_turns_used}/{eff_max_turns} tours, {total_calls_used} outils).",
                             done=True,
                         )
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=(
                             f"⏸️ Sous-agent `{sid}` mis en pause sur demande "
                             f"({slice_turns_used}/{eff_max_turns} tours dans la tranche, "
@@ -2674,7 +2200,7 @@ class EchoAgentRunner:
                             "slice_calls_limit": eff_max_turns,
                             "model_used": current_model_key,
                         },
-                    )
+                    ))
 
                 # 2. Vérification d'échéance de tranche (quota de tours d'outils ou timeout de tranche)
                 elapsed_sec = time.monotonic() - slice_started_at
@@ -2760,10 +2286,23 @@ class EchoAgentRunner:
                     )
                 except asyncio.CancelledError:
                     raise
+                except PromptBlockedError as pbe:
+                    final_status_for_hook = "error"
+                    update_subagent_status(state, sid, "error")
+                    return _attach_post_hooks(wrap_tool_output(
+                        text=f"❌ [{sid}] {pbe.summary}",
+                        status={
+                            "status": "error",
+                            "sid": sid,
+                            "sub_sid": sid,
+                            "block_reason": pbe.block_reason,
+                            "message": pbe.summary,
+                        },
+                    ))
                 except Exception as e:
                     final_status_for_hook = "error"
                     update_subagent_status(state, sid, "error")
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=f"❌ Erreur API dans le sous-agent [{sid}] : {str(e)}",
                         status={
                             "status": "error",
@@ -2771,12 +2310,12 @@ class EchoAgentRunner:
                             "sub_sid": sid,
                             "message": str(e),
                         },
-                    )
+                    ))
 
                 if not data:
                     final_status_for_hook = "error"
                     update_subagent_status(state, sid, "error")
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=f"❌ Cascade épuisée pour le sous-agent [{sid}].",
                         status={
                             "status": "error",
@@ -2784,7 +2323,7 @@ class EchoAgentRunner:
                             "sub_sid": sid,
                             "message": "cascade exhausted",
                         },
-                    )
+                    ))
 
                 if model_used and model_used != current_model_key:
                     current_model_key = model_used
@@ -2797,10 +2336,27 @@ class EchoAgentRunner:
                 if not candidates or not candidates[0].get("content"):
                     final_status_for_hook = "error"
                     update_subagent_status(state, sid, "error")
-                    return wrap_tool_output(
-                        text=f"❌ Réponse vide du modèle pour le sous-agent [{sid}].",
-                        status={"status": "error", "sid": sid, "sub_sid": sid},
+                    diag_empty = describe_empty_llm_response(data)
+                    print(
+                        f"[ECHO-SUBAGENT] [{sid}] {diag_empty['summary']} "
+                        f"(reason={diag_empty['reason']}, raw={diag_empty['raw_message']!r})",
+                        flush=True,
                     )
+                    return _attach_post_hooks(wrap_tool_output(
+                        text=f"❌ [{sid}] {diag_empty['summary']}",
+                        status={
+                            "status": "error",
+                            "sid": sid,
+                            "sub_sid": sid,
+                            "finish_reason": diag_empty["reason"],
+                            **(
+                                {"block_reason": diag_empty["reason"]}
+                                if diag_empty["is_prompt_blocked"]
+                                else {}
+                            ),
+                            "message": diag_empty["summary"],
+                        },
+                    ))
 
                 raw_parts = candidates[0]["content"].get("parts", [])
                 tools_raw = [p for p in raw_parts if "functionCall" in p]
@@ -2849,7 +2405,7 @@ class EchoAgentRunner:
                             total_calls_used=total_calls_used,
                             last_output_preview=question[:1000],
                         )
-                        return wrap_tool_output(
+                        return _attach_post_hooks(wrap_tool_output(
                             text=f"⚠️ Sous-agent [{sid}] en attente de clarification : {question}",
                             status={
                                 "status": "pending_question",
@@ -2865,7 +2421,7 @@ class EchoAgentRunner:
                                 "slice_calls_used": slice_turns_used,
                                 "slice_calls_limit": eff_max_turns,
                             },
-                        )
+                        ))
 
                 # CAS B : Réponse textuelle sans appel d'outil (fin de tâche ou synthèse de checkpoint)
                 if not real_fc:
@@ -2953,7 +2509,7 @@ class EchoAgentRunner:
                             f"Utiliser `control_subagents(action='resume', target_ids=['{sid}'])` pour accorder une nouvelle tranche (+{ECHO_SUBAGENT_CHECKPOINT_TURNS} tours), "
                             f"`action='steer'` pour réorienter, ou `action='close'` si le résultat suffit.\n\n"
                         )
-                        return wrap_tool_output(
+                        return _attach_post_hooks(wrap_tool_output(
                             text=header + final_text,
                             status=_merge_telemetry({
                                 "status": "suspended_checkpoint",
@@ -2972,7 +2528,7 @@ class EchoAgentRunner:
                                 "calls_remaining": 0,
                                 "model_used": current_model_key,
                             }),
-                        )
+                        ))
 
                     # Fin nominale de la mission (avant épuisement de la tranche, ou en mode autonomous_slice)
                     is_real_exhaustion = is_slice_exhausted and eff_max_turns > 0
@@ -3019,9 +2575,9 @@ class EchoAgentRunner:
                     }
                     if is_real_exhaustion:
                         status_payload["warning"] = "budget_exhausted"
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=final_text, status=_merge_telemetry(status_payload)
-                    )
+                    ))
 
                 # CAS C : Garde-fou hallucination — functionCall émis alors que mode="NONE" (tranche épuisée)
                 if is_slice_exhausted and real_fc:
@@ -3162,10 +2718,10 @@ class EchoAgentRunner:
                         c_status_payload["warning"] = "checkpoint_reached"
                     elif is_real_exhaustion:
                         c_status_payload["warning"] = "budget_exhausted"
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=final_text,
                         status=_merge_telemetry(c_status_payload),
-                    )
+                    ))
 
                 # CAS D : Exécution des appels d'outils via le ToolDispatcher
                 history.append({"role": "model", "parts": raw_parts})
@@ -3301,7 +2857,7 @@ class EchoAgentRunner:
                             f"🤝 [{sid}] Relais handoff transmis vers {target_handoff_sid}.",
                             done=True,
                         )
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=f"🤝 Relais `handoff` transmis vers `{target_handoff_sid}`.",
                         status=_merge_telemetry({
                             "status": "success",
@@ -3310,7 +2866,7 @@ class EchoAgentRunner:
                             "sub_sid": sid,
                             "_tail_handoff": pending_handoff,
                         }),
-                    )
+                    ))
 
                 # Disjoncteur PARE : 3 erreurs d'outils consécutives -> pause immédiate
                 if consecutive_errors >= ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS:
@@ -3342,7 +2898,7 @@ class EchoAgentRunner:
                             f"⚠️ [{sid}] Disjoncteur PARE (3 erreurs consécutives) — mise en pause.",
                             done=True,
                         )
-                    return wrap_tool_output(
+                    return _attach_post_hooks(wrap_tool_output(
                         text=pare_msg,
                         status={
                             "status": "suspended_pare_alert",
@@ -3360,7 +2916,7 @@ class EchoAgentRunner:
                             "slice_calls_limit": eff_max_turns,
                             "model_used": current_model_key,
                         },
-                    )
+                    ))
 
         except asyncio.CancelledError:
             was_killed = pop_kill_flag(chat_id, sid)
@@ -3393,7 +2949,7 @@ class EchoAgentRunner:
             )
             if was_killed:
                 await dispatcher.on_cleanup()
-                return wrap_tool_output(
+                return _attach_post_hooks(wrap_tool_output(
                     text=f"🛑 Sous-agent `{sid}` interrompu (`killed`) et historique scellé.",
                     status={
                         "status": "killed",
@@ -3407,7 +2963,7 @@ class EchoAgentRunner:
                         "slice_calls_used": slice_turns_used,
                         "slice_calls_limit": eff_max_turns,
                     },
-                )
+                ))
             raise
         finally:
             await dispatcher.on_after_slice(final_status_for_hook)
@@ -3415,6 +2971,129 @@ class EchoAgentRunner:
 
 class EchoSubagentController:
     """Façade exécutive unifiée pour le lancement, la reprise et les 8 actions de pilotage des sous-agents."""
+
+    @classmethod
+    def deliver_to_subagent(
+        cls,
+        *,
+        state: Any,
+        user_id: str,
+        chat_id: str,
+        target_sid: str,
+        content: Optional[str] = None,
+        origin: Literal["orchestrator", "human", "peer", "handoff"] = "orchestrator",
+        sender_sid: str = "",
+        target_model_key: Optional[str] = None,
+        allowed_tools: Optional[List[str]] = None,
+        mode: Literal["queue_or_wake", "queue_or_run", "handoff"] = "queue_or_wake",
+        wake_box: Optional[list] = None,
+        handoff_box: Optional[list] = None,
+        handoff_meta: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """Routeur unifié de livraison vers un sous-agent (steer, handoff, dispatch_message)."""
+        from echo_core import clamp_model
+
+        meta = get_subagent_meta(state, target_sid) or {}
+        if meta.get("status") == "purged":
+            return {
+                "status": "purged",
+                "sub_sid": target_sid,
+                "error": f"Session `{target_sid}` archivée en lecture seule (`purged`).",
+            }
+
+        meta_updates: Dict[str, Any] = {}
+        if target_model_key:
+            meta_updates["model_key"] = clamp_model(
+                target_model_key, __metadata__ or {}, user_id
+            )
+        if allowed_tools is not None:
+            avail = list(get_chat_tools(chat_id, __metadata__).keys()) or None
+            meta_updates["allowed_tools"] = resolve_updated_allowed_tools(
+                meta.get("allowed_tools"), allowed_tools, available_names=avail
+            )
+        if meta_updates and meta:
+            update_subagent_meta_fields(state, target_sid, **meta_updates)
+
+        running = is_subagent_running(chat_id, target_sid)
+        if running:
+            q_len = 0
+            if content:
+                q_res = enqueue_subagent_message(
+                    state,
+                    target_sid,
+                    content,
+                    user_id=user_id,
+                    origin=origin,
+                    sender_sid=sender_sid,
+                )
+                q_len = len(q_res) if isinstance(q_res, (list, tuple)) else int(q_res or 0)
+            else:
+                q_len = len(peek_human_queue(state, target_sid))
+            return {
+                "status": "queued",
+                "sub_sid": target_sid,
+                "queue_length": q_len,
+                **meta_updates,
+            }
+
+        if mode == "handoff":
+            if isinstance(handoff_box, list):
+                payload = dict(handoff_meta or {})
+                payload["target_sid"] = target_sid
+                payload["relay_xml"] = content or ""
+                payload["sender_sid"] = sender_sid
+                if "model_key" in meta_updates:
+                    payload["target_model_key"] = meta_updates["model_key"]
+                if "allowed_tools" in meta_updates:
+                    payload["allowed_tools"] = meta_updates["allowed_tools"]
+                handoff_box.append(payload)
+                return {
+                    "status": "handoff_scheduled",
+                    "sub_sid": target_sid,
+                    **meta_updates,
+                }
+            return {
+                "status": "run_handoff",
+                "sub_sid": target_sid,
+                **meta_updates,
+            }
+
+        if mode == "queue_or_run":
+            return {
+                "status": "start",
+                "sub_sid": target_sid,
+                **meta_updates,
+            }
+
+        q_len = 0
+        if content:
+            q_res = enqueue_subagent_message(
+                state,
+                target_sid,
+                content,
+                user_id=user_id,
+                origin=origin,
+                sender_sid=sender_sid,
+            )
+            q_len = len(q_res) if isinstance(q_res, (list, tuple)) else int(q_res or 0)
+
+        wake_scheduled = False
+        if isinstance(wake_box, list) and content:
+            wake_box.append({
+                "target_sid": target_sid,
+                "sender_sid": sender_sid,
+                "origin": origin,
+            })
+            wake_scheduled = True
+
+        return {
+            "status": "wake_scheduled" if wake_scheduled else "queued",
+            "sub_sid": target_sid,
+            "queue_length": q_len,
+            "wake_scheduled": wake_scheduled,
+            **meta_updates,
+        }
 
     @classmethod
     async def run_or_resume(
@@ -3425,6 +3104,7 @@ class EchoSubagentController:
         task: Optional[str] = None,
         directive: Optional[str] = None,
         origin: Literal["orchestrator", "human", "peer", "handoff"] = "orchestrator",
+        sender_sid: Optional[str] = None,
         system_prompt: Optional[str] = None,
         skill_id: Optional[str] = None,
         sub_sid: Optional[str] = None,
@@ -3456,7 +3136,13 @@ class EchoSubagentController:
         from echo_aec import EchoAEC
         from echo_core import clamp_model, wrap_tool_output
         from echo_events import EchoEvents
-        from echo_prompts import ECHO_FOUNDATION_KERNEL, SYS_NAV_BROWSER
+        from echo_prompts import (
+            ECHO_FOUNDATION_KERNEL,
+            SYS_NAV_BROWSER,
+            TPL_ORCHESTRATOR_PHALANX_COMMAND_RIGHTS,
+            TPL_ORCHESTRATOR_PHALANX_CONTEXT,
+            USR_ORCHESTRATOR_SLICE_CONTINUE,
+        )
         from echo_skills import get_skill_content, parse_skill_metadata
         from echo_state_manager import EchoStateManager
 
@@ -3489,33 +3175,48 @@ class EchoSubagentController:
             )
 
         eng_cfg = ECHO_SUBAGENT_ENGINES_REGISTRY.get(eff_engine, {})
+        existing_turns_lim = existing_meta.get("slice_turns_limit")
+        if existing_turns_lim is not None and not int(existing_turns_lim or 0):
+            existing_turns_lim = None
+        existing_timeout_lim = existing_meta.get("slice_timeout_sec")
+        if existing_timeout_lim is not None and not int(existing_timeout_lim or 0):
+            existing_timeout_lim = None
         eff_max_turns = int(
             slice_max_turns
             if slice_max_turns is not None
             else (
                 slice_max_calls
                 if slice_max_calls is not None
-                else eng_cfg.get(
-                    "default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_TURNS
+                else (
+                    existing_turns_lim
+                    if existing_turns_lim is not None
+                    else eng_cfg.get(
+                        "default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_TURNS
+                    )
                 )
             )
         )
         eff_timeout_sec = int(
             slice_timeout_sec
             if slice_timeout_sec is not None
-            else eng_cfg.get(
-                "default_slice_timeout_sec",
-                ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+            else (
+                existing_timeout_lim
+                if existing_timeout_lim is not None
+                else eng_cfg.get(
+                    "default_slice_timeout_sec",
+                    ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+                )
             )
         )
 
         eff_skill_id = skill_id or existing_meta.get("skill_id")
         eff_role_name = role_name or existing_meta.get("role_name")
-        eff_allowed_tools = (
-            allowed_tools
-            if allowed_tools is not None
-            else existing_meta.get("allowed_tools")
-        )
+        if allowed_tools is not None:
+            eff_allowed_tools = allowed_tools
+        elif "allowed_tools" in existing_meta:
+            eff_allowed_tools = existing_meta.get("allowed_tools")
+        else:
+            eff_allowed_tools = eng_cfg.get("default_allowed_tools")
         eff_group_id = group_id or existing_meta.get("group_id")
         eff_parent_sid = (
             parent_sid if parent_sid is not None else existing_meta.get("parent_sid")
@@ -3569,14 +3270,15 @@ class EchoSubagentController:
             role_id = "navigator"
         else:
             role_id = "delegate"
-            if (
-                existing_meta.get("final_system")
-                and not system_prompt
-                and not skill_id
-            ):
-                final_system = existing_meta["final_system"]
-            elif existing_meta.get("system_prompt") and not system_prompt and not skill_id:
-                final_system = existing_meta["system_prompt"]
+            stored_sys = (
+                get_subagent_system_prompt(state, sid)
+                or existing_meta.get("final_system")
+                or existing_meta.get("system_prompt")
+            )
+            if stored_sys and not system_prompt and not skill_id:
+                final_system = stored_sys
+                if not get_subagent_system_prompt(state, sid):
+                    save_subagent_system_prompt(state, sid, final_system)
             else:
                 base_system = system_prompt
                 if eff_skill_id and eff_skill_id != "navigator":
@@ -3628,22 +3330,18 @@ class EchoSubagentController:
                         if (eff_can_delegate and eff_depth == 1)
                         else ("Capitaine" if eff_can_delegate else "Hoplite")
                     )
-                    phalanx_ctx = (
-                        f"PHALANGE : group_id={eff_group_id} | Grade={grade_label} "
-                        f"(depth={eff_depth}/{ECHO_MAX_PHALANX_DEPTH}) | Parent={eff_parent_sid or 'orchestrateur'}\n"
-                        "COOPÉRATION PHALANGE : `control_subagents` est actif (`status`, `collect`, `steer`, `handoff`) "
-                        "pour interagir avec les coéquipiers du même `group_id`.\n"
-                        "SOBRIÉTÉ TOKENS : Grouper les appels d'outils indépendants dans un même tour, "
-                        "lire uniquement les plages ciblées, transmettre des pointeurs (URNs Codex, `sandbox/<sid>/...`, IDs) "
-                        "plutôt que des contenus bruts, et produire des réponses denses à haut SNR."
+                    phalanx_ctx = TPL_ORCHESTRATOR_PHALANX_CONTEXT.format(
+                        group_id=eff_group_id,
+                        grade_label=grade_label,
+                        depth=eff_depth,
+                        max_depth=ECHO_MAX_PHALANX_DEPTH,
+                        parent_label=eff_parent_sid or "orchestrateur",
+                        command_rights=(
+                            TPL_ORCHESTRATOR_PHALANX_COMMAND_RIGHTS
+                            if eff_can_delegate
+                            else ""
+                        ),
                     )
-                    if eff_can_delegate:
-                        phalanx_ctx += (
-                            " Droits de commandement actifs (`delegate_to_agent` et `control_subagents` "
-                            "complets sur les subordonnés) : réutiliser les unités existantes (`resume`) sur un même périmètre, "
-                            "dimensionner `target_model_key` au strict besoin, restreindre `allowed_tools` si possible "
-                            "et éviter `with_context_distillate=True` hors nécessité."
-                        )
 
                 final_system = base_system + build_subagent_system_appendix(
                     sub_sid=sid,
@@ -3654,6 +3352,7 @@ class EchoSubagentController:
                 )
                 if context_distillate:
                     final_system += f"\n\n## CONTEXTE DU CHAT PRINCIPAL (distillé)\n{context_distillate}"
+                save_subagent_system_prompt(state, sid, final_system)
 
         eff_role_name = eff_role_name or sid
         effective_task = (
@@ -3672,6 +3371,8 @@ class EchoSubagentController:
                 register_subagent_task(chat_id, sid, curr_task)
                 completed_normally = False
                 dispatcher: Any = custom_dispatcher
+                pending_user_step_idx: Optional[int] = None
+                res_to_return: Any = None
                 try:
                     history = state.get_thread_history(sid)
 
@@ -3756,6 +3457,7 @@ class EchoSubagentController:
                                 "user",
                                 init_parts,
                             )
+                            pending_user_step_idx = 0
                             effective_task = ""
                     elif dispatcher is None:
                         sub_tools, body_specs = resolve_delegate_tools(
@@ -3784,6 +3486,7 @@ class EchoSubagentController:
                             can_delegate=eff_can_delegate,
                             default_worker_model=eff_default_worker_model,
                             current_model_key=current_model_key,
+                            allowed_tools=eff_allowed_tools,
                             __user__=__user__ or {"id": user_id},
                             __metadata__=__metadata__
                             or {"chat_id": chat_id},
@@ -3811,10 +3514,14 @@ class EchoSubagentController:
                     # Injection de la tâche/directive ou d'une instruction de continuation de tranche
                     if effective_task:
                         if origin == "handoff":
-                            wrapped = effective_task
+                            wrapped = format_echo_message(
+                                effective_task,
+                                sender=str(sender_sid or eff_parent_sid or "orchestrator"),
+                                kind="handoff",
+                            )
                         elif origin == "peer":
                             wrapped = wrap_peer_turn(
-                                effective_task, str(eff_parent_sid or "")
+                                effective_task, str(sender_sid or eff_parent_sid or "")
                             )
                         elif origin == "human":
                             wrapped = wrap_human_turn(effective_task)
@@ -3834,15 +3541,13 @@ class EchoSubagentController:
                             "user",
                             user_parts,
                         )
+                        pending_user_step_idx = len(history) - 1
                     elif (
                         history
                         and history[-1].get("role") == "model"
                         and not peek_human_queue(state, sid)
                     ):
-                        cont_msg = (
-                            "Point de contrôle validé. Nouvelle tranche d'exécution accordée : "
-                            "poursuis la mission à partir de l'état courant sans répéter les étapes déjà accomplies."
-                        )
+                        cont_msg = USR_ORCHESTRATOR_SLICE_CONTINUE
                         wrapped = (
                             wrap_human_turn(cont_msg)
                             if origin == "human"
@@ -3862,6 +3567,7 @@ class EchoSubagentController:
                             "user",
                             user_parts,
                         )
+                        pending_user_step_idx = len(history) - 1
 
                     nav_meta_fields = (
                         {
@@ -3905,8 +3611,6 @@ class EchoSubagentController:
                             ),
                             **({"icon": eff_icon} if eff_icon else {}),
                             "allowed_tools": eff_allowed_tools,
-                            "system_prompt": final_system,
-                            "final_system": final_system,
                             "slice_turns_limit": eff_max_turns,
                             "slice_timeout_sec": eff_timeout_sec,
                             "slice_calls_limit": eff_max_turns,
@@ -3966,14 +3670,71 @@ class EchoSubagentController:
                                 update_subagent_status(state, sid, "error")
                             except Exception:
                                 pass
+                    if (
+                        pending_user_step_idx is not None
+                        and len(history) == pending_user_step_idx + 1
+                        and history[-1].get("role") == "user"
+                        and (
+                            not completed_normally
+                            or (
+                                isinstance(res_to_return, dict)
+                                and isinstance(res_to_return.get("status"), dict)
+                                and res_to_return["status"].get("status") == "error"
+                            )
+                        )
+                    ):
+                        history.pop()
+                        state.delete_thread_step(sid, pending_user_step_idx)
+                        pending_user_step_idx = None
                     mark_subagent_running(chat_id, sid, False)
 
-        if (
-            isinstance(res_to_return, dict)
-            and isinstance(res_to_return.get("status"), dict)
-            and res_to_return["status"].get("_tail_handoff")
-        ):
-            tail = res_to_return["status"].pop("_tail_handoff")
+        post_wakes: list[dict] = []
+        tail: Optional[dict] = None
+        if isinstance(res_to_return, dict) and isinstance(res_to_return.get("status"), dict):
+            post_wakes = res_to_return["status"].pop("_post_wakes", None) or []
+            tail = res_to_return["status"].pop("_tail_handoff", None)
+
+        if post_wakes and _handoff_hop < ECHO_MAX_PHALANX_HANDOFFS:
+            tail_sid = tail.get("target_sid") if isinstance(tail, dict) else None
+            seen_wakes: set[str] = set()
+            eligible_wakes: list[dict] = []
+            for w in post_wakes:
+                if not isinstance(w, dict):
+                    continue
+                wsid = str(w.get("target_sid") or "").strip()
+                if not wsid or wsid == sid or wsid == tail_sid or wsid in seen_wakes:
+                    continue
+                seen_wakes.add(wsid)
+                w_meta = get_subagent_meta(state, wsid) or {}
+                if w_meta.get("status") == "purged":
+                    continue
+                if not is_subagent_running(chat_id, wsid) and peek_human_queue(state, wsid):
+                    eligible_wakes.append(w)
+            if eligible_wakes:
+                await asyncio.gather(
+                    *(
+                        cls.run_or_resume(
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            sub_sid=w["target_sid"],
+                            directive="",
+                            origin=w.get("origin") or "peer",
+                            sender_sid=w.get("sender_sid") or sid,
+                            _handoff_hop=_handoff_hop + 1,
+                            autonomous_slice=autonomous_slice,
+                            key_switch_threshold=key_switch_threshold,
+                            max_retries=max_retries,
+                            __user__=__user__,
+                            __metadata__=__metadata__,
+                            __event_emitter__=__event_emitter__,
+                            __event_call__=__event_call__,
+                        )
+                        for w in eligible_wakes
+                    ),
+                    return_exceptions=True,
+                )
+
+        if tail:
             if _handoff_hop >= ECHO_MAX_PHALANX_HANDOFFS:
                 return wrap_tool_output(
                     text=(
@@ -3993,15 +3754,18 @@ class EchoSubagentController:
                 sub_sid=tail["target_sid"],
                 task=tail["relay_xml"],
                 origin="handoff",
+                sender_sid=tail.get("sender_sid") or sid,
                 group_id=tail.get("group_id"),
                 parent_sid=tail.get("parent_sid"),
                 depth=tail.get("depth"),
                 default_worker_model=tail.get("default_worker_model"),
                 engine=tail.get("engine"),
-                can_delegate=False,
+                target_model_key=tail.get("target_model_key"),
+                allowed_tools=tail.get("allowed_tools"),
+                can_delegate=None,
                 _handoff_hop=_handoff_hop + 1,
-                slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
-                slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+                slice_max_turns=None,
+                slice_timeout_sec=None,
                 autonomous_slice=autonomous_slice,
                 key_switch_threshold=key_switch_threshold,
                 max_retries=max_retries,
@@ -4034,6 +3798,7 @@ class EchoSubagentController:
         filter_type: str = "all",
         directive: Optional[str] = None,
         target_model_key: Optional[str] = None,
+        allowed_tools: Optional[List[str]] = None,
         handoff: Optional[Any] = None,
         key_switch_threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
@@ -4046,7 +3811,7 @@ class EchoSubagentController:
             EchoBrowserLib,
             cleanup_expired_browserviews,
         )
-        from echo_core import clamp_model, wrap_tool_output
+        from echo_core import wrap_tool_output
         from echo_events import EchoEvents
         from echo_gemini_client import EchoGeminiClient
         from echo_state_manager import EchoStateManager
@@ -4058,26 +3823,30 @@ class EchoSubagentController:
             )
 
         caller_ctx = ECHO_SUBAGENT_CONTEXT.get() or {}
-        if (
-            caller_ctx.get("is_subagent")
-            and not caller_ctx.get("can_delegate")
-            and action not in ("status", "collect", "steer", "handoff")
-        ):
-            return wrap_tool_output(
-                text=f"❌ Action `{action}` réservée au supérieur hiérarchique.",
-                status={"status": "error", "action": action},
-            )
+        if caller_ctx.get("is_subagent") and not caller_ctx.get("can_delegate"):
+            if action not in ("status", "collect", "steer", "handoff"):
+                return wrap_tool_output(
+                    text=f"❌ Action `{action}` réservée au supérieur hiérarchique.",
+                    status={"status": "error", "action": action},
+                )
+            if target_model_key is not None or allowed_tools is not None:
+                return wrap_tool_output(
+                    text="❌ Paramètres `target_model_key` et `allowed_tools` réservés au supérieur hiérarchique.",
+                    status={"status": "error", "action": action},
+                )
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         events = EchoEvents(
             __event_emitter__, __event_call__, user_id=user_id, chat_id=chat_id
         )
+        lateral_ok = action in ("status", "collect", "steer", "handoff")
         resolved_sids = resolve_target_sub_sids(
             state,
             chat_id,
             target_ids=target_ids,
             filter_type=filter_type,
             include_purged=(action == "purge_now"),
+            lateral_ok=lateral_ok,
         )
 
         # 1. ACTION : STATUS
@@ -4102,20 +3871,31 @@ class EchoSubagentController:
                     else (meta.get("status") or "idle")
                 )
                 q_len = len(peek_human_queue(state, sid))
+                eng_name = meta.get("engine") or "delegate"
+                has_loop = ECHO_SUBAGENT_ENGINES_REGISTRY.get(eng_name, {}).get(
+                    "has_tool_loop", True
+                )
                 s_used = int(
                     meta.get("slice_turns_used")
                     if meta.get("slice_turns_used") is not None
                     else (meta.get("slice_calls_used") or 0)
                 )
-                s_lim = int(
-                    meta.get("slice_turns_limit")
-                    if meta.get("slice_turns_limit") is not None
-                    else (
-                        meta.get("slice_calls_limit")
-                        if meta.get("slice_calls_limit") is not None
-                        else ECHO_SUBAGENT_CHECKPOINT_TURNS
+                if not has_loop:
+                    s_lim = int(
+                        meta.get("slice_turns_limit")
+                        if meta.get("slice_turns_limit") is not None
+                        else 0
                     )
-                )
+                else:
+                    s_lim = int(
+                        meta.get("slice_turns_limit")
+                        if meta.get("slice_turns_limit") is not None
+                        else (
+                            meta.get("slice_calls_limit")
+                            if meta.get("slice_calls_limit") is not None
+                            else ECHO_SUBAGENT_CHECKPOINT_TURNS
+                        )
+                    )
                 s_timeout = int(
                     meta.get("slice_timeout_sec")
                     if meta.get("slice_timeout_sec") is not None
@@ -4130,7 +3910,7 @@ class EchoSubagentController:
                 sessions_info.append({
                     "sub_sid": sid,
                     "group_id": meta.get("group_id"),
-                    "engine": meta.get("engine") or "delegate",
+                    "engine": eng_name,
                     "role_name": role,
                     "model_key": mk,
                     "status": st,
@@ -4144,10 +3924,16 @@ class EchoSubagentController:
                     "consecutive_errors": c_err,
                     "checkpoint_reason": c_reason,
                     "queued_count": q_len,
+                    "allowed_tools": meta.get("allowed_tools"),
                 })
+                slice_md = (
+                    "Mode : `Synthèse statique`"
+                    if not has_loop
+                    else f"Tours d'outils : `{s_used}/{s_lim}` (Outils cumulés : `{t_calls}`)"
+                )
                 md += (
                     f"- **`{sid}`** ({role} | `{mk}`) — Statut : **`{st}`** "
-                    f"| Tranche : `{s_used}/{s_lim}` tours (Outils cumulés : `{t_calls}`) "
+                    f"| {slice_md} "
                     f"| File FIFO : `{q_len}`"
                     + (f" | Raison : `{c_reason}`" if c_reason else "")
                     + "\n"
@@ -4245,33 +4031,16 @@ class EchoSubagentController:
                     )
                 state.save_session_setting(count_key, str(cur_cnt + 1))
 
-            from_label = caller_sid or "orchestrateur"
+            from_label = caller_sid or "orchestrator"
             res_lines = "\n".join(f"- {r}" for r in (spec.ressources or [])) or "- (aucune)"
-            relay_xml = (
-                f'<CONTRAT_RELAIS de="{from_label}" vers="{target_sid}">\n'
+            relay_body = (
                 f"**Acquis :** {spec.acquis}\n"
                 f"**Ressources :**\n{res_lines}\n"
-                f"**Mission :** {spec.mission}\n"
-                f"{HANDOFF_CLOSE_TAG}"
+                f"**Mission :** {spec.mission}"
             )
-
-            if is_subagent_running(chat_id, target_sid):
-                enqueue_subagent_message(
-                    state,
-                    target_sid,
-                    relay_xml,
-                    user_id=user_id,
-                    origin="handoff",
-                    sender_sid=from_label,
-                )
-                return wrap_tool_output(
-                    text=f"🤝 Relais `handoff` mis en file FIFO pour `{target_sid}` (en cours d'exécution).",
-                    status={
-                        "status": "queued",
-                        "action": "handoff",
-                        "target_sid": target_sid,
-                    },
-                )
+            relay_xml = format_echo_message(
+                relay_body, sender=from_label, kind="handoff"
+            )
 
             target_depth = int(
                 target_meta.get("depth")
@@ -4293,16 +4062,40 @@ class EchoSubagentController:
                 or ("phalanx" if str(eff_group_id).startswith("phx_") else "delegate")
             )
 
-            if isinstance(caller_ctx.get("handoff_box"), list):
-                caller_ctx["handoff_box"].append({
+            h_res = cls.deliver_to_subagent(
+                state=state,
+                user_id=user_id,
+                chat_id=chat_id,
+                target_sid=target_sid,
+                content=relay_xml,
+                origin="handoff",
+                sender_sid=from_label,
+                target_model_key=target_model_key,
+                allowed_tools=allowed_tools,
+                mode="handoff",
+                handoff_box=caller_ctx.get("handoff_box"),
+                handoff_meta={
                     "target_sid": target_sid,
                     "relay_xml": relay_xml,
+                    "sender_sid": from_label,
                     "group_id": eff_group_id or None,
                     "parent_sid": target_parent,
                     "depth": target_depth,
                     "default_worker_model": target_model,
                     "engine": target_engine,
-                })
+                },
+                __metadata__=__metadata__,
+            )
+            if h_res["status"] == "queued":
+                return wrap_tool_output(
+                    text=f"🤝 Relais `handoff` mis en file FIFO pour `{target_sid}` (en cours d'exécution).",
+                    status={
+                        "status": "queued",
+                        "action": "handoff",
+                        "target_sid": target_sid,
+                    },
+                )
+            if h_res["status"] == "handoff_scheduled":
                 return wrap_tool_output(
                     text=f"🤝 Passage en main programmé vers `{target_sid}`.",
                     status={
@@ -4318,12 +4111,21 @@ class EchoSubagentController:
                 sub_sid=target_sid,
                 task=relay_xml,
                 origin="handoff",
+                sender_sid=from_label,
                 group_id=eff_group_id or None,
                 parent_sid=target_parent,
                 depth=target_depth,
                 default_worker_model=target_model,
                 engine=target_engine,
-                target_model_key=target_model_key,
+                target_model_key=h_res.get("model_key") or target_model_key,
+                allowed_tools=(
+                    h_res["allowed_tools"]
+                    if "allowed_tools" in h_res
+                    else None
+                ),
+                can_delegate=None,
+                slice_max_turns=None,
+                slice_timeout_sec=None,
                 key_switch_threshold=key_switch_threshold,
                 max_retries=max_retries,
                 __user__=__user__,
@@ -4396,40 +4198,49 @@ class EchoSubagentController:
 
         # 3. ACTION : STEER
         if action == "steer":
-            if not directive and not target_model_key:
+            if not directive and not target_model_key and allowed_tools is None:
                 return wrap_tool_output(
-                    text="❌ `directive` ou `target_model_key` requis pour `action='steer'`.",
+                    text="❌ `directive`, `target_model_key` ou `allowed_tools` requis pour `action='steer'`.",
                     status={"status": "error", "action": "steer"},
                 )
+            is_peer_steer = bool(
+                caller_ctx.get("is_subagent")
+                and not caller_ctx.get("can_delegate")
+            )
+            steer_origin: Literal["orchestrator", "peer"] = (
+                "peer" if is_peer_steer else "orchestrator"
+            )
+            steer_sender = (
+                str(caller_ctx.get("sub_sid") or "")
+                if is_peer_steer
+                else ""
+            )
+            wake_box = caller_ctx.get("wake_box")
+            wake_sids: list[str] = []
             for sid in resolved_sids:
-                if target_model_key:
-                    clamped = clamp_model(
-                        target_model_key, __metadata__ or {}, user_id
-                    )
-                    update_subagent_meta_fields(state, sid, model_key=clamped)
-                if directive:
-                    is_peer_steer = bool(
-                        caller_ctx.get("is_subagent")
-                        and not caller_ctx.get("can_delegate")
-                    )
-                    enqueue_subagent_message(
-                        state,
-                        sid,
-                        directive,
-                        user_id=user_id,
-                        origin="peer" if is_peer_steer else "orchestrator",
-                        sender_sid=(
-                            str(caller_ctx.get("sub_sid") or "")
-                            if is_peer_steer
-                            else ""
-                        ),
-                    )
+                s_res = cls.deliver_to_subagent(
+                    state=state,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    target_sid=sid,
+                    content=directive,
+                    origin=steer_origin,
+                    sender_sid=steer_sender,
+                    target_model_key=target_model_key,
+                    allowed_tools=allowed_tools,
+                    mode="queue_or_wake",
+                    wake_box=wake_box if isinstance(wake_box, list) else None,
+                    __metadata__=__metadata__,
+                )
+                if s_res.get("wake_scheduled"):
+                    wake_sids.append(sid)
             return wrap_tool_output(
                 text=f"✅ Directive `steer` enregistrée dans la file FIFO pour : `{', '.join(resolved_sids)}`.",
                 status={
                     "status": "success",
                     "action": "steer",
                     "affected_sids": resolved_sids,
+                    **({"wake_scheduled_sids": wake_sids} if wake_sids else {}),
                 },
             )
 
@@ -4614,16 +4425,35 @@ class EchoSubagentController:
 
         # 8. ACTION : RESUME (Relance d'une nouvelle tranche supervisée fraîche, en parallèle si multi-cibles)
         if action == "resume":
+            avail_tool_names = (
+                list(get_chat_tools(chat_id, __metadata__).keys()) or None
+                if allowed_tools is not None
+                else None
+            )
+            per_sid_allowed: dict[str, Optional[List[str]]] = {}
+            if allowed_tools is not None:
+                for sid in resolved_sids:
+                    cur_meta = get_subagent_meta(state, sid) or {}
+                    new_al = resolve_updated_allowed_tools(
+                        cur_meta.get("allowed_tools"),
+                        allowed_tools,
+                        available_names=avail_tool_names,
+                    )
+                    per_sid_allowed[sid] = new_al
+                    update_subagent_meta_fields(state, sid, allowed_tools=new_al)
+
             if len(resolved_sids) == 1:
+                sid0 = resolved_sids[0]
                 return await cls.run_or_resume(
                     user_id=user_id,
                     chat_id=chat_id,
-                    sub_sid=resolved_sids[0],
+                    sub_sid=sid0,
                     directive=directive,
                     origin="orchestrator",
                     target_model_key=target_model_key,
-                    slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
-                    slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+                    allowed_tools=per_sid_allowed.get(sid0),
+                    slice_max_turns=None,
+                    slice_timeout_sec=None,
                     autonomous_slice=False,
                     key_switch_threshold=key_switch_threshold,
                     max_retries=max_retries,
@@ -4642,8 +4472,9 @@ class EchoSubagentController:
                         directive=directive,
                         origin="orchestrator",
                         target_model_key=target_model_key,
-                        slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
-                        slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+                        allowed_tools=per_sid_allowed.get(sid),
+                        slice_max_turns=None,
+                        slice_timeout_sec=None,
                         autonomous_slice=False,
                         key_switch_threshold=key_switch_threshold,
                         max_retries=max_retries,
@@ -4701,6 +4532,7 @@ class EchoSubagentController:
         group_id: Optional[str] = None,
         role_order: Optional[int] = None,
         step_index: int = 0,
+        append_history: bool = False,
         override_thinking: str = "high",
         max_output_tokens: int = 16000,
         response_schema: Any = None,
@@ -4710,7 +4542,7 @@ class EchoSubagentController:
         fallback_error: str = "❌ Cascade épuisée.",
     ) -> Tuple[str, str, Any]:
         """Exécute un appel cognitif unitaire avec persistance meta + thread_step et isolation des pensées."""
-        from echo_gemini_client import EchoGeminiClient
+        from echo_gemini_client import EchoGeminiClient, PromptBlockedError
         from echo_state_manager import EchoStateManager
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
@@ -4725,16 +4557,34 @@ class EchoSubagentController:
         }
         if role_order is not None:
             base_meta["role_order"] = role_order
+        if not ECHO_SUBAGENT_ENGINES_REGISTRY.get(engine, {}).get("has_tool_loop", True):
+            base_meta.update({
+                "slice_turns_limit": 0,
+                "slice_calls_limit": 0,
+                "slice_timeout_sec": 0,
+            })
         save_subagent_meta(state, sub_sid, base_meta)
         mark_subagent_running(chat_id, sub_sid, True)
+
+        prev_history: List[dict] = []
+        eff_step = step_index
+        if append_history:
+            prev_history = state.get_thread_history(sub_sid) or []
+            eff_step = len(prev_history)
 
         state.save_thread_step(
             sub_sid,
             chat_id,
             engine,
-            step_index,
+            eff_step,
             "user",
             [{"text": display_user_prompt or user_prompt}],
+        )
+
+        contents_payload = (
+            prev_history + [{"role": "user", "parts": [{"text": user_prompt}]}]
+            if append_history
+            else [{"role": "user", "parts": [{"text": user_prompt}]}]
         )
 
         gen_cfg = {
@@ -4742,7 +4592,7 @@ class EchoSubagentController:
             "maxOutputTokens": max_output_tokens,
         }
         payload: Dict[str, Any] = {
-            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "contents": contents_payload,
             "generationConfig": gen_cfg,
         }
         if system_prompt:
@@ -4761,6 +4611,12 @@ class EchoSubagentController:
                 include_thoughts=False,
                 response_schema=response_schema,
             )
+        except PromptBlockedError as pbe:
+            state.delete_thread_step(sub_sid, eff_step)
+            base_meta["model_key"] = target_model_key
+            base_meta["status"] = "error"
+            save_subagent_meta(state, sub_sid, base_meta)
+            return f"❌ {pbe.summary}", target_model_key, None
         finally:
             mark_subagent_running(chat_id, sub_sid, False)
 
@@ -4774,7 +4630,7 @@ class EchoSubagentController:
             sub_sid,
             chat_id,
             engine,
-            step_index + 1,
+            eff_step + 1,
             "model",
             normalized_parts,
             EchoAgentRunner._extract_thought_sig(normalized_parts),
@@ -4856,14 +4712,19 @@ class EchoSubagentController:
         started_sids: List[str] = []
         total_queued = 0
         for sid in addressable_sids:
-            if is_subagent_running(chat_id, sid):
-                q_res = enqueue_subagent_message(
-                    state, sid, directive, user_id=user_id, origin=origin
-                )
-                q_len = len(q_res) if isinstance(q_res, (list, tuple)) else int(q_res or 0)
+            d_res = cls.deliver_to_subagent(
+                state=state,
+                user_id=user_id,
+                chat_id=chat_id,
+                target_sid=sid,
+                content=directive,
+                origin=origin,
+                mode="queue_or_run",
+            )
+            if d_res["status"] == "queued":
                 queued_sids.append(sid)
-                total_queued = max(total_queued, q_len)
-            else:
+                total_queued = max(total_queued, int(d_res.get("queue_length") or 0))
+            elif d_res["status"] == "start":
                 started_sids.append(sid)
 
         run_coro = (

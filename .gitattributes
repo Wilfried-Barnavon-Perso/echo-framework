@@ -20,11 +20,16 @@ requirements.txt text eol=lf
 
 # Le fichier VERSION doit être strict
 VERSION text eol=lf
+16-docker-echo-webui/UI_VERSION text eol=lf
+
+# Artefacts d'encryption (checksums SHA-256 stricts sur LF hors binaire WASM)
+16-docker-echo-webui/src/lib/encryption/** text eol=lf
 
 # PowerShell force CRLF (Windows Native)
 *.ps1 text eol=crlf
 
-# Images (Binaires)
+# Images & Binaires
 *.png binary
 *.jpg binary
 *.ico binary
+*.wasm binary

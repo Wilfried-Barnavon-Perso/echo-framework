@@ -3,20 +3,21 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.19.0.1
+version: 6.24.0.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.19.0.1: Remplacement des moteurs supervisor* par phalanx dans ECHO_SUBAGENT_ENGINES_REGISTRY, ajout de ECHO_MAX_PHALANX_DEPTH = 3 et phalanx_context dans format_subagent_foundation_kernel.
-# 6.18.23.1: Ajout de ECHO_SUBAGENT_PURGED_RETENTION_MINUTES = 1440 pour la rétention en lecture seule des sous-agents clos.
-# 6.18.1.1: Enrichissement SSOT CODEX_LANG_MAP (.txt canonique, csv/tsv, svelte/vue/scss/less, audio/vidéo, diff/latex/hcl/elixir) et exclusion audio/video dans CODEX_LANG_TO_EXT.
-# 6.16.0.2: Ajout ECHO_CODING_WORKER_BASE_URL/WS_BASE_URL, vidage CODEX_SANDBOX_INTERNAL_PREFIXES et purge constantes polling/heartbeat Canvas.
-# 6.15.2.1: Ajout des constantes SSOT Option A Canvas (ECHO_CANVAS_READY_TIMEOUT_SEC, ECHO_CANVAS_IDLE_TTL_SEC, ECHO_CANVAS_MAX_LIFETIME_SEC, ECHO_CANVAS_POLL_WAIT_SEC, ECHO_CANVAS_UNKNOWN_GRACE_POLLS, ECHO_CANVAS_ROUTER_WORKERS).
+# 6.24.0.1: Ajout de RESOURCE_TYPES/RESOURCE_STATUS_MAP['generated'], mise à jour n8n_grapher (manage_n8n_workflow/template, n8n_hub) et DELEGATE_AGENT_BLACKLIST (manage_ui_tasks).
+# 6.23.10.1: Ajout de ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS (131072) et ECHO_CODEX_INLINE_BLOB_MIN_CHARS (1024).
+# 6.23.1.1: Ajout des plafonds SSOT d'identifiants sous-agents (ECHO_MAX_SUBAGENT_SID_LEN = 96, ECHO_COUNCIL_ID_MAX_LEN = 36, ECHO_COUNCIL_INSTANCE_ID_MAX_LEN = 42, ECHO_PHALANX_ID_MAX_LEN = 48).
+# 6.23.0.1: Ajout de ECHO_COUNCIL_STABILIZED_MARKER, DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS, préfixes SQLite/XML sous-agents V2 (SUBAGENT_SYS_PREFIX, COUNCIL_STATE_PREFIX, ECHO_MSG_*) et normalisation du registre.
+# 6.22.0.1: Alignement ECHO_CHAT_EAGER_DETAILS_TAIL=8 et purge racine dans prune_checkpoint_payload.
 
 import os
+import json
 import contextvars
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 # Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
 # à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
@@ -105,19 +106,21 @@ BROWSER_VIEWS_DIR_NAME = "browserviews"
 ECHO_SESSION_DOMAINS = ["codex", "files", BROWSER_VIEWS_DIR_NAME, "db", "n8n_workflows", "dependencies", "tools_output"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
+# Identité Réseau (Antigravity 2.35.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
 # Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-#_AGY_IDE_VERSION = "2.32.0"
-_AGY_IDE_VERSION = "2.33.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour (trouvé dans agy.exe à 0xbd24556)
-# _AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
-_AGY_LS_CL       = "1024904911" # (agy.exe à 0xbc635b0)
+# Méthode de repérage dans agy.exe :
+#   - _AGY_LS_CL : motif ASCII 'changelist <CL> with baseline' (ex: changelist 1028571191)
+#   - _AGY_IDE_VERSION : table JSON contenant '"execution_id"' (champ "version" / package.json embarqué)
+_AGY_IDE_VERSION = "2.35.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1028571191"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = (
     f"antigravity/hub/{_AGY_IDE_VERSION} "
     f"(os_type=linux; arch=amd64; cl={_AGY_LS_CL}; auth_method=personal_consumer; proxy_client=antigravity/{_AGY_IDE_VERSION})"
 )
-ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+ECHO_AISTUDIO_API_CLIENT    = "google-genai-sdk/1.0.0 gl-go/1.28.0"
+ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_BASE_URL = "http://echo-embedding:7997"
@@ -637,6 +640,7 @@ PLAN_TASK_STATUS = {
 RESOURCE_TYPES = {
     "codex":  "codex",   # Fichiers texte/code (Git)
     "plan":   "plan",    # Plans stratégiques
+    "generated": "generated", # Fichiers/images générés
     "media":  "media",   # Images, vidéos, PDF
     "binary": "binary",  # Fichiers non assimilables
     "weburl": "weburl",  # Pages web distillées
@@ -680,6 +684,7 @@ RESOURCE_STATUS_MAP = {
     "binary":       list(FILE_INGESTION_STATUS.values()),
     "weburl":       list(FILE_INGESTION_STATUS.values()), # Flux d'ingestion textuelle
     "codex":        list(FILE_INGESTION_STATUS.values()), # Utilisé par echo_codex_tool (PUT_IN_CONTEXT)
+    "generated":    list(FILE_INGESTION_STATUS.values()),
     "plan":         list(PLAN_STATUS.values()),
     "n8n_workflow": list(N8N_WORKFLOW_STATUS.values()),
     "n8n_template": [], # Hub global statique, pas de statut
@@ -693,6 +698,8 @@ RESOURCE_STATUS_MAP = {
 # --- CONSTANTES DE L'ÉDITEUR CODEX ---
 ECHO_CODEX_EDIT_TIMEOUT = 300       # Timeout sub-chat édition (secondes)
 ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 à 5)
+ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS = 131072  # Plafond net (128 Ko, hors Data URIs Base64 masquées) en mode instructions
+ECHO_CODEX_INLINE_BLOB_MIN_CHARS = 1024      # Seuil minimal d'un payload data:...;base64, pour masquage bijectif
 
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
@@ -798,6 +805,25 @@ ECHO_MAX_PHALANX_HANDOFFS = 4             # Nombre max de relais (handoff) laté
 ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND = 3  # Tours d'outils LLM par défaut par round de participant dans consult_council
 ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120      # Garde-fou temporel anti-straggler (secondes) par round Delphi dans consult_council
 ECHO_SUBAGENT_PURGED_RETENTION_MINUTES = 1440  # Durée de rétention en lecture seule (minutes) des sous-agents clos/purgés avant suppression SQLite
+ECHO_MAX_SUBAGENT_SID_LEN = 96            # Plafond SSOT de longueur d'un sub_sid (^[a-zA-Z0-9_-]{3,96}$)
+ECHO_COUNCIL_ID_MAX_LEN = 36              # Plafond SSOT d'un council_id normalisé (thread_council_<36>_ = 52 car.)
+ECHO_COUNCIL_INSTANCE_ID_MAX_LEN = 42     # Plafond SSOT d'un instance_id participant (52 + 42 = 94 <= 96 car.)
+ECHO_PHALANX_ID_MAX_LEN = 48              # Plafond SSOT d'un phalanx_id normalisé (thread_phalanx_<48>_strategist = 74 <= 96 car.)
+ECHO_COUNCIL_STABILIZED_MARKER = "[POSITION_STABILISEE]"
+SUBAGENT_META_PREFIX = "subagent_meta:"
+SUBAGENT_SYS_PREFIX = "subagent_sys:"
+SUBAGENT_QUEUE_PREFIX = "subagent_queue:"
+COUNCIL_STATE_PREFIX = "council_state:"
+ECHO_MSG_OPEN_PREFIX = "<ECHO_MESSAGE"
+ECHO_MSG_CLOSE_TAG = "</ECHO_MESSAGE>"
+DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS: frozenset = frozenset({
+    "delegate_to_agent",
+    "control_subagents",
+    "ask_data_broker",
+    "delegate_to_n8n_grapher",
+    "delegate_deep_research",
+    "delegate_web_browsing",
+})
 
 # Alias de rétrocompatibilité
 ECHO_SUBAGENT_CHECKPOINT_CALLS = ECHO_SUBAGENT_CHECKPOINT_TURNS
@@ -817,6 +843,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
         "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Sous-agent Expert",
+        "default_model": "MODEL_APOLLO",
+        "autonomous_slice": False,
+        "sid_prefix": "dlg",
+        "default_allowed_tools": None,
     },
     "council": {
         "thread_type": "council",
@@ -829,6 +859,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
         "default_slice_timeout_sec": ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
         "default_label": "Participant Conseil",
+        "default_model": "MODEL_PROMETHEUS",
+        "autonomous_slice": True,
+        "sid_prefix": "thread_council",
+        "default_allowed_tools": None,
     },
     "council_synthesis": {
         "thread_type": "council",
@@ -841,6 +875,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": 0,
         "default_slice_timeout_sec": 0,
         "default_label": "Synthèse du Conseil",
+        "default_model": "MODEL_PROMETHEUS",
+        "autonomous_slice": True,
+        "sid_prefix": "thread_council",
+        "default_allowed_tools": [],
     },
     "phalanx": {
         "thread_type": "phalanx",
@@ -853,6 +891,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
         "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Hoplite",
+        "default_model": "MODEL_APOLLO",
+        "autonomous_slice": False,
+        "sid_prefix": "thread_phalanx",
+        "default_allowed_tools": None,
     },
     "navigator": {
         "thread_type": "web",
@@ -865,6 +907,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
         "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Navigateur Web",
+        "default_model": "MODEL_APOLLO",
+        "autonomous_slice": False,
+        "sid_prefix": "thread_web",
+        "default_allowed_tools": None,
     },
     "deep_research": {
         "thread_type": "deep_research",
@@ -877,6 +923,16 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_AUTONOMOUS_MAX_TURNS,
         "default_slice_timeout_sec": ECHO_AUTONOMOUS_TIMEOUT_SEC,
         "default_label": "Recherche Profonde",
+        "default_model": "MODEL_PROMETHEUS",
+        "autonomous_slice": True,
+        "sid_prefix": "thread_deepresearch",
+        "default_allowed_tools": [
+            "search_web",
+            "search_instant_answer",
+            "search_maps",
+            "wait_timer",
+            "delegate_web_browsing",
+        ],
     },
     "n8n_grapher": {
         "thread_type": "n8n_grapher",
@@ -889,6 +945,25 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
         "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Architecte N8N",
+        "default_model": "MODEL_PROMETHEUS",
+        "autonomous_slice": False,
+        "sid_prefix": "thread_n8n",
+        "default_allowed_tools": [
+            "manage_n8n_workflow",
+            "query_n8n_documentation",
+            "manage_n8n_template",
+            "n8n_hub",
+            "list_identities",
+            "list_identities_services",
+            "wait_timer",
+            "query_registry",
+            "code_executor",
+            "create_codex",
+            "read_codex",
+            "edit_codex",
+            "list_codex",
+            "search_codex",
+        ],
     },
     "data_broker": {
         "thread_type": "data_broker",
@@ -901,6 +976,18 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
         "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Data Broker",
+        "default_model": "MODEL_APOLLO",
+        "autonomous_slice": False,
+        "sid_prefix": "thread_databroker",
+        "default_allowed_tools": [
+            "list_identities_services",
+            "list_identities",
+            "list_mcp_functions",
+            "call_mcp_function",
+            "upload_file_to_drive",
+            "search_web",
+            "search_instant_answer",
+        ],
     },
     "image_gen": {
         "thread_type": "image_gen",
@@ -913,6 +1000,10 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "default_slice_limit": 0,
         "default_slice_timeout_sec": 0,
         "default_label": "Studio Visuel IA",
+        "default_model": "MODEL_IMAGE_GEN",
+        "autonomous_slice": False,
+        "sid_prefix": "dlg_img",
+        "default_allowed_tools": [],
     },
 }
 
@@ -961,8 +1052,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "generate_image",               # Sous-agent d'imagerie avec Iframe HTMLResponse réservé au flux principal
     "close_image_session",          # Fermeture de session d'imagerie réservée au flux principal
     "ask_user_input",               # Modale interactive bloquée en mode Headless
-    "create_ui_tasks",              # Checklist UI du chat principal réservée à l'Orchestrateur
-    "update_ui_task",               # Mise à jour checklist UI réservée à l'Orchestrateur
+    "manage_ui_tasks",              # Checklist UI du chat principal réservée à l'Orchestrateur
     "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
     "manage_identity",              # Gestion d'identités bloquée en mode Headless
     "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
@@ -985,10 +1075,8 @@ OPTIMISATION ET VÉRIFICATION :
              - Le Modèle DOIT impérativement utiliser les outils de recherche web disponibles pour mettre à jour ses connaissances en cas de manque d'informations factuelles ou techniques récentes dans son domaine d'expertise.
 
 PROVENANCE DES REQUÊTES :
-             - `<REQUETE_ORCHESTRATEUR>` : directive ou réponse issue de l'Orchestrateur parent.
-             - `<REQUETE_UTILISATEUR>` : question ou instruction directe envoyée par l'Utilisateur depuis le panneau latéral.
-             - `<MESSAGE_PAIR de="...">` : message latéral d'un coéquipier de la Phalange.
-             - `<CONTRAT_RELAIS de="..." vers="...">` : passage en main contractualisé transmis par un pair ou supérieur.
+             - `<ECHO_MESSAGE from="orchestrator|user|<sub_sid>" kind="task|steer|handoff|human">` : enveloppe unifiée des messages adressés au Sous-Agent (`from` désigne l'émetteur — Orchestrateur parent, Utilisateur ou coéquipier `<sub_sid>` — et `kind` la nature du message : tâche initiale, réorientation, passage de relais contractualisé ou intervention humaine directe).
+             - Les balises historiques `<REQUETE_ORCHESTRATEUR>`, `<REQUETE_UTILISATEUR>`, `<MESSAGE_PAIR de="...">` et `<CONTRAT_RELAIS de="..." vers="...">` éventuellement présentes dans des tours antérieurs ont strictement la même valeur normative.
              - Le Modèle DOIT traiter ces provenances avec une rigueur identique et répondre directement à l'émetteur du tour actif.
 
 ESPACE BROUILLON ISOLÉ : Si la mission requiert des fichiers temporaires ou scripts dans 'sandbox', ils sont isolés sous 'sandbox/{sub_sid}/'.
@@ -1504,6 +1592,201 @@ ECHO_AUDIO_DEFAULT_TTS_VOICE: str = "fr-FR-VivienneMultilingualNeural"
 ECHO_AUDIO_DEFAULT_TTS_SPEED: float = 1.0
 ECHO_AUDIO_DEFAULT_TTS_PITCH: str = "-2Hz"
 ECHO_AUDIO_DEFAULT_STT_MODEL: str = "MODEL_ZEPHYR"
+ECHO_AUDIO_STT_THINKING_LEVEL: str = "minimal"
 ECHO_AUDIO_MAX_UPLOAD_SIZE: int = 14 * 1024 * 1024  # 14 Mo max pour transcriptions
+
+
+def detect_audio_mime_type(data: bytes) -> Optional[str]:
+    """Identifie par magic bytes un conteneur audio nativement supporté par Gemini (None si inconnu)."""
+    if not data or len(data) < 4:
+        return None
+
+    # 1. WebM / Matroska (EBML ID: 1A 45 DF A3)
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "audio/webm"
+
+    # 2. WAV / RIFF (RIFF .... WAVE)
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WAVE":
+        return "audio/wav"
+
+    # 3. OGG (OggS)
+    if data.startswith(b"OggS"):
+        return "audio/ogg"
+
+    # 4. FLAC (fLaC)
+    if data.startswith(b"fLaC"):
+        return "audio/flac"
+
+    # 5. MP3 (ID3v2) ou trames MPEG Audio / ADTS AAC (sync word FFE0)
+    if data.startswith(b"ID3"):
+        return "audio/mpeg"
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+        # Layer bits == 00 -> ADTS AAC ; sinon MPEG Layer I/II/III
+        return "audio/aac" if (data[1] & 0x06) == 0x00 else "audio/mpeg"
+
+    # 6. MP4 / M4A (ftyp à l'offset 4 — inclut Safari/iOS MediaRecorder)
+    if len(data) >= 8 and data[4:8] == b"ftyp":
+        return "audio/mp4"
+
+    return None
+
+
+def sniff_audio_mime_type(data: bytes) -> str:
+    """Détecte le conteneur audio via ses magic bytes avec repli WebM pour les flux WebRTC."""
+    return detect_audio_mime_type(data) or "audio/webm"
+
+
 # Plafond strict 4 Go aligné BunkerWeb
 ECHO_MAX_FILE_UPLOAD_SIZE_MB: int = 4096
+
+# Compaction contextuelle v2 & Fenêtrage UI
+ECHO_COMPACTION_CHECKPOINT_VERSION: int = 2
+ECHO_COMPACTION_MAX_CHECKPOINTS: int = 64
+ECHO_CHAT_WINDOW_MAX_MESSAGES: int = 80
+ECHO_CHAT_EAGER_DETAILS_TAIL: int = 8
+
+
+def _extract_checkpoint_summary_entry(ckpt_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Extrait une entrée normalisée de point de contrôle à partir d'un dict v1 ou v2."""
+    compaction_count = int(ckpt_dict.get("compaction_count") or 0)
+    created_at = int(ckpt_dict.get("created_at") or 0)
+    pivot_msg_id = ckpt_dict.get("pivot_msg_id")
+    head_last_msg_id = ckpt_dict.get("head_last_msg_id")
+    raw_tails = ckpt_dict.get("tail_anchor_ids") or []
+    checkpoint_id = ckpt_dict.get("checkpoint_id") or f"ckpt_{compaction_count}_{created_at}"
+    return {
+        "checkpoint_id": str(checkpoint_id),
+        "compaction_count": compaction_count,
+        "pivot_turn_idx": int(ckpt_dict.get("pivot_turn_idx") or 0),
+        "pivot_msg_id": str(pivot_msg_id) if pivot_msg_id else None,
+        "head_last_msg_id": str(head_last_msg_id) if head_last_msg_id else None,
+        "tail_anchor_ids": [str(tid) for tid in raw_tails if tid],
+        "keep_recent_turns": int(ckpt_dict.get("keep_recent_turns") or 0),
+        "checkpoint_tokens": int(ckpt_dict.get("checkpoint_tokens") or 0),
+        "created_at": created_at,
+    }
+
+
+def normalize_checkpoint_payload(raw_or_dict: Any) -> Optional[Dict[str, Any]]:
+    """Normalise un payload context_checkpoint v1/v2 en schéma v2 (stdlib-only)."""
+    if raw_or_dict is None:
+        return None
+    data: Any = raw_or_dict
+    if isinstance(raw_or_dict, (str, bytes)):
+        if not raw_or_dict:
+            return None
+        try:
+            data = json.loads(raw_or_dict)
+        except Exception:
+            return None
+    if not isinstance(data, dict):
+        return None
+
+    normalized = dict(data)
+    raw_checkpoints = data.get("checkpoints")
+    if isinstance(raw_checkpoints, list) and any(isinstance(c, dict) for c in raw_checkpoints):
+        checkpoints = [
+            _extract_checkpoint_summary_entry(c)
+            for c in raw_checkpoints
+            if isinstance(c, dict)
+        ]
+        checkpoints.sort(
+            key=lambda c: (int(c.get("created_at") or 0), int(c.get("compaction_count") or 0))
+        )
+    elif isinstance(raw_checkpoints, list) and len(raw_checkpoints) == 0 and int(data.get("version") or 1) >= 2:
+        checkpoints = []
+    else:
+        checkpoints = [_extract_checkpoint_summary_entry(data)]
+
+    normalized["version"] = ECHO_COMPACTION_CHECKPOINT_VERSION
+    normalized["checkpoints"] = checkpoints[-ECHO_COMPACTION_MAX_CHECKPOINTS:]
+    return normalized
+
+
+def prune_checkpoint_payload(
+    raw_or_dict: Any,
+    *,
+    cutoff_ts: Optional[int] = None,
+    dead_msg_ids: Optional[Set[str]] = None,
+    live_msg_ids: Optional[Set[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Élague les entrées de checkpoints selon cutoff_ts, dead_msg_ids et live_msg_ids (stdlib-only)."""
+    ckpt = normalize_checkpoint_payload(raw_or_dict)
+    if ckpt is None:
+        return None
+
+    orig_pivot = ckpt.get("pivot_msg_id")
+    orig_head = ckpt.get("head_last_msg_id")
+    orig_count = ckpt.get("compaction_count")
+    checkpoints: List[Dict[str, Any]] = list(ckpt.get("checkpoints") or [])
+    orig_last_entry = checkpoints[-1] if checkpoints else None
+
+    if cutoff_ts is not None:
+        if int(ckpt.get("created_at") or 0) > cutoff_ts:
+            return None
+        checkpoints = [c for c in checkpoints if int(c.get("created_at") or 0) <= cutoff_ts]
+
+    if dead_msg_ids:
+        dead_set = {str(mid) for mid in dead_msg_ids if mid}
+        checkpoints = [
+            c
+            for c in checkpoints
+            if not (
+                (c.get("pivot_msg_id") and str(c["pivot_msg_id"]) in dead_set)
+                or (c.get("head_last_msg_id") and str(c["head_last_msg_id"]) in dead_set)
+            )
+        ]
+
+    if live_msg_ids is not None:
+        live_set = {str(mid) for mid in live_msg_ids if mid}
+        checkpoints = [
+            c
+            for c in checkpoints
+            if (c.get("pivot_msg_id") and str(c["pivot_msg_id"]) in live_set)
+            or (c.get("head_last_msg_id") and str(c["head_last_msg_id"]) in live_set)
+        ]
+
+    checkpoints = checkpoints[-ECHO_COMPACTION_MAX_CHECKPOINTS:]
+    if not checkpoints and (dead_msg_ids or cutoff_ts is not None or live_msg_ids is not None):
+        return None
+
+    if checkpoints:
+        if orig_pivot or orig_head:
+            norm_pivot = str(orig_pivot) if orig_pivot else None
+            norm_head = str(orig_head) if orig_head else None
+            if orig_count is not None:
+                orig_key = (int(orig_count or 0), norm_pivot, norm_head)
+                root_survived = any(
+                    (c.get("compaction_count"), c.get("pivot_msg_id"), c.get("head_last_msg_id"))
+                    == orig_key
+                    for c in checkpoints
+                )
+            else:
+                root_survived = any(
+                    (c.get("pivot_msg_id"), c.get("head_last_msg_id")) == (norm_pivot, norm_head)
+                    for c in checkpoints
+                )
+        elif orig_last_entry is not None:
+            root_survived = any(
+                c.get("checkpoint_id") == orig_last_entry.get("checkpoint_id")
+                for c in checkpoints
+            )
+        else:
+            root_survived = True
+
+        if not root_survived:
+            last_surviving = checkpoints[-1]
+            ckpt["summary_md"] = ""
+            ckpt["summary_xml"] = ""
+            ckpt["checkpoint_tokens"] = 0
+            ckpt["tail_tokens_est"] = 0
+            ckpt["tail_anchor_ids"] = []
+            ckpt["compaction_count"] = int(last_surviving.get("compaction_count") or 0)
+            ckpt["pivot_turn_idx"] = int(last_surviving.get("pivot_turn_idx") or 0)
+            ckpt["pivot_msg_id"] = last_surviving.get("pivot_msg_id")
+            ckpt["head_last_msg_id"] = last_surviving.get("head_last_msg_id")
+            ckpt["created_at"] = int(last_surviving.get("created_at") or 0)
+
+    ckpt["version"] = ECHO_COMPACTION_CHECKPOINT_VERSION
+    ckpt["checkpoints"] = checkpoints
+    return ckpt

@@ -4,11 +4,12 @@
 """
 title: ECHO Echo Http
 author: Wilfried BARNAVON
-version: 5.239.16.1
+version: 6.21.8.1
 description: Client HTTP bas niveau (H2). Utilisation de l'UA furtif global.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.8.1: Alignement de l'en-tête sec-ch-ua sur Chromium/Google Chrome 142 dans get_stealth_headers.
 # 5.239.16.1: Suppression de la fermeture destructive old_client.aclose() sur inactivité dans _get_global_client pour prévenir la clôture de requêtes longues en vol.
 # 5.231.59.1: Factorisation de load_image_as_base64 (encapsulation pybase64 locale/distante avec garde SSRF, sniff_image_mime et option disallow_svg).
 # 5.231.49.1: Factorisation de is_safe_public_url (garde SSRF IPv4/IPv6), sniff_image_mime (magic bytes) et extract_url_filename.
@@ -77,7 +78,7 @@ def get_stealth_headers(url: Optional[str] = None) -> Dict[str, str]:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cache-Control": "max-age=0",
-        "sec-ch-ua": '"Chromium";v="123", "Not:A-Brand";v="8", "Google Chrome";v="123"',
+        "sec-ch-ua": '"Chromium";v="142", "Not_A Brand";v="24", "Google Chrome";v="142"',
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
         "sec-fetch-dest": "image",

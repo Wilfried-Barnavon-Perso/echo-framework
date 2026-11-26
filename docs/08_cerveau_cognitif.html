@@ -136,10 +136,12 @@ flowchart TD
         les règles du noyau (20&nbsp;%) et l'hygiène du résumé (30&nbsp;%).
       </li>
       <li>
-        <strong>Compaction automatique à 60&nbsp;% :</strong> dès que la charge atteint 60&nbsp;% (~629&nbsp;145 tokens),
+        <strong>Compaction automatique à 60&nbsp;% et repères visuels :</strong> dès que la charge atteint 60&nbsp;% (~629&nbsp;145 tokens),
         ECHO synthétise les tours anciens en un point de reprise structuré tout en conservant intacts les tours les plus
-        récents (environ deux tiers de la nouvelle enveloppe, ramenée sous 20&nbsp;% soit ~209&nbsp;715 tokens). Tous vos
-        anciens messages restent néanmoins interrogeables à la demande via la mémoire de session.
+        récents (environ deux tiers de la nouvelle enveloppe, ramenée sous 20&nbsp;% soit ~209&nbsp;715 tokens). Chaque
+        compaction matérialise un repère visuel horodaté directement dans le fil de discussion, permettant de distinguer
+        les segments consolidés et de charger progressivement l'historique antérieur à la demande. Tous vos anciens
+        messages restent également interrogeables via la mémoire de session.
       </li>
       <li>
         <strong>Alerte de migration à 80&nbsp;% :</strong> si une session reste très dense au-delà de 80&nbsp;%, une
@@ -161,7 +163,7 @@ flowchart TD
       <summary>Dossier d'Ingénierie : Registre des Modèles, Suture Bit-Perfect, AEC &amp; Compaction</summary>
       <h4>1. Registre Cognitif &amp; Verrou de Tour (<code>echo_constants.py</code> &amp; <code>echo_orchestrator.py</code>)</h4>
       <ul>
-        <li><strong>Mapping Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>, <code>echo_constants.py</code> v6.19.0.1) :</strong>
+        <li><strong>Mapping Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>, <code>echo_constants.py</code> v6.24.0.1) :</strong>
           <code>MODEL_ATHENA</code> (<code>gemini-4-carbon</code> / <code>gemini-4-carbon-high</code>, <code>hierarchy: 3</code>, <code>thinkingLevel: "high"</code>) ;
           <code>MODEL_PROMETHEUS</code> (<code>gemini-4-neon</code> / <code>gemini-4-neon-medium</code>, <code>hierarchy: 2</code>, <code>thinkingLevel: "medium"</code>) ;
           <code>MODEL_APOLLO</code> (<code>gemini-4-hydrogen</code> / <code>gemini-4-hydrogen-high</code>, <code>hierarchy: 1</code>, <code>thinkingLevel: "high"</code>) ;
@@ -176,15 +178,15 @@ flowchart TD
       <h4>2. Suture Bit-Perfect, Signatures &amp; Les 9 Balises AEC</h4>
       <ul>
         <li><strong>Shadow Suture (<code>session.db</code>) :</strong> <code>UserDataManager</code> persiste et restaure les messages multi-parts (incluant appels d'outils, images et sorties multimodales) dans <code>message_shadows</code> et <code>call_bridge</code>, avec auto-guérison <code>_sanitize_shadow_none_parts</code> et fusion déterministe <code>merge_consecutive_user_parts</code>.</li>
-        <li><strong><code>thoughtSignature</code> :</strong> Centralisée par <code>attach_thought_signature()</code> (<code>echo_core.py</code> v6.10.0.1) sur le seul premier <code>functionCall</code> du tour (ou sur la première part texte en l'absence d'outil), conformément à la norme Gemini 3/4.</li>
-        <li><strong>Les 9 Artéfacts Environnementaux Contextuels (<code>echo_aec.py</code> v6.7.20.1) :</strong> <code>AEC_directive</code>, <code>AEC_commande</code> (Priorité 4), <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_context_checkpoint</code> et <code>AEC_evenement_systeme</code> (Priorité 5). Les directives/événements en attente sont consommés et purgés atomiquement par <code>drain_pending_directives()</code>.</li>
+        <li><strong><code>thoughtSignature</code> :</strong> Centralisée par <code>attach_thought_signature()</code> (<code>echo_core.py</code> v6.23.10.1) sur le seul premier <code>functionCall</code> du tour (ou sur la première part texte en l'absence d'outil), conformément à la norme Gemini 3/4.</li>
+        <li><strong>Les 9 Artéfacts Environnementaux Contextuels (<code>echo_aec.py</code> v6.21.7.1) :</strong> <code>AEC_directive</code>, <code>AEC_commande</code> (Priorité 4), <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_context_checkpoint</code> et <code>AEC_evenement_systeme</code> (Priorité 5). Les directives/événements en attente sont consommés et purgés atomiquement par <code>drain_pending_directives()</code>.</li>
       </ul>
 
       <h4>3. Compaction Contextuelle &amp; Rappels (<code>context_compaction_filter.py</code>)</h4>
       <ul>
-        <li><strong>Seuils SSOT :</strong> <code>ECHO_MAX_CONTEXT_SIZE = 1 048 576</code> ; déclenchement à <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60</code> (~629 145 tokens) ; cible <code>COMPACTION_TARGET_CONTEXT_PCT = 0.20</code> (~209 715 tokens) répartie via <code>get_compaction_shares()</code> en <code>31.25 %</code> compressé <code>HEAD</code> (budget <code>65 535</code> tokens) et <code>68.75 %</code> de tours récents bruts <code>TAIL</code> (~144 179 tokens), avec isolement de branche <code>head_last_msg_id</code>. Seuil d'alerte UI <code>CONTEXT_WARNING_THRESHOLD</code> à <code>80 %</code>.</li>
+        <li><strong>Seuils SSOT &amp; Checkpoints v2 :</strong> <code>ECHO_MAX_CONTEXT_SIZE = 1 048 576</code> ; déclenchement à <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60</code> (~629 145 tokens) ; cible <code>COMPACTION_TARGET_CONTEXT_PCT = 0.20</code> (~209 715 tokens) répartie via <code>get_compaction_shares()</code> en <code>31.25 %</code> compressé <code>HEAD</code> (budget <code>65 535</code> tokens) et <code>68.75 %</code> de tours récents bruts <code>TAIL</code> (~144 179 tokens), avec isolement de branche <code>head_last_msg_id</code>. Les bornes multi-checkpoints suivent <code>ECHO_COMPACTION_CHECKPOINT_VERSION = 2</code> (plafond <code>64</code>), le fenêtrage <code>ECHO_CHAT_WINDOW_MAX_MESSAGES = 80</code> / <code>ECHO_CHAT_EAGER_DETAILS_TAIL = 8</code> et la diffusion WebSocket <code>echo_context_checkpoint</code>. Seuil d'alerte UI <code>CONTEXT_WARNING_THRESHOLD</code> à <code>80 %</code>.</li>
         <li><strong><code>AEC_REMINDERS</code> :</strong> Paliers indexés sur <code>ECHO_MAX_CONTEXT_SIZE</code> et nombre d'appels d'outils : <code>efficiency</code> (8 % / 18), <code>alignment</code> (10 % / 28), <code>strategy</code> (12 % / 30), <code>factuality</code> (15 % / 35), <code>kernel</code> (20 % / 50), <code>context_hygiene</code> (30 % / 65).</li>
-        <li><strong>Gestion des branches :</strong> <code>echo_session_gc.py</code> (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et <code>echo_session_clone.py</code> (<code>v6.18.23.1</code>) assurent l'élagage exact des branches mortes et la préservation des productions sous provenance <code>hors_branche</code>.</li>
+        <li><strong>Gestion des branches :</strong> <code>echo_session_gc.py</code> (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et <code>echo_session_clone.py</code> (<code>v6.21.12.1</code>) assurent l'élagage exact des branches mortes et la préservation des productions sous provenance <code>hors_branche</code>.</li>
       </ul>
     </details>
 
@@ -194,7 +196,7 @@ flowchart TD
       <a href="09_arsenal_outils.html">9. L'Arsenal des Outils &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

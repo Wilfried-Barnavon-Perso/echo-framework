@@ -4,17 +4,18 @@
 """
 ================================================================================
 MODULE : ECHO N8N WORKER API
-VERSION : 5.231.42.2
+VERSION : 6.24.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.2.1: Pré-enregistrement active_executions/cancelled_executions dès POST /execute (asyncio.create_task), suivi import_proc et suppression du rapport post-annulation volontaire.
+# 6.24.1.1: Indexation active_executions par execution_id, helper _terminate_n8n_process (killpg POSIX / repli Windows) et route POST /stop non-destructive.
 # 5.231.42.2: Dépublication/suppression N8N v2.x avec retry 409 Outbox, pagination cursor, sentinelle .echo_daemon_keep, création des sous-dossiers WriteBinaryFile et auto-heal des démons au démarrage.
 # 5.231.20.1: Verrou asynchrone _N8N_AUTH_LOCK sur get_or_create_n8n_api_key, isolation de N8N_USER_FOLDER par execution_id avec purge finally, et préfixage propriétaire [ECHO:<user_id>] des démons.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 2.18: Rate-Limit Healthcheck
-# 2.17: Fix : Ajout d'un filtre de logs (RateLimitHealthCheckFilter) limitant l'affichage des requêtes /health à 1/5min.
 import os
+import signal
 import json
 import uuid
 import random
@@ -57,7 +58,8 @@ class RateLimitHealthCheckFilter(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
-active_executions: Dict[str, list[asyncio.subprocess.Process]] = {}
+active_executions: Dict[str, Dict[str, Optional[asyncio.subprocess.Process]]] = {}
+cancelled_executions: set[str] = set()
 N8N_MASTER_API_KEY: str | None = None
 _N8N_AUTH_LOCK = asyncio.Lock()
 N8N_URL = os.environ.get("N8N_URL", "http://127.0.0.1:5678")
@@ -192,6 +194,13 @@ class ExecuteRequest(BaseModel):
 
 class PruneRequest(BaseModel):
     active_ids: list[str]
+
+class StopRequest(BaseModel):
+    user_id: str
+    chat_id: str
+    n8n_workflow_id: Optional[str] = None
+    execution_id: Optional[str] = None
+    daemon_n8n_id: Optional[str] = None
 
 @app.get("/system-info")
 async def get_documentation():
@@ -350,14 +359,48 @@ async def _unpublish_and_delete_workflow(
         return False
     return False
 
+def _terminate_n8n_process(proc: Optional[asyncio.subprocess.Process]) -> bool:
+    """Termine un processus n8n (et son groupe de processus POSIX si applicable)."""
+    if proc is None or proc.returncode is not None:
+        return False
+    if os.name != "nt" and hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception:
+            try:
+                proc.kill()
+                return True
+            except ProcessLookupError:
+                return False
+            except Exception:
+                return False
+    try:
+        proc.kill()
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return False
+
+
 async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path, chat_dir: Path, execution_id: str = ""):
+    import_proc = None
     process = None
     status = "error"
     stdout = ""
     stderr = ""
-    exec_suffix = f"_{execution_id}" if execution_id else f"_{uuid.uuid4().hex[:8]}"
+    eff_exec_id = execution_id or uuid.uuid4().hex[:8]
+    exec_suffix = f"_{eff_exec_id}"
     isolated_user_folder = target_dir / f".n8n_isolated{exec_suffix}"
     try:
+        if eff_exec_id in cancelled_executions:
+            return "cancelled", "", ""
+
+        active_executions.setdefault(req.n8n_workflow_id, {}).setdefault(eff_exec_id, None)
+
         # Exécution de N8N
         # On utilise asyncio.create_subprocess_exec pour ne pas bloquer l'event loop
         # On définit N8N_PORT et N8N_RUNNERS_BROKER_PORT aléatoires pour éviter tout conflit avec le démon
@@ -370,9 +413,18 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
             "npx", "n8n", "import:workflow", f"--input={str(tmp_file)}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=env,
+            **({"start_new_session": True} if os.name != "nt" else {})
         )
+        if eff_exec_id in cancelled_executions:
+            _terminate_n8n_process(import_proc)
+            return "cancelled", "", ""
+
+        active_executions.setdefault(req.n8n_workflow_id, {})[eff_exec_id] = import_proc
         import_stdout, import_stderr = await import_proc.communicate()
+        if eff_exec_id in cancelled_executions:
+            return "cancelled", "", ""
+
         if import_proc.returncode != 0:
             raise Exception(f"Import Workflow Failed: {import_stderr.decode('utf-8', errors='replace')} | STDOUT: {import_stdout.decode('utf-8', errors='replace')}")
 
@@ -380,14 +432,19 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
             "npx", "n8n", "execute", "--id", req.n8n_workflow_id,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=env,
+            **({"start_new_session": True} if os.name != "nt" else {})
         )
-        
-        if req.n8n_workflow_id not in active_executions:
-            active_executions[req.n8n_workflow_id] = []
-        active_executions[req.n8n_workflow_id].append(process)
+        if eff_exec_id in cancelled_executions:
+            _terminate_n8n_process(process)
+            return "cancelled", "", ""
+
+        active_executions.setdefault(req.n8n_workflow_id, {})[eff_exec_id] = process
         
         stdout_bytes, stderr_bytes = await process.communicate()
+        if eff_exec_id in cancelled_executions:
+            return "cancelled", "", ""
+
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
         
@@ -407,7 +464,7 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
         status = "error"
         stdout = ""
         stderr = str(e)
-        if target_dir.exists():
+        if target_dir.exists() and eff_exec_id not in cancelled_executions:
             report = {
                 "workflow_id": req.n8n_workflow_id,
                 "status": status,
@@ -417,16 +474,16 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
             (target_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     finally:
         # Nettoyage
+        if import_proc and import_proc.returncode is None:
+            _terminate_n8n_process(import_proc)
         if process and process.returncode is None:
-            try:
-                process.kill()
-            except Exception:
-                pass
-        if process and req.n8n_workflow_id in active_executions and process in active_executions[req.n8n_workflow_id]:
-            try:
-                active_executions[req.n8n_workflow_id].remove(process)
-            except ValueError:
-                pass
+            _terminate_n8n_process(process)
+        proc_map = active_executions.get(req.n8n_workflow_id)
+        if proc_map is not None:
+            proc_map.pop(eff_exec_id, None)
+            if not proc_map:
+                active_executions.pop(req.n8n_workflow_id, None)
+        cancelled_executions.discard(eff_exec_id)
         if tmp_file.exists():
             tmp_file.unlink(missing_ok=True)
         if isolated_user_folder.exists():
@@ -470,7 +527,8 @@ async def execute_workflow(req: ExecuteRequest, background_tasks: BackgroundTask
             }
         else:
             # Mode Asynchrone : Fire & Forget
-            background_tasks.add_task(_run_n8n_process, req, target_dir, tmp_file, chat_dir, execution_id)
+            active_executions.setdefault(req.n8n_workflow_id, {})[execution_id] = None
+            asyncio.create_task(_run_n8n_process(req, target_dir, tmp_file, chat_dir, execution_id))
             return {
                 "status": "started",
                 "execution_id": execution_id,
@@ -620,14 +678,11 @@ async def delete_workflow(
 ):
     killed_count = 0
     for wid_key in {workflow_id, echo_workflow_id or workflow_id}:
-        if wid_key in active_executions:
-            for proc in active_executions[wid_key]:
-                try:
-                    proc.kill()
-                    killed_count += 1
-                except Exception:
-                    pass
-            active_executions[wid_key].clear()
+        for eid, proc in list(active_executions.get(wid_key, {}).items()):
+            if proc is None or _terminate_n8n_process(proc):
+                cancelled_executions.add(eid)
+                killed_count += 1
+        active_executions.pop(wid_key, None)
 
     api_deleted = False
     try:
@@ -648,6 +703,62 @@ async def delete_workflow(
             pass
 
     return {"status": "success", "killed_processes": killed_count, "api_deleted": api_deleted}
+
+
+@app.post("/stop")
+async def stop_workflow(req: StopRequest):
+    killed_count = 0
+    killed_execution_ids: list[str] = []
+    daemon_stopped = False
+    req_wid_clean = req.n8n_workflow_id.strip() if req.n8n_workflow_id else ""
+    exec_id_clean = req.execution_id.strip() if req.execution_id else ""
+    daemon_id_clean = req.daemon_n8n_id.strip() if req.daemon_n8n_id else ""
+    resolved_wid: Optional[str] = req_wid_clean or None
+
+    if exec_id_clean:
+        search_targets = (
+            [(req_wid_clean, active_executions.get(req_wid_clean))]
+            if req_wid_clean
+            else list(active_executions.items())
+        )
+        for wid, proc_map in search_targets:
+            if proc_map is not None and exec_id_clean in proc_map:
+                proc = proc_map.pop(exec_id_clean, None)
+                if proc is None or _terminate_n8n_process(proc):
+                    cancelled_executions.add(exec_id_clean)
+                    killed_count += 1
+                    killed_execution_ids.append(exec_id_clean)
+                if not proc_map:
+                    active_executions.pop(wid, None)
+                resolved_wid = wid
+                break
+    elif req_wid_clean:
+        resolved_wid = req_wid_clean
+        for eid, proc in list(active_executions.get(resolved_wid, {}).items()):
+            if proc is None or _terminate_n8n_process(proc):
+                cancelled_executions.add(eid)
+                killed_count += 1
+                killed_execution_ids.append(eid)
+        active_executions.pop(resolved_wid, None)
+
+    if daemon_id_clean and not exec_id_clean:
+        try:
+            api_key = await get_or_create_n8n_api_key()
+            headers = {"X-N8N-API-KEY": api_key} if api_key else {}
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                daemon_stopped = await _unpublish_and_delete_workflow(client, headers, daemon_id_clean)
+        except Exception:
+            pass
+
+    remaining_active = len(active_executions.get(resolved_wid, {})) if resolved_wid else 0
+    return {
+        "status": "success",
+        "killed_processes": killed_count,
+        "killed_execution_ids": killed_execution_ids,
+        "daemon_stopped": daemon_stopped,
+        "resolved_workflow_id": resolved_wid,
+        "remaining_active": remaining_active,
+    }
 
 
 @app.post("/prune")

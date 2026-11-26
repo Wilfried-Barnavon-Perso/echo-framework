@@ -5,6 +5,10 @@
 	const dispatch = createEventDispatcher();
 
 	import { blobToFile } from '$lib/utils';
+	import {
+		getSupportedAudioRecordingMimeType,
+		resolveRecordedAudioMimeAndExt
+	} from '$lib/utils/audio';
 	import { generateEmoji } from '$lib/apis';
 	import { synthesizeOpenAISpeech, transcribeAudio } from '$lib/apis/audio';
 
@@ -241,9 +245,10 @@
 	};
 
 	const MIN_DECIBELS = -55;
+	const VAD_SILENCE_DURATION_MS = 1200;
 	const VISUALIZER_BUFFER_LENGTH = 300;
 
-	const transcribeHandler = async (audioBlob) => {
+	const transcribeHandler = async (audioBlob: Blob, ext = 'webm') => {
 		// Create a blob from the audio chunks
 		if (!audioBlob || audioBlob.size < 100) {
 			console.log('Audio blob too small or empty, skipping transcription');
@@ -251,7 +256,7 @@
 		}
 
 		await tick();
-		const file = blobToFile(audioBlob, 'recording.wav');
+		const file = blobToFile(audioBlob, `recording.${ext}`);
 
 		const res = await transcribeAudio(
 			localStorage.token,
@@ -279,6 +284,8 @@
 
 			// deep copy the audioChunks array
 			const _audioChunks = audioChunks.slice(0);
+			// Capture recorder MIME before resetting mediaRecorder reference
+			const recorderMimeType = mediaRecorder?.mimeType;
 
 			audioChunks = [];
 			mediaRecorder = false;
@@ -302,8 +309,9 @@
 					];
 				}
 
-				const audioBlob = new Blob(_audioChunks, { type: 'audio/wav' });
-				await transcribeHandler(audioBlob);
+				const { mimeType, ext } = resolveRecordedAudioMimeAndExt(_audioChunks, recorderMimeType);
+				const audioBlob = new Blob(_audioChunks, { type: mimeType });
+				await transcribeHandler(audioBlob, ext);
 
 				confirmed = false;
 				loading = false;
@@ -336,7 +344,11 @@
 				// hardware track muting disabled to prevent backend translation errors with malformed WebM files
 			}
 
-			mediaRecorder = new MediaRecorder(audioStream);
+			const supportedMimeType = getSupportedAudioRecordingMimeType();
+			mediaRecorder = new MediaRecorder(
+				audioStream,
+				supportedMimeType ? { mimeType: supportedMimeType } : undefined
+			);
 
 			mediaRecorder.onstart = () => {
 				console.log('Recording started');
@@ -457,7 +469,7 @@
 
 				// Start silence detection only after initial speech/noise has been detected
 				if (hasStartedSpeaking) {
-					if (Date.now() - lastSoundTime > 2000) {
+					if (Date.now() - lastSoundTime > VAD_SILENCE_DURATION_MS) {
 						confirmed = true;
 
 						if (mediaRecorder) {
@@ -609,6 +621,31 @@
 	// Audio cache map where key is the content and value is the Audio object.
 	const audioCache = new Map();
 	const emojiCache = new Map();
+	let audioQueueNotifyResolvers: Array<() => void> = [];
+
+	const notifyAudioQueue = () => {
+		if (audioQueueNotifyResolvers.length === 0) return;
+		const resolvers = audioQueueNotifyResolvers;
+		audioQueueNotifyResolvers = [];
+		for (const resolve of resolvers) {
+			resolve();
+		}
+	};
+
+	const waitForAudioQueue = (signal: AbortSignal): Promise<void> => {
+		if (signal.aborted) return Promise.resolve();
+		return new Promise<void>((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				signal.removeEventListener('abort', finish);
+				resolve();
+			};
+			audioQueueNotifyResolvers.push(finish);
+			signal.addEventListener('abort', finish, { once: true });
+		});
+	};
 
 	const fetchAudio = async (content) => {
 		const id = currentMessageId;
@@ -655,6 +692,7 @@
 			if (!audioCache.has(content)) {
 				failedMessages[id] = true;
 			}
+			notifyAudioQueue();
 		}
 
 		return audioCache.get(content);
@@ -665,11 +703,10 @@
 	const monitorAndPlayAudio = async (id, signal) => {
 		while (!signal.aborted) {
 			if (messages[id] && messages[id].length > 0) {
-				// Retrieve the next content string from the queue
-				const content = messages[id].shift(); // Dequeues the content for playing
+				const content = messages[id][0];
 
 				if (audioCache.has(content)) {
-					// If content is available in the cache, play it
+					messages[id].shift();
 
 					// Set the emoji for the content if available
 					if (($settings?.showEmojiInCall ?? false) && emojiCache.has(content)) {
@@ -689,7 +726,6 @@
 							const audio = audioCache.get(content);
 							await playAudio(audio); // Here ensure that playAudio is indeed correct method to execute
 							console.log(`Played audio for content: ${content}`);
-							await new Promise((resolve) => setTimeout(resolve, 200)); // Wait before retrying to reduce tight loop
 						} catch (error) {
 							console.error('Error playing audio:', error);
 						}
@@ -697,18 +733,16 @@
 						await speakSpeechSynthesisHandler(content);
 					}
 				} else if (!failedMessages[id]) {
-					// If not available in the cache, push it back to the queue and delay
-					messages[id].unshift(content); // Re-queue the content at the start
-					console.log(`Audio for "${content}" not yet available in the cache, re-queued...`);
-					await new Promise((resolve) => setTimeout(resolve, 200)); // Wait before retrying to reduce tight loop
+					await waitForAudioQueue(signal);
+				} else {
+					assistantSpeaking = false;
+					break;
 				}
-			} else if (finishedMessages[id] && messages[id] && messages[id].length === 0) {
-				// If the message is finished and there are no more messages to process, break the loop
+			} else if (finishedMessages[id] || failedMessages[id]) {
 				assistantSpeaking = false;
 				break;
 			} else {
-				// No messages to process, sleep for a bit
-				await new Promise((resolve) => setTimeout(resolve, 200));
+				await waitForAudioQueue(signal);
 			}
 		}
 		console.log(`Audio monitoring and playing stopped for message ID ${id}`);
@@ -750,6 +784,7 @@
 				console.log(content);
 
 				fetchAudio(content);
+				notifyAudioQueue();
 			} catch (error) {
 				console.error('Failed to fetch or play audio:', error);
 			}
@@ -760,6 +795,7 @@
 		const { id, content } = e.detail;
 		// "content" here is the entire message from the assistant
 		finishedMessages[id] = true;
+		notifyAudioQueue();
 
 		chatStreaming = false;
 	};

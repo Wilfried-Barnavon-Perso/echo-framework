@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-show-admin.sh
-# VERSION : 5.231.39.1
+# VERSION : 6.22.1.1
 # Auteur : Wilfried BARNAVON
 # ROLE   : Affichage sécurisé des identifiants Admin
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Lecture directe de ECHO_ADMIN_PASSWORD depuis .secrets/.env (repli .owui-admin-secret).
 # 5.231.39.1: Renommage de show-echo-admin.sh en echo-show-admin.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
@@ -24,15 +25,22 @@ fi
 # ------------------------------------------
 
 ADMIN_SECRET_FILE="$ECHO_SECRETS/.owui-admin-secret"
+ENV_SOURCE="${ECHO_ENV_FILE:-$ECHO_SECRETS/.env}"
+[ -f "$ENV_SOURCE" ] || ENV_SOURCE="$ECHO_ROOT/.env"
 HUMAN_EMAIL="admin@echo.local"
 
-if [ ! -f "$ADMIN_SECRET_FILE" ]; then
-    echo "❌ Erreur : Le fichier secret ($ADMIN_SECRET_FILE) est introuvable."
+ADMIN_PWD=""
+if [ -f "$ENV_SOURCE" ]; then
+    ADMIN_PWD=$(grep -E '^ECHO_ADMIN_PASSWORD=' "$ENV_SOURCE" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | sed -E "s/^[\"']|[\"']$//g" | tr -d '\r\n' || true)
+fi
+if [ -z "$ADMIN_PWD" ] && [ -f "$ADMIN_SECRET_FILE" ]; then
+    ADMIN_PWD=$(tr -d '\r\n' < "$ADMIN_SECRET_FILE")
+fi
+if [ -z "$ADMIN_PWD" ]; then
+    echo "❌ Erreur : Mot de passe initial introuvable dans $ENV_SOURCE."
     echo "   L'initialisation a-t-elle été effectuée ?"
     exit 1
 fi
-
-ADMIN_PWD=$(cat "$ADMIN_SECRET_FILE")
 
 echo ""
 echo "=========================================="

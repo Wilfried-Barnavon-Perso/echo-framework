@@ -11,7 +11,6 @@
 
 	import Markdown from './Markdown.svelte';
 	import ConsecutiveDetailsGroup from './Markdown/ConsecutiveDetailsGroup.svelte';
-	import ContextCompactionLabel from './ContextCompactionLabel.svelte';
 	import {
 		buildOutputDisplayItems,
 		type OutputDetailToken,
@@ -44,6 +43,10 @@
 	export let onToolCallResolved: any = () => {};
 
 	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
+	const echoLazyExpand = getContext<(() => Promise<void> | void) | undefined>('echoLazyExpand');
+	const handleLazyExpand = (isOpen: boolean) => {
+		if (isOpen) echoLazyExpand?.();
+	};
 	const getDetailTitle = (detailToken: OutputDetailToken): any => detailToken.summary;
 	const getDetailAttributes = (detailToken: OutputDetailToken): any => detailToken.attributes;
 	let resolvingCallId = '';
@@ -156,6 +159,7 @@
 							resolvable={!!chatId && !!messageId && (save || allowToolApproval)}
 							resolving={resolvingCallId === detailToken.attributes?.id}
 							onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+							onChange={handleLazyExpand}
 							open={$settings?.expandDetails ?? false}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
@@ -166,6 +170,7 @@
 							open={$settings?.expandDetails ?? false}
 							attributes={getDetailAttributes(detailToken)}
 							messageDone={done}
+							onChange={handleLazyExpand}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
 						>
@@ -205,8 +210,6 @@
 		{#if displayItem.item?.displayed}
 			<ToolOutputFile item={displayItem.item} {chatId} />
 		{/if}
-	{:else if displayItem.type === 'context_compaction'}
-		<ContextCompactionLabel summary={displayItem.summary} {compactPreview} />
 	{:else}
 		{@const detailToken = displayItem.token}
 		{#if detailToken.attributes?.type === 'tool_calls'}
@@ -218,6 +221,7 @@
 				resolvable={!!chatId && !!messageId && (save || allowToolApproval)}
 				resolving={resolvingCallId === detailToken.attributes?.id}
 				onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+				onChange={handleLazyExpand}
 				open={$settings?.expandDetails ?? false}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}
@@ -228,6 +232,7 @@
 				open={$settings?.expandDetails ?? false}
 				attributes={getDetailAttributes(detailToken)}
 				messageDone={done}
+				onChange={handleLazyExpand}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}
 			>

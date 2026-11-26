@@ -141,13 +141,13 @@
     <details class="tech-spec" id="dossier-ingenierie">
       <summary>Dossier d'Ingénierie : SearXNG, Playwright Zéro-Trace DOM, WebSocket Binaire &amp; Pipeline Multimédia</summary>
 
-      <h3>1. Méta-Recherche Souveraine (<code>sovereign_web_search.py</code> v6.18.2.1 &amp; <code>searxng-settings.yml</code> v6.18.2.1)</h3>
+      <h3>1. Méta-Recherche Souveraine (<code>sovereign_web_search.py</code> v6.23.0.1 &amp; <code>searxng-settings.yml</code> v6.18.2.1)</h3>
       <ul>
         <li><strong>Pool SearXNG</strong> : <strong>79 moteurs</strong> déclarés répartis sur <strong>12 catégories</strong> (<code>general</code>, <code>it</code>, <code>science</code>, <code>images</code>, <code>videos</code>, <code>social media</code>, <code>news</code>, <code>music</code>, <code>map</code>, <code>files</code>, <code>movies</code>, <code>weather</code>) avec sortie JSON enrichie (<code>answers</code>/<code>WeatherAnswer</code>, <code>infoboxes</code>, <code>publishedDate</code>, corroboration <code>engines</code>), couplés aux réponses instantanées DuckDuckGo via <code>search_instant_answer</code>.</li>
         <li><strong>Régulation &amp; Recherche Profonde</strong> : <code>search_web</code> limite les appels simultanés (2 max par tour recommandé). <code>delegate_deep_research</code> s'appuie sur <code>EchoSubagentController.run_or_resume</code> (<code>ECHO_AUTONOMOUS_MAX_TURNS = 15</code> tours d'outils, <code>ECHO_AUTONOMOUS_TIMEOUT_SEC = 300s</code>, défaut <code>MODEL_PROMETHEUS</code>) avec fermeture explicite de session navigateur en fin de mission.</li>
       </ul>
 
-      <h3>2. Navigateur Autonome Playwright (<code>navigation_engine_tool.py</code> v6.15.0.1, <code>echo_browser_lib.py</code> v6.18.0.1 &amp; <code>22-docker-browser-worker</code>)</h3>
+      <h3>2. Navigateur Autonome Playwright (<code>navigation_engine_tool.py</code> v6.23.0.1, <code>echo_browser_lib.py</code> v6.23.0.1 &amp; <code>22-docker-browser-worker</code>)</h3>
       <ul>
         <li><strong>Concurrence &amp; Sessions</strong> : Sémaphore global limité à <code>ECHO_MAX_CONCURRENT_BROWSERS = 2</code> instances simultanées ; éviction LRU à 20 contextes dans <code>browser_api.py</code> (v6.16.0.1). Séparation stricte entre <code>chat_id</code> (persistance SQLite/<code>browserviews/</code> et drop-zone Download Broker <code>25-docker-download-broker</code>) et <code>browser_session_id</code> (<code>sub_sid</code> ou <code>chat_id</code> pour l'isolation Playwright).</li>
         <li><strong>Zéro-Trace DOM &amp; Furtivité WAF</strong> : Calcul JS en mémoire de sélecteurs CSS déterministes (<code>GET_CSS_PATH_JS</code>) sans tatouage d'attributs DOM ; support WebGL SwiftShader, argument natif <code>--disable-blink-features=AutomationControlled</code>, alignement dynamique User-Agent / Client Hints (<code>Sec-CH-UA*</code>) et getters WebIDL sur <code>Navigator.prototype</code> / <code>Window.prototype</code>.</li>
@@ -170,7 +170,7 @@
       <a href="12_edition_visuelle.html">12. Édition &amp; Visuel &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

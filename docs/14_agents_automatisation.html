@@ -33,13 +33,13 @@
     </p>
 
     <figure class="doc-figure">
-      <img src="images/v6_onglet_sous_agents.png" alt="Onglet Sous-Agents et Outils d'ECHO-UI affichant une Table Ronde Delphi en cours d'exécution avec suivi en direct" class="doc-screenshot">
-      <p class="doc-caption">Onglet <strong>Sous-Agents &amp; Outils</strong> : délibération d'une <strong>Table Ronde</strong> Delphi en cours d'exécution, suivi par participant et contrôles temps réel.</p>
+      <img src="images/v6_onglet_sous_agents.png" alt="Onglet Sous-Agents et Outils d'ECHO-UI en écran scindé affichant une Table Ronde Delphi V2 en cours d'exécution (badge Prométhée, 2 membres, barre de diffusion multi-destinataires)" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Sous-Agents &amp; Outils</strong> : délibération d'une <strong>Table Ronde</strong> Delphi V2 en cours d'exécution (badge <strong>Prométhée</strong>, 2 membres), suivi par participant, diffusion ciblée et contrôles temps réel.</p>
     </figure>
 
     <figure class="doc-figure">
-      <img src="images/v6_sous_agents_outils_log.png" alt="Onglet Appels d'outils exposant le journal détaillé des invocations consult_council et forge_skill" class="doc-screenshot">
-      <p class="doc-caption">Vue <strong>Appels d'outils</strong> : journal horodaté et détaillé des invocations d'outils (<code>consult_council</code>, <code>forge_skill</code>) exécutées durant l'orchestration.</p>
+      <img src="images/v6_sous_agents_outils_log.png" alt="Onglet Appels d'outils exposant le journal horodaté des appels consolidés consult_council, list_ui_chats, manage_ui_calendar et list_skills" class="doc-screenshot">
+      <p class="doc-caption">Vue <strong>Appels d'outils</strong> : journal horodaté et détaillé des invocations d'outils consolidés (<code>consult_council</code>, <code>list_ui_chats</code>, <code>manage_ui_calendar</code>, <code>list_skills</code>) exécutées durant la session.</p>
     </figure>
 
     <table>
@@ -57,9 +57,9 @@
           <td>Sous-tâche technique isolée, audit d'un module, recherche ou traitement parallèle sans saturer le fil principal.</td>
         </tr>
         <tr>
-          <td><strong>Table Ronde (Conseil)</strong></td>
-          <td>De 1 à 7 profils d'expertise (démultipliables de 1 à 5 pour la contradiction interne) débattent sur 3 à 10 tours avant une synthèse consolidée.</td>
-          <td>Décision d'architecture, analyse stratégique ou question ouverte exigeant plusieurs points de vue contradictoires.</td>
+          <td><strong>Table Ronde (Conseil Delphi V2)</strong></td>
+          <td>De 1 à 7 profils d'expertise (démultipliables de 1 à 5 pour la contradiction interne) dotés d'un périmètre d'outils autorisés débattent sur 3 à 10 tours, avec arrêt anticipé dès convergence unanime et possibilité de reprise multi-séances sur un conseil existant.</td>
+          <td>Décision d'architecture, analyse stratégique ou question ouverte exigeant plusieurs points de vue contradictoires outillés.</td>
         </tr>
         <tr>
           <td><strong>Phalange Multi-Niveaux</strong></td>
@@ -165,31 +165,31 @@
     <details class="tech-spec" id="dossier-ingenierie">
       <summary>Dossier d'Ingénierie : EchoSubagentController (11 Moteurs), Orchestration Delphi/Critique, N8N, MCP Broker &amp; AEAD</summary>
 
-      <h3>1. Contrôleur Unifié des Sous-Agents (<code>echo_subagent_hub.py</code> v6.20.0.1 &amp; <code>agent_engine_tool.py</code> v6.19.0.1)</h3>
+      <h3>1. Contrôleur Unifié des Sous-Agents (<code>echo_subagent_hub.py</code> v6.23.3.1 &amp; <code>agent_engine_tool.py</code> v6.23.0.1)</h3>
       <ul>
-        <li><strong>Registre SSOT (11 moteurs)</strong> : <code>ECHO_SUBAGENT_ENGINES_REGISTRY</code> dans <code>echo_constants.py</code> (v6.19.0.1) répertorie <code>delegate</code>, <code>council</code>, <code>council_synthesis</code>, <code>phalanx</code>, <code>navigator</code>, <code>deep_research</code>, <code>n8n_grapher</code>, <code>data_broker</code> et <code>image_gen</code> (avec <code>role_order</code>, <code>has_tool_loop</code>, <code>is_addressable</code>, <code>default_slice_limit</code> et <code>default_slice_timeout_sec</code>).</li>
+        <li><strong>Registre SSOT (11 moteurs)</strong> : <code>ECHO_SUBAGENT_ENGINES_REGISTRY</code> dans <code>echo_constants.py</code> (v6.24.0.1) répertorie <code>delegate</code>, <code>council</code>, <code>council_synthesis</code>, <code>phalanx</code>, <code>navigator</code>, <code>deep_research</code>, <code>n8n_grapher</code>, <code>data_broker</code> et <code>image_gen</code> (avec <code>role_order</code>, <code>has_tool_loop</code>, <code>is_addressable</code>, <code>default_slice_limit</code> et <code>default_slice_timeout_sec</code>).</li>
         <li><strong>Cadence, Parallélisme &amp; Disjoncteur PARE</strong> : Maximum <code>ECHO_MAX_PARALLEL_SUBAGENTS = 4</code> sous-agents simultanés ; tranches coopératives de <code>ECHO_SUBAGENT_CHECKPOINT_TURNS = 8</code> tours d'outils (<code>ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5</code> par tour) ou <code>ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120s</code> ; arrêt automatique en <code>suspended_pare_alert</code> après <code>ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3</code> erreurs consécutives ; verrou <code>asyncio</code> scopé par <code>sub_sid</code>, file FIFO SQLite (<code>steer</code>) avec balises <code>&lt;REQUETE_ORCHESTRATEUR&gt;</code> / <code>&lt;REQUETE_UTILISATEUR&gt;</code>, et scellement synthétique HTTP 400-safe sur <code>kill</code>.</li>
-        <li><strong>Outils &amp; Interface</strong> : <code>delegate_to_agent</code>, outil polymorphe unifié <code>control_subagents</code> (<code>status</code>, <code>collect</code>, <code>steer</code>, <code>resume</code> parallèle, <code>suspend</code>, <code>kill</code>, <code>summarize</code>, <code>close</code>, <code>purge_now</code>), et <code>ask_data_broker</code> (<code>delegate_to_data_broker.py</code> v6.11.0.1). Côté UI : <code>EchoCognitionTab.svelte</code> et routeur lecture/pilotage <code>routers/cognition.py</code> (v6.19.0.1, flux SSE réactif <code>/{chat_id}/stream</code> piloté par <code>_COGNITION_SEQ</code>).</li>
+        <li><strong>Outils &amp; Interface</strong> : <code>delegate_to_agent</code>, outil polymorphe unifié <code>control_subagents</code> (<code>status</code>, <code>collect</code>, <code>steer</code>, <code>resume</code> parallèle, <code>suspend</code>, <code>kill</code>, <code>summarize</code>, <code>close</code>, <code>purge_now</code>), et <code>ask_data_broker</code> (<code>delegate_to_data_broker.py</code> v6.23.0.1). Côté UI : <code>EchoCognitionTab.svelte</code> et routeur lecture/pilotage <code>routers/cognition.py</code> (v6.21.9.1, temps réel poussé par <code>echo_cognition_update</code> sur <code>/echo/v1/wm/ws</code>).</li>
       </ul>
 
-      <h3>2. Conseil Delphi, Phalanges Multi-Niveaux &amp; Skills (<code>agent_orchestration_tool.py</code> v6.20.3.1 &amp; <code>echo_skills.py</code> v5.231.20.1)</h3>
+      <h3>2. Conseil Delphi V2, Phalanges Multi-Niveaux &amp; Skills (<code>agent_orchestration_tool.py</code> v6.23.1.1 &amp; <code>echo_skills.py</code> v5.231.20.1)</h3>
       <ul>
-        <li><strong><code>consult_council</code></strong> : Jusqu'à <code>COUNCIL_MAX_SKILLS = 7</code> profils démultipliés par <code>multiplier</code> &isin; <code>[1..5]</code> sur <code>rounds</code> &isin; <code>[3..10]</code> bornés par l'invariant arithmétique <code>(len(participants) * multiplier) * rounds &lt;= COUNCIL_MAX_PR_COMPLEXITY (60)</code>. Budget par tour Delphi : <code>COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3</code> (plage <code>0..6</code>) / <code>120s</code>, suivi d'une synthèse <code>EchoSubagentController.run_cognitive_step</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
+        <li><strong><code>consult_council</code> (Delphi V2)</strong> : Jusqu'à <code>COUNCIL_MAX_SKILLS = 7</code> profils démultipliés par <code>multiplier</code> &isin; <code>[1..5]</code> (préfixage anti-collision <code>m{idx}_{sid}</code>) sur <code>rounds</code> &isin; <code>[3..10]</code> bornés par l'invariant arithmétique <code>(len(participants) * multiplier) * rounds &lt;= COUNCIL_MAX_PR_COMPLEXITY (60)</code>. Supporte <code>allowed_tools</code>, cache KV chaud sur <code>systemInstruction</code>, historique complet, arrêt anticipé par unanimité stricte sur <code>[POSITION_STABILISEE]</code> et continuité multi-séances via <code>council_state:&lt;cid&gt;</code>. Budget par tour Delphi : <code>COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3</code> (plage <code>0..6</code>) / <code>120s</code>, suivi d'une synthèse <code>EchoSubagentController.run_cognitive_step</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
         <li><strong><code>consult_phalanx</code></strong> : Déploie une Phalange hiérarchique (Stratège &rarr; Capitaine optionnel &rarr; Hoplite, bornée par <code>ECHO_MAX_PHALANX_DEPTH = 3</code>) sur <code>EchoSubagentController.run_or_resume</code> (<code>ECHO_AUTONOMOUS_MAX_TURNS = 15</code> tours / <code>300s</code>) avec délégation <code>can_delegate</code>, coopération latérale (<code>status</code>, <code>collect</code>, <code>steer</code>), relais <code>handoff</code> (<code>HandoffSpec</code> à 3 champs, plafond 4 relais) et isolation paresseuse <code>sandbox/&lt;sub_sid&gt;/</code>.</li>
         <li><strong>Gestion des Compétences</strong> : <code>forge_skill</code>, <code>list_skills</code>, <code>read_skill</code>, <code>search_skill</code> (<code>MODEL_APOLLO</code>), <code>delete_user_skill</code> (bloqué en headless). Stockage protégé par <code>get_user_skill_lock</code> et <code>_resolve_safe_skill_dir</code>, servi par <code>routers/skills.py</code> (v6.6.9.1) et <code>EchoSkills.svelte</code>.</li>
       </ul>
 
-      <h3>3. Orchestration N8N (<code>n8n_orchestrator_tool.py</code> v6.7.7.1 &amp; <code>26-docker-n8n-worker</code>)</h3>
+      <h3>3. Orchestration N8N (<code>n8n_orchestrator_tool.py</code> v6.24.2.1 &amp; <code>26-docker-n8n-worker</code>)</h3>
       <ul>
-        <li><strong>12 outils</strong> : <code>create_n8n_template</code>, <code>modify_n8n_template</code>, <code>delete_n8n_template</code>, <code>prepare_n8n_workflow</code>, <code>modify_n8n_workflow</code>, <code>delete_n8n_workflow</code>, <code>run_n8n_oneshot_workflow</code>, <code>deploy_n8n_daemon</code>, <code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>, <code>query_n8n_documentation</code>, <code>delegate_to_n8n_grapher</code> (<code>MODEL_PROMETHEUS</code>, tranches <code>8 tours / 120s</code>).</li>
-        <li><strong>Sandbox Oneshot vs Démon (<code>n8n_api.py</code> v5.231.42.2)</strong> : Base SQLite n8n dédiée (volume <code>echo-n8n-data</code>). Oneshot isolé exigeant <code>Execute Workflow Trigger</code> et plafonné à <strong>8 Ko</strong> (<code>8192</code> octets) de sortie synchrone ; Démon déployé en 2 étapes sous préfixe <code>[ECHO:&lt;user_id&gt;]</code> ; injection dynamique des macros <code>__ECHO_SECRET_&lt;KEY&gt;__</code> avec masquage dans les journaux (<code>_redact_injected_secrets</code>) et écriture disque contrainte à <code>__ECHO_DOWNLOAD_DIR__/</code>.</li>
+        <li><strong>5 outils</strong> : <code>manage_n8n_template</code> (<code>create</code>, <code>update</code>, <code>delete</code>), <code>manage_n8n_workflow</code> (<code>prepare</code>, <code>update</code>, <code>stop</code>, <code>delete</code>, <code>run_oneshot</code>, <code>deploy_daemon</code>), <code>n8n_hub</code> (<code>search</code>, <code>download</code>), <code>query_n8n_documentation</code>, <code>delegate_to_n8n_grapher</code> (<code>MODEL_PROMETHEUS</code>, tranches <code>8 tours / 120s</code>).</li>
+        <li><strong>Sandbox Oneshot vs Démon (<code>n8n_api.py</code> v6.24.2.1)</strong> : Base SQLite n8n dédiée (volume <code>echo-n8n-data</code>). Oneshot isolé exigeant <code>Execute Workflow Trigger</code> et plafonné à <strong>8 Ko</strong> (<code>8192</code> octets) de sortie synchrone ; arrêt non-destructif via <code>POST /stop</code> ; Démon déployé en 2 étapes sous préfixe <code>[ECHO:&lt;user_id&gt;]</code> ; injection dynamique des macros <code>__ECHO_SECRET_&lt;KEY&gt;__</code> avec masquage dans les journaux (<code>_redact_injected_secrets</code>) et écriture disque contrainte à <code>__ECHO_DOWNLOAD_DIR__/</code>.</li>
       </ul>
 
-      <h3>4. MCP Broker &amp; Identity Vault (<code>echo_mcp_tool.py</code> v6.11.0.1, <code>23-docker-mcp-broker</code> &amp; <code>echo_crypto.py</code> v5.231.21.3)</h3>
+      <h3>4. MCP Broker &amp; Identity Vault (<code>echo_mcp_tool.py</code> v6.11.0.1, <code>23-docker-mcp-broker</code> &amp; <code>echo_crypto.py</code> v6.22.1.1)</h3>
       <ul>
         <li><strong>Proxy &amp; Providers (<code>server.py</code> v6.11.0.1, <code>m5_providers.py</code> v6.11.0.1, <code>m5_proxy_mcp.py</code> v6.7.18.1)</strong> : Exposition StreamableHTTP/REST sans accès BDD ; propagation par en-têtes ASGI <code>x-openwebui-user-id</code>, <code>x-openwebui-chat-id</code>, <code>x-echo-credentials</code>. Cache de sessions <code>_SessionHolder</code> indexé sur <code>(user_id, service, cred_hash[:12])</code> (start <code>60s</code>, call <code>55s</code>, close <code>15s</code>).</li>
         <li><strong>Catalogue des 9 Services (<code>SERVICE_SCHEMAS</code> + <code>n8n_workflows</code>)</strong> : <code>mcp_native</code> (<code>corporate</code>, <code>jobs_omnisearch</code>, <code>academic</code>), <code>mcp_resident</code> (<code>google_workspace</code>, <code>microsoft_365</code>), <code>mcp_remote</code> (<code>remote_mcp</code>), <code>mcp_ephemeral</code> (<code>stdio_mcp</code> via <code>npx</code>/<code>uvx</code> sous Node.js 22.x LTS) et <code>orchestration</code> (<code>ssh</code>, <code>n8n_workflows</code>). Transfert Cloud <code>upload_file_to_drive</code> en streaming résumable par tranches PPCM de <strong>5 MiB</strong> (jusqu'à 4 Go). Routage automatique des fichiers téléchargés vers <code>25-docker-download-broker</code>.</li>
-        <li><strong>Chiffrement AEAD du Coffre (<code>identity_vault_tool.py</code> v6.20.3.1 &amp; <code>routers/vault.py</code> v6.6.9.1)</strong> : Chiffrement applicatif au niveau champ <strong>AES-256-GCM</strong> (<code>enc:v1:&lt;nonce_b64&gt;:&lt;ciphertext_b64&gt;:&lt;tag_b64&gt;</code>) dans <code>identity.db::identity_vault</code>, clé par utilisateur dérivée via <strong>HKDF-SHA256</strong> (<code>salt=user_id</code>, <code>info=b"echo-identity-vault"</code>) depuis <code>ECHO_VAULT_ENCRYPTION_KEY</code>, authentification contextuelle liée <code>AAD = f"{user_id}:{service}:{account_id}"</code> (politique <em>Fail-Closed</em>), et masquage strict des secrets dans <code>list_identities</code> et <code>EchoVaultTab.svelte</code>.</li>
+        <li><strong>Chiffrement AEAD du Coffre (<code>identity_vault_tool.py</code> v6.20.3.1 &amp; <code>routers/vault.py</code> v6.21.9.1)</strong> : Chiffrement applicatif au niveau champ <strong>AES-256-GCM</strong> (<code>enc:v1:&lt;nonce_b64&gt;:&lt;ciphertext_b64&gt;:&lt;tag_b64&gt;</code>) dans <code>identity.db::identity_vault</code>, clé par utilisateur dérivée via <strong>HKDF-SHA256</strong> (<code>salt=user_id</code>, <code>info=b"echo-identity-vault"</code>) depuis <code>ECHO_VAULT_ENCRYPTION_KEY</code>, authentification contextuelle liée <code>AAD = f"{user_id}:{service}:{account_id}"</code> (politique <em>Fail-Closed</em>), et masquage strict des secrets dans <code>list_identities</code> et <code>EchoVaultTab.svelte</code>.</li>
       </ul>
     </details>
 
@@ -199,7 +199,7 @@
       <a href="15_deploiement.html">15. Déploiement &amp; Infra &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.24.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

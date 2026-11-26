@@ -89,7 +89,6 @@ from open_webui.utils.auth import get_verified_user_by_id
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
-from open_webui.utils.context_compaction import apply_summary_checkpoint, compact_messages_for_request
 from open_webui.utils.files import (
     convert_markdown_base64_images,
     get_file_url_from_base64,
@@ -2169,42 +2168,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     filter_functions = (
         await get_filter_functions(request, model, metadata.get('filter_ids', [])) if ENABLE_FUNCTIONS else []
     )
-    compaction_messages = None
-    context_summary = None
-    if (is_saved_chat_id(chat_id) or is_temporary_chat_id(chat_id)) and user_message_id:
-        system_message = get_system_message(form_data.get('messages', []))
-        chat_system_prompt = get_content_from_message(system_message) if system_message else ''
-
-        try:
-            # Filters and resumed tool calls must still receive compacted history.
-            if (
-                filter_functions
-                or 'pipeline' in model
-                or model.get('pipe')
-                or get_sorted_filters(form_data['model'], request.app.state.MODELS)
-                or pending_assistant_message is not None
-                or metadata.get('params', {}).get('function_calling') == 'legacy'
-            ):
-                form_data['messages'], context_summary, _ = await compact_messages_for_request(
-                    request,
-                    None,
-                    user,
-                    form_data.get('messages', []),
-                    metadata,
-                    form_data['model'],
-                    request.app.state.MODELS,
-                    chat_system_prompt,
-                )
-                if context_summary:
-                    form_data['messages'] = add_or_update_system_message(
-                        f'[CONVERSATION SUMMARY]\n{context_summary}', form_data['messages'], append=True
-                    )
-            else:
-                compaction_messages = form_data.get('messages', [])
-                form_data['messages'], context_summary = await apply_summary_checkpoint(compaction_messages)
-        except Exception:
-            compaction_messages = None
-            log.exception('Context compaction failed; continuing with full chat history')
 
     # Compact the full chain, but prepare history separately from the response being resumed.
     if pending_assistant_message is not None:
@@ -2845,47 +2808,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         metadata['initial_output'] = initial_output
 
     form_data = normalize_messages_for_model(form_data)
-
-    if compaction_messages is not None:
-        summary_form_data = {**form_data}
-        if context_summary:
-            summary_form_data['messages'] = add_or_update_system_message(
-                f'[CONVERSATION SUMMARY]\n{context_summary}',
-                [dict(message) for message in form_data['messages']],
-                append=True,
-            )
-        try:
-            _, context_summary, compacted = await compact_messages_for_request(
-                request,
-                summary_form_data,
-                user,
-                compaction_messages,
-                metadata,
-                form_data['model'],
-                request.app.state.MODELS,
-                chat_system_prompt,
-            )
-            if compacted:
-                # Compacted messages lead the history this request was built from.
-                compacted_count = len(
-                    sanitize_tool_pairs(
-                        process_messages_with_output(
-                            compacted,
-                            reasoning_format=get_reasoning_format(model),
-                            include_file_context=metadata['include_file_context'],
-                        )
-                    )
-                )
-                compacted_ids = {id(message) for message in history_messages[:compacted_count]}
-                form_data['messages'] = [
-                    message for message in form_data['messages'] if id(message) not in compacted_ids
-                ]
-        except Exception:
-            log.exception('Context compaction failed; continuing with full chat history')
-
-        if context_summary:
-            summary_content = f'[CONVERSATION SUMMARY]\n{context_summary}'
-            form_data['messages'] = add_or_update_system_message(summary_content, form_data['messages'], append=True)
 
     return form_data, metadata, events, False
 
@@ -3833,7 +3755,6 @@ async def outlet_filter_handler(ctx):
                         )
                         if content_changed or output_changed:
                             message_update = {
-                                'originalContent': original_content,
                                 **({'output': message['output']} if output_changed else {}),
                             }
                             if content_changed:
@@ -6011,85 +5932,7 @@ async def streaming_chat_response_handler(response, ctx):
                                     }
                                 )
 
-                            # Use the existing checkpoint format internally and strip it from the provider payload.
-                            def get_request_messages(messages: list[dict]) -> list[dict]:
-                                request_messages = process_messages_with_output(messages)
-                                context_summary = next(
-                                    (
-                                        message['contextSummary']
-                                        for message in messages
-                                        if message.get('contextSummary')
-                                    ),
-                                    None,
-                                )
-                                if context_summary:
-                                    request_messages.insert(
-                                        1 if request_messages and request_messages[0].get('role') == 'system' else 0,
-                                        {'role': 'system', 'content': f'[CONVERSATION SUMMARY]\n{context_summary}'},
-                                    )
-                                return request_messages
-
-                            new_form_data['messages'] = get_request_messages(messages)
-                            try:
-                                user_messages = [
-                                    (message, message.get('content'))
-                                    for message in messages
-                                    if user_prompt
-                                    and message.get('role') == 'user'
-                                    and message.get('content') == user_prompt.get('content')
-                                ]
-                                summary_form_data = None
-                                if not filter_functions:
-                                    summary_form_data = normalize_messages_for_model(
-                                        await convert_url_images_to_base64({**new_form_data}, user=user)
-                                    )
-                                try:
-                                    # Summarize the user's text, then restore source context for the model.
-                                    for message, _ in user_messages:
-                                        message['content'] = copy.deepcopy(message.get('content'))
-                                        set_last_user_message_content(
-                                            metadata.get('base_user_prompt') or user_message, [message]
-                                        )
-                                    messages, context_summary, compacted = await compact_messages_for_request(
-                                        request,
-                                        summary_form_data,
-                                        user,
-                                        messages,
-                                        metadata,
-                                        form_data['model'],
-                                        request.app.state.MODELS,
-                                        bypass_system_prompt=True,
-                                    )
-                                finally:
-                                    for message, content in user_messages:
-                                        message['content'] = content
-                                if compacted:
-                                    if user_prompt is not None:
-                                        messages = [message for message in messages if message != user_prompt]
-                                        messages.insert(
-                                            1 if messages and messages[0].get('role') == 'system' else 0,
-                                            dict(user_prompt),
-                                        )
-                                    checkpoint = next(
-                                        idx for idx, message in enumerate(messages) if message.get('role') != 'system'
-                                    )
-                                    messages[checkpoint] = {**messages[checkpoint], 'contextSummary': context_summary}
-                                    new_form_data['messages'] = get_request_messages(messages)
-                                    output.append(
-                                        {
-                                            'type': 'open_webui:context_compaction',
-                                            'id': output_id('cc'),
-                                            'call_id': next(
-                                                message['tool_calls'][0]['id']
-                                                for message in messages
-                                                if message.get('tool_calls')
-                                            ),
-                                            'summary': context_summary,
-                                        }
-                                    )
-                                    await emit_output()
-                            except Exception:
-                                log.exception('Tool loop context compaction failed; keeping the current context')
+                            new_form_data['messages'] = process_messages_with_output(messages)
 
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 

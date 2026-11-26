@@ -3,11 +3,12 @@
 """
 title: ECHO V6 Native Meta-Artifacts Router
 author: Wilfried BARNAVON
-version: 6.2.0.1
+version: 6.21.9.1
 description: Routeur souverain FastAPI pour la gestion CRUD des Méta-Artéfacts Qdrant (/echo/v1/meta-artifacts).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.9.1: Réutilisation de echo_http._get_global_client() et pagination complète du scroll Qdrant par lots de 500 via next_page_offset.
 # 6.2.0.1: Routeur souverain /echo/v1/meta-artifacts (CRUD, promotion Axiome et vectorisation Qdrant PACP/PRAC).
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ try:
         MEMORY_IMPORTANCE_WEIGHTS,
     )
     from echo_gemini_client import EchoGeminiClient  # type: ignore
+    from echo_http import _get_global_client  # type: ignore
 except ImportError:
     # Fallback d'import pour l'exécution hors conteneur (ex: tests locaux Windows)
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
@@ -50,6 +52,7 @@ except ImportError:
         MEMORY_IMPORTANCE_WEIGHTS,
     )
     from echo_gemini_client import EchoGeminiClient  # type: ignore
+    from echo_http import _get_global_client  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +86,7 @@ def _compute_point_id(user_id: str, memory_id: str) -> str:
 async def _ensure_meta_collection(client: httpx.AsyncClient) -> None:
     """Vérifie l'existence de la collection Qdrant des méta-artéfacts et la crée si absente."""
     try:
-        resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}")
+        resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", timeout=10.0)
         if resp.status_code == 404:
             create_payload = {
                 "vectors": {
@@ -91,7 +94,11 @@ async def _ensure_meta_collection(client: httpx.AsyncClient) -> None:
                     "distance": "Cosine",
                 }
             }
-            await client.put(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", json=create_payload)
+            await client.put(
+                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}",
+                json=create_payload,
+                timeout=10.0,
+            )
     except httpx.RequestError as e:
         log.warning("Impossible de joindre Qdrant pour vérifier la collection: %s", e)
         raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
@@ -119,24 +126,31 @@ async def list_meta_artifacts(
     user: Any = Depends(get_verified_user),
 ) -> dict[str, Any]:
     """Liste et filtre les méta-artéfacts (PACP / PRAC) stockés dans Qdrant pour l'utilisateur."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await _ensure_meta_collection(client)
+    client = await _get_global_client()
+    await _ensure_meta_collection(client)
 
-        scroll_filter: dict[str, Any] = {
-            "must": [{"key": "user_id", "match": {"value": user.id}}]
+    scroll_filter: dict[str, Any] = {
+        "must": [{"key": "user_id", "match": {"value": user.id}}]
+    }
+    if artifact_name and artifact_name in _VALID_ARTIFACT_NAMES:
+        scroll_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
+
+    raw_points: list[dict[str, Any]] = []
+    next_offset: Any = None
+    while True:
+        scroll_body: dict[str, Any] = {
+            "filter": scroll_filter,
+            "limit": 500,
+            "with_payload": True,
+            "with_vector": False,
         }
-        if artifact_name and artifact_name in _VALID_ARTIFACT_NAMES:
-            scroll_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
-
+        if next_offset is not None:
+            scroll_body["offset"] = next_offset
         try:
             resp = await client.post(
                 f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
-                json={
-                    "filter": scroll_filter,
-                    "limit": 1000,
-                    "with_payload": True,
-                    "with_vector": False,
-                },
+                json=scroll_body,
+                timeout=10.0,
             )
         except httpx.RequestError as e:
             log.error("Échec de connexion à Qdrant lors du scroll: %s", e)
@@ -146,7 +160,11 @@ async def list_meta_artifacts(
             raise HTTPException(status_code=resp.status_code, detail=f"Erreur Qdrant: {resp.text}")
 
         data = resp.json().get("result", {})
-        raw_points = data.get("points", [])
+        batch = data.get("points", [])
+        raw_points.extend(batch)
+        next_offset = data.get("next_page_offset")
+        if next_offset is None or not batch:
+            break
 
     items: list[dict[str, Any]] = []
     pacp_count = 0
@@ -240,45 +258,47 @@ async def create_meta_artifact(
     point_id = _compute_point_id(user.id, raw_mem_id)
     vector = await _generate_vector(user.id, summary_clean, raw_mem_id)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await _ensure_meta_collection(client)
+    client = await _get_global_client()
+    await _ensure_meta_collection(client)
 
-        final_imp = payload.memory_importance
-        if payload.preserve_max_importance:
-            try:
-                exist_resp = await client.get(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}"
-                )
-                if exist_resp.status_code == 200:
-                    exist_data = exist_resp.json().get("result") or {}
-                    exist_payload = exist_data.get("payload") or {}
-                    if exist_payload.get("user_id") == user.id:
-                        existing_imp = int(exist_payload.get("memory_importance", 1))
-                        final_imp = max(final_imp, existing_imp)
-            except Exception:
-                pass
-
-        point_record = {
-            "user_id": user.id,
-            "memory_id": raw_mem_id,
-            "summary": summary_clean,
-            "artifact_name": payload.artifact_name,
-            "memory_importance": final_imp,
-            "tags": payload.tags,
-            "timestamp": int(time.time()),
-        }
-
+    final_imp = payload.memory_importance
+    if payload.preserve_max_importance:
         try:
-            upsert_resp = await client.put(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
-                json={"points": [{"id": point_id, "vector": vector, "payload": point_record}]},
+            exist_resp = await client.get(
+                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}",
+                timeout=10.0,
             )
-        except httpx.RequestError as e:
-            log.error("Erreur de connexion à Qdrant lors de l'upsert: %s", e)
-            raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
+            if exist_resp.status_code == 200:
+                exist_data = exist_resp.json().get("result") or {}
+                exist_payload = exist_data.get("payload") or {}
+                if exist_payload.get("user_id") == user.id:
+                    existing_imp = int(exist_payload.get("memory_importance", 1))
+                    final_imp = max(final_imp, existing_imp)
+        except Exception:
+            pass
 
-        if upsert_resp.status_code != 200:
-            raise HTTPException(status_code=upsert_resp.status_code, detail=f"Erreur Qdrant: {upsert_resp.text}")
+    point_record = {
+        "user_id": user.id,
+        "memory_id": raw_mem_id,
+        "summary": summary_clean,
+        "artifact_name": payload.artifact_name,
+        "memory_importance": final_imp,
+        "tags": payload.tags,
+        "timestamp": int(time.time()),
+    }
+
+    try:
+        upsert_resp = await client.put(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
+            json={"points": [{"id": point_id, "vector": vector, "payload": point_record}]},
+            timeout=10.0,
+        )
+    except httpx.RequestError as e:
+        log.error("Erreur de connexion à Qdrant lors de l'upsert: %s", e)
+        raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
+
+    if upsert_resp.status_code != 200:
+        raise HTTPException(status_code=upsert_resp.status_code, detail=f"Erreur Qdrant: {upsert_resp.text}")
 
     return {
         "id": point_id,
@@ -305,66 +325,69 @@ async def update_meta_artifact(
 
     point_id = _compute_point_id(user.id, memory_id)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await _ensure_meta_collection(client)
+    client = await _get_global_client()
+    await _ensure_meta_collection(client)
 
-        try:
-            exist_resp = await client.get(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}"
-            )
-        except httpx.RequestError as e:
-            log.error("Échec de connexion à Qdrant: %s", e)
-            raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
-
-        if exist_resp.status_code != 200:
-            raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
-
-        point_data = exist_resp.json().get("result") or {}
-        existing_payload = point_data.get("payload") or {}
-
-        if existing_payload.get("user_id") != user.id:
-            raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
-
-        current_summary = existing_payload.get("summary", "")
-        new_summary = payload.summary.strip() if payload.summary is not None else current_summary
-        if not new_summary:
-            raise HTTPException(status_code=400, detail="Le résumé ne peut pas être vide")
-
-        new_art_name = payload.artifact_name or existing_payload.get("artifact_name", "Profil d'Alignement")
-        if new_art_name not in _VALID_ARTIFACT_NAMES:
-            raise HTTPException(status_code=400, detail=f"artifact_name invalide: {new_art_name}")
-
-        new_imp = payload.memory_importance if payload.memory_importance is not None else int(
-            existing_payload.get("memory_importance", 1)
+    try:
+        exist_resp = await client.get(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}",
+            timeout=10.0,
         )
-        new_tags = payload.tags if payload.tags is not None else existing_payload.get("tags", [])
+    except httpx.RequestError as e:
+        log.error("Échec de connexion à Qdrant: %s", e)
+        raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
 
-        updated_payload = {
-            "user_id": user.id,
-            "memory_id": memory_id,
-            "summary": new_summary,
-            "artifact_name": new_art_name,
-            "memory_importance": new_imp,
-            "tags": new_tags,
-            "timestamp": int(time.time()),
-        }
+    if exist_resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
 
-        # Si le résumé a été modifié, on régénère le vecteur
-        if new_summary != current_summary:
-            vector = await _generate_vector(user.id, new_summary, memory_id)
-            upsert_body = {"points": [{"id": point_id, "vector": vector, "payload": updated_payload}]}
-            save_resp = await client.put(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
-                json=upsert_body,
-            )
-        else:
-            save_resp = await client.post(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/payload",
-                json={"payload": updated_payload, "points": [point_id]},
-            )
+    point_data = exist_resp.json().get("result") or {}
+    existing_payload = point_data.get("payload") or {}
 
-        if save_resp.status_code != 200:
-            raise HTTPException(status_code=save_resp.status_code, detail=f"Erreur Qdrant: {save_resp.text}")
+    if existing_payload.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
+
+    current_summary = existing_payload.get("summary", "")
+    new_summary = payload.summary.strip() if payload.summary is not None else current_summary
+    if not new_summary:
+        raise HTTPException(status_code=400, detail="Le résumé ne peut pas être vide")
+
+    new_art_name = payload.artifact_name or existing_payload.get("artifact_name", "Profil d'Alignement")
+    if new_art_name not in _VALID_ARTIFACT_NAMES:
+        raise HTTPException(status_code=400, detail=f"artifact_name invalide: {new_art_name}")
+
+    new_imp = payload.memory_importance if payload.memory_importance is not None else int(
+        existing_payload.get("memory_importance", 1)
+    )
+    new_tags = payload.tags if payload.tags is not None else existing_payload.get("tags", [])
+
+    updated_payload = {
+        "user_id": user.id,
+        "memory_id": memory_id,
+        "summary": new_summary,
+        "artifact_name": new_art_name,
+        "memory_importance": new_imp,
+        "tags": new_tags,
+        "timestamp": int(time.time()),
+    }
+
+    # Si le résumé a été modifié, on régénère le vecteur
+    if new_summary != current_summary:
+        vector = await _generate_vector(user.id, new_summary, memory_id)
+        upsert_body = {"points": [{"id": point_id, "vector": vector, "payload": updated_payload}]}
+        save_resp = await client.put(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
+            json=upsert_body,
+            timeout=10.0,
+        )
+    else:
+        save_resp = await client.post(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/payload",
+            json={"payload": updated_payload, "points": [point_id]},
+            timeout=10.0,
+        )
+
+    if save_resp.status_code != 200:
+        raise HTTPException(status_code=save_resp.status_code, detail=f"Erreur Qdrant: {save_resp.text}")
 
     return {
         "id": point_id,
@@ -390,40 +413,42 @@ async def promote_meta_artifact(
 
     point_id = _compute_point_id(user.id, memory_id)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await _ensure_meta_collection(client)
+    client = await _get_global_client()
+    await _ensure_meta_collection(client)
 
-        try:
-            exist_resp = await client.get(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}"
-            )
-        except httpx.RequestError as e:
-            log.error("Échec de connexion à Qdrant: %s", e)
-            raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
-
-        if exist_resp.status_code != 200:
-            raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
-
-        point_data = exist_resp.json().get("result") or {}
-        existing_payload = point_data.get("payload") or {}
-
-        if existing_payload.get("user_id") != user.id:
-            raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
-
-        now_ts = int(time.time())
-        promote_resp = await client.post(
-            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/payload",
-            json={
-                "payload": {
-                    "memory_importance": 5,
-                    "timestamp": now_ts,
-                },
-                "points": [point_id],
-            },
+    try:
+        exist_resp = await client.get(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}",
+            timeout=10.0,
         )
+    except httpx.RequestError as e:
+        log.error("Échec de connexion à Qdrant: %s", e)
+        raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
 
-        if promote_resp.status_code != 200:
-            raise HTTPException(status_code=promote_resp.status_code, detail=f"Erreur Qdrant: {promote_resp.text}")
+    if exist_resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
+
+    point_data = exist_resp.json().get("result") or {}
+    existing_payload = point_data.get("payload") or {}
+
+    if existing_payload.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
+
+    now_ts = int(time.time())
+    promote_resp = await client.post(
+        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/payload",
+        json={
+            "payload": {
+                "memory_importance": 5,
+                "timestamp": now_ts,
+            },
+            "points": [point_id],
+        },
+        timeout=10.0,
+    )
+
+    if promote_resp.status_code != 200:
+        raise HTTPException(status_code=promote_resp.status_code, detail=f"Erreur Qdrant: {promote_resp.text}")
 
     return {
         "id": point_id,
@@ -446,32 +471,34 @@ async def delete_meta_artifact(
 
     point_id = _compute_point_id(user.id, memory_id)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await _ensure_meta_collection(client)
+    client = await _get_global_client()
+    await _ensure_meta_collection(client)
 
-        try:
-            exist_resp = await client.get(
-                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}"
-            )
-        except httpx.RequestError as e:
-            log.error("Échec de connexion à Qdrant: %s", e)
-            raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
-
-        if exist_resp.status_code != 200:
-            raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
-
-        point_data = exist_resp.json().get("result") or {}
-        existing_payload = point_data.get("payload") or {}
-
-        if existing_payload.get("user_id") != user.id:
-            raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
-
-        del_resp = await client.post(
-            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete",
-            json={"points": [point_id]},
+    try:
+        exist_resp = await client.get(
+            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}",
+            timeout=10.0,
         )
+    except httpx.RequestError as e:
+        log.error("Échec de connexion à Qdrant: %s", e)
+        raise HTTPException(status_code=503, detail="Service Qdrant indisponible")
 
-        if del_resp.status_code != 200:
-            raise HTTPException(status_code=del_resp.status_code, detail=f"Erreur Qdrant: {del_resp.text}")
+    if exist_resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Méta-artéfact introuvable")
+
+    point_data = exist_resp.json().get("result") or {}
+    existing_payload = point_data.get("payload") or {}
+
+    if existing_payload.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="Accès refusé à ce méta-artéfact")
+
+    del_resp = await client.post(
+        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete",
+        json={"points": [point_id]},
+        timeout=10.0,
+    )
+
+    if del_resp.status_code != 200:
+        raise HTTPException(status_code=del_resp.status_code, detail=f"Erreur Qdrant: {del_resp.text}")
 
     return {"deleted": True, "memory_id": memory_id, "id": point_id}

@@ -779,10 +779,32 @@ export const getChatListByTagName = async (token: string = '', tagName: string) 
 	}));
 };
 
-export const getChatById = async (token: string, id: string, signal?: AbortSignal) => {
-	let error = null;
+const isAbortSignal = (value: unknown): value is AbortSignal =>
+	typeof AbortSignal !== 'undefined' && value instanceof AbortSignal;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}`, {
+export const getChatById = async (
+	token: string,
+	id: string,
+	signalOrOptions?: AbortSignal | { signal?: AbortSignal; windowed?: boolean; limit?: number }
+) => {
+	let error = null;
+	let signal: AbortSignal | undefined;
+	let windowed = false;
+	let limit: number | undefined;
+	if (isAbortSignal(signalOrOptions)) {
+		signal = signalOrOptions;
+	} else if (signalOrOptions) {
+		signal = signalOrOptions.signal;
+		windowed = Boolean(signalOrOptions.windowed);
+		limit = signalOrOptions.limit;
+	}
+
+	const searchParams = new URLSearchParams();
+	if (windowed) searchParams.set('windowed', 'true');
+	if (typeof limit === 'number' && limit > 0) searchParams.set('limit', String(limit));
+	const qs = searchParams.toString();
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}${qs ? `?${qs}` : ''}`, {
 		signal,
 		method: 'GET',
 		headers: {
@@ -1306,11 +1328,13 @@ export const updateChatById = async (
 	token: string,
 	id: string,
 	chat: object,
-	variables: object | null = null
+	variables: object | null = null,
+	options?: { light?: boolean }
 ) => {
 	let error = null;
+	const qs = options?.light ? '?light=true' : '';
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}${qs}`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
@@ -1358,39 +1382,6 @@ export const updateChatParams = async (
 	});
 	if (!res.ok) throw getErrorDetail(await res.json());
 	return res.json();
-};
-
-export const compactChatById = async (token: string, id: string, model?: string | null) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/compact`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		},
-		body: JSON.stringify({ model })
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.then((json) => {
-			return json;
-		})
-		.catch((err) => {
-			error = getErrorDetail(err);
-
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
 };
 
 export const deleteChatMessageById = async (token: string, id: string, messageId: string) => {

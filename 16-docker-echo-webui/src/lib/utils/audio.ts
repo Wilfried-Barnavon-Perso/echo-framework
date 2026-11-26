@@ -288,3 +288,31 @@ export async function playNotificationSound(
 	}
 	return true;
 }
+
+export const PREFERRED_AUDIO_RECORDING_MIME_TYPES = [
+	'audio/webm; codecs=opus',
+	'audio/webm',
+	'audio/ogg; codecs=opus',
+	'audio/mp4',
+	'audio/wav'
+] as const;
+
+export function getSupportedAudioRecordingMimeType(): string | undefined {
+	if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+		return undefined;
+	}
+	return PREFERRED_AUDIO_RECORDING_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
+}
+
+export function resolveRecordedAudioMimeAndExt(
+	chunks: Blob[],
+	recorderMimeType?: string
+): { mimeType: string; ext: string } {
+	const mimeType = chunks[0]?.type || recorderMimeType || 'audio/webm';
+	if (!mimeType.startsWith('audio/')) {
+		return { mimeType, ext: 'webm' };
+	}
+	const subtype = mimeType.split('/')[1]?.split(';')[0]?.trim() || 'webm';
+	const ext = subtype === 'mpeg' ? 'mp3' : subtype;
+	return { mimeType, ext };
+}

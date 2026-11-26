@@ -43,6 +43,7 @@
 	export let resolvable = false;
 	export let resolving = false;
 	export let onResolve: (approved: boolean) => void = () => {};
+	export let onChange: (isOpen: boolean) => void = () => {};
 
 	const RESULT_PREVIEW_LIMIT = 10000;
 	let expandedResult = false;
@@ -173,6 +174,7 @@
 
 	const toggleOpen = () => {
 		open = !open;
+		onChange(open);
 	};
 
 	const toggleOpenOnKeydown = (event: KeyboardEvent) => {

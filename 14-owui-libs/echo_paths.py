@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 6.19.0.1
+version: 6.23.10.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.10.1: Paramètre allow_existing dans scope_subagent_sandbox_path (cohérence read/edit/delete racine sandbox vs isolation stricte create).
+# 6.21.9.1: Migration de _CHAT_CLONE_LOCKS, _CODEX_LOCKS et _SKILL_LOCKS vers weakref.WeakValueDictionary protégés par _PATHS_LOCK.
 # 6.19.0.1: Ajout de scope_subagent_sandbox_path pour l'isolation paresseuse des chemins sandbox/<sub_sid>/ des sous-agents.
 # 6.14.2.1: Ajout de EMBED_URI_PREFIX, ASSET_URI_PREFIX, get_echo_embeds_dir, save_embed_binary_asset et save_embed_html_document.
 # 6.11.0.1: Ajout de is_safe_user_exportable_path, resolve_user_exportable_file_path et support domaine 'files' sécurisé.
-# 6.10.0.1: Ajout de is_sandbox_internal_segment et resolve_confined_codex_path (confinement commonpath, rejet symlinks/IPC/.git), durcissement de normalize_codex_rel_path, check_codex_file_exists et resolve_extended_file_path.
-# 6.7.16.1: Repli sur le Vault global utilisateur et les Vaults de chats dans resolve_upload_file_path même lorsque chat_id est fourni.
 import os
 import re
 import json
@@ -22,6 +22,8 @@ import glob
 import uuid
 import base64
 import asyncio
+import threading
+import weakref
 from urllib.parse import unquote
 from typing import Optional
 from echo_constants import (
@@ -57,9 +59,10 @@ def extract_clean_filename(path_or_name: str) -> str:
 
 
 # Registre en mémoire des verrous asyncio de clonage de session en cours
-_CHAT_CLONE_LOCKS: dict[str, asyncio.Lock] = {}
-_CODEX_LOCKS: dict[str, asyncio.Lock] = {}
-_SKILL_LOCKS: dict[str, asyncio.Lock] = {}
+_PATHS_LOCK = threading.Lock()
+_CHAT_CLONE_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+_CODEX_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+_SKILL_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 def sanitize_echo_id(raw_id: str, fallback: str = "default", default: Optional[str] = None) -> str:
@@ -72,29 +75,39 @@ def sanitize_echo_id(raw_id: str, fallback: str = "default", default: Optional[s
 def get_codex_lock(user_id: str, chat_id: str) -> asyncio.Lock:
     """Retourne ou crée le verrou asyncio exclusif protégeant les dépôts Git Codex d'une session (user_id, chat_id)."""
     key = f"{sanitize_echo_id(user_id)}:{sanitize_echo_id(chat_id)}"
-    if key not in _CODEX_LOCKS:
-        _CODEX_LOCKS[key] = asyncio.Lock()
-    return _CODEX_LOCKS[key]
+    with _PATHS_LOCK:
+        lock = _CODEX_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _CODEX_LOCKS[key] = lock
+        return lock
 
 
 def get_user_skill_lock(user_id: str) -> asyncio.Lock:
     """Retourne ou crée le verrou asyncio protégeant les opérations disque sur les skills d'un utilisateur."""
     key = sanitize_echo_id(user_id)
-    if key not in _SKILL_LOCKS:
-        _SKILL_LOCKS[key] = asyncio.Lock()
-    return _SKILL_LOCKS[key]
+    with _PATHS_LOCK:
+        lock = _SKILL_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SKILL_LOCKS[key] = lock
+        return lock
 
 
 def get_chat_clone_lock(chat_id: str) -> asyncio.Lock:
     """Retourne ou crée un verrou asyncio pour synchroniser la création d'un chat cloné."""
-    if chat_id not in _CHAT_CLONE_LOCKS:
-        _CHAT_CLONE_LOCKS[chat_id] = asyncio.Lock()
-    return _CHAT_CLONE_LOCKS[chat_id]
+    with _PATHS_LOCK:
+        lock = _CHAT_CLONE_LOCKS.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _CHAT_CLONE_LOCKS[chat_id] = lock
+        return lock
 
 
 async def wait_for_chat_clone(chat_id: str, timeout: float = 10.0) -> None:
     """Attend la fin d'un clonage éventuel sur ce chat_id avant l'exécution des filtres Inlet."""
-    lock = _CHAT_CLONE_LOCKS.get(chat_id)
+    with _PATHS_LOCK:
+        lock = _CHAT_CLONE_LOCKS.get(chat_id)
     if lock and lock.locked():
         try:
             await asyncio.wait_for(lock.acquire(), timeout=timeout)
@@ -564,6 +577,7 @@ def scope_subagent_sandbox_path(
     sub_sid: str = "",
     sandbox_root: str = "",
     for_write: bool = False,
+    allow_existing: bool = False,
 ) -> str:
     """Résout un chemin relatif sandbox scopé paresseusement sous `<sub_sid>/` pour un sous-agent."""
     clean_sid = sanitize_echo_id(sub_sid, fallback="") if sub_sid else ""
@@ -579,8 +593,12 @@ def scope_subagent_sandbox_path(
     if clean_rel == clean_sid or clean_rel.startswith(f"{clean_sid}/"):
         return clean_rel
     if for_write:
+        if sandbox_root and os.path.exists(
+            os.path.join(sandbox_root, clean_sid, *clean_rel.split("/"))
+        ):
+            return f"{clean_sid}/{clean_rel}"
         if (
-            "/" in clean_rel
+            allow_existing
             and sandbox_root
             and os.path.exists(os.path.join(sandbox_root, *clean_rel.split("/")))
         ):

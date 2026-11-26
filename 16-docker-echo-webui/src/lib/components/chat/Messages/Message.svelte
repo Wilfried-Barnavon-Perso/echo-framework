@@ -6,7 +6,7 @@
 	const i18n = getContext('i18n');
 
 	import { settings } from '$lib/stores';
-	import { copyToClipboard } from '$lib/utils';
+	import { copyToClipboard, getBranchSiblingIds } from '$lib/utils';
 
 	import MultiResponseMessages from './MultiResponseMessages.svelte';
 	import ResponseMessage from './ResponseMessage.svelte';
@@ -18,6 +18,8 @@
 
 	export let history;
 	export let messageId;
+	export let treeIndex: Record<string, any> | null = null;
+	export let ensureMessageDetails: ((id: string) => Promise<void>) | null = null;
 
 	export let user;
 
@@ -54,6 +56,7 @@
 	// Keep the latest turn's real height when assigning a chat ID remounts the message list.
 	$: isCurrentTurn =
 		messageId === history.currentId || messageId === history.messages[history.currentId]?.parentId;
+	$: siblings = getBranchSiblingIds(history, treeIndex, history.messages[messageId]);
 
 	// WebKit's content-visibility implementation has paint bugs that leave
 	// on-screen messages blank (#26712), so skip virtualization there
@@ -80,11 +83,7 @@
 				{history}
 				{messageId}
 				isFirstMessage={idx === 0}
-				siblings={history.messages[messageId].parentId !== null
-					? (history.messages[history.messages[messageId].parentId]?.childrenIds ?? [])
-					: (Object.values(history.messages)
-							.filter((message) => message.parentId === null)
-							.map((message) => message.id) ?? [])}
+				{siblings}
 				{gotoMessage}
 				{showPreviousMessage}
 				{showNextMessage}
@@ -104,7 +103,8 @@
 				{messageId}
 				{selectedModels}
 				isLastMessage={messageId === history.currentId}
-				siblings={history.messages[history.messages[messageId].parentId]?.childrenIds ?? []}
+				{siblings}
+				{ensureMessageDetails}
 				{setInputText}
 				{gotoMessage}
 				{showPreviousMessage}
@@ -138,6 +138,7 @@
 					{messageId}
 					{selectedModels}
 					isLastMessage={messageId === history?.currentId}
+					{ensureMessageDetails}
 					{setInputText}
 					{updateChat}
 					{editMessage}

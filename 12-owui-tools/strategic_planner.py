@@ -3,16 +3,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 6.20.3.1
+version: 6.23.10.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.10.1: Adoption de extract_llm_response_text et rejet strict des sorties tronquées MAX_TOKENS avant écriture Git.
 # 6.20.3.1: Migration de la confirmation process_plan vers events.confirm (Markdown).
 # 6.15.0.1: Ajout de close_plan (PAS, zéro LLM, états terminaux success/partial/failed/abandoned + ## Synthèse d'exécution), Gatekeeper 1 pré-LLM dans update_plan, garde terminal dans update_tasks et parsing/remplacement borné du frontmatter YAML.
 # 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans process_plan.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
 
 import sys
 import uuid
@@ -26,7 +26,7 @@ from typing import Optional, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output, echo_tool
+from echo_core import wrap_tool_output, echo_tool, extract_llm_response_text
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -158,17 +158,6 @@ class Tools:
             new_body = f"{body.rstrip()}\nstatus: {new_status}"
         return f"{prefix}{new_body}{suffix}{(content or '')[fm_match.end():]}"
 
-    @staticmethod
-    def _extract_llm_text(res_json: dict) -> Optional[str]:
-        """Extrait le texte de la réponse Gemini (après déballage enveloppe CA)."""
-        candidates = res_json.get("candidates", [])
-        if candidates and candidates[0].get("content"):
-            parts = candidates[0]["content"].get("parts", [])
-            # Filtrer les parties pensée (thought=True), ne garder que le texte final
-            text_parts = [p.get("text", "") for p in parts if not p.get("thought")]
-            return "".join(text_parts)
-        return None
-
     # ==========================================================================
     # FUNCTION CALLS PUBLIQUES
     # ==========================================================================
@@ -245,7 +234,13 @@ class Tools:
             return "❌ Échec : aucun modèle disponible pour la planification."
 
         # Extraction du texte généré
-        plan_content = self._extract_llm_text(res_json)
+        plan_content, is_truncated, finish_reason = extract_llm_response_text(res_json)
+        if is_truncated:
+            await events.status(f"❌ Génération interrompue ({finish_reason}) — opération annulée.", done=True)
+            return wrap_tool_output(
+                text=f"❌ Opération annulée : La sortie du planificateur a été tronquée (`finishReason={finish_reason}`). Aucune écriture n'a été effectuée.",
+                status={"status": "error", "error_code": "output_truncated_max_tokens", "finish_reason": finish_reason},
+            )
         if not plan_content:
             await events.status("❌ Réponse vide du planificateur.", done=True)
             return "❌ Erreur : le planificateur n'a produit aucun contenu."
@@ -407,7 +402,13 @@ class Tools:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
             return "Échec : aucun modèle disponible pour la modification."
 
-        new_content = self._extract_llm_text(res_json)
+        new_content, is_truncated, finish_reason = extract_llm_response_text(res_json)
+        if is_truncated:
+            await events.status(f"❌ Génération interrompue ({finish_reason}) — opération annulée.", done=True)
+            return wrap_tool_output(
+                text=f"❌ Opération annulée : La sortie du planificateur a été tronquée (`finishReason={finish_reason}`). Aucune écriture n'a été effectuée.",
+                status={"status": "error", "error_code": "output_truncated_max_tokens", "finish_reason": finish_reason},
+            )
         if not new_content:
             await events.status("❌ Réponse vide du planificateur.", done=True)
             return "Erreur : le planificateur n'a produit aucun contenu."
@@ -533,7 +534,13 @@ class Tools:
             await events.status("❌ Échec de la mise à jour des tâches.", done=True)
             return "Échec : aucun modèle disponible."
 
-        new_tasks_content = self._extract_llm_text(res_json)
+        new_tasks_content, is_truncated, finish_reason = extract_llm_response_text(res_json)
+        if is_truncated:
+            await events.status(f"❌ Génération interrompue ({finish_reason}) — opération annulée.", done=True)
+            return wrap_tool_output(
+                text=f"❌ Opération annulée : La sortie du planificateur a été tronquée (`finishReason={finish_reason}`). Aucune écriture n'a été effectuée.",
+                status={"status": "error", "error_code": "output_truncated_max_tokens", "finish_reason": finish_reason},
+            )
         if not new_tasks_content:
             await events.status("❌ Réponse vide pour les tâches.", done=True)
             return "Erreur : aucune tâche générée."
@@ -872,7 +879,7 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
             await events.status("❌ Échec : aucun modèle disponible pour l'analyse.", done=True)
             return "Échec : aucun modèle disponible."
 
-        analysis_content = self._extract_llm_text(res_json)
+        analysis_content = extract_llm_response_text(res_json)[0]
         await events.status(f"✅ Analyse du plan {plan_id} terminée.", done=True)
 
         return wrap_tool_output(

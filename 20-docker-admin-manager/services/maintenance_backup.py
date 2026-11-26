@@ -4,16 +4,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 6.18.23.1
+VERSION : 6.22.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.22.1.1: Sauvegarde chiffrée en streaming 1-passe EBKP1 (AES-256-GCM .tar.xz.enc) Fail-Closed et détection encrypted dans get_backup_list.
+# 6.21.10.1: Inclusion de RCLONE_CONF_DIR (/backups/rclone) et SETTINGS_FILE (/backups/settings.json) dans tar_sources.
 # 6.18.23.1: Bascule du checkpoint WAL auth.db sur open_sqlite_db (PRAGMA busy_timeout=5000, fermeture garantie).
 # 6.18.0.1: Alignement de l'arrêt/redémarrage coordonné backup et reprise nocturne sur BACKUP_AUX_CONTAINERS (ECHO v6).
 # 6.5.0.1: Checkpoint WAL SQLite sur auth.db avant archivage et inclusion de SECRETS_DIR et HOST_ENV_FILE dans la sauvegarde tar.xz.
-# 5.239.1.1: Exécution de la sauvegarde tar.xz à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS).
-# 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
 import datetime
 import glob
 import html
@@ -21,19 +21,24 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from core.config import (
     BACKUP_AUX_CONTAINERS,
     BACKUP_DIR,
     DOCKER_AVAILABLE,
+    HAS_ECHO_LIBS,
     HAS_PSUTIL,
     HAS_SCHEDULER,
     HOST_ENV_FILE,
+    LEGACY_HOST_ENV_FILE,
     MAINTENANCE_STATE,
     MCP_CACHE_DIR,
     N8N_DATA_DIR,
+    RCLONE_CONF_DIR,
     RCLONE_CONF_PATH,
     SECRETS_DIR,
+    SETTINGS_FILE,
     TARGET_CONTAINER,
     backup_scheduler,
     docker,
@@ -41,13 +46,21 @@ from core.config import (
     psutil,
 )
 from core.utils import human_size, _format_bytes, _get_tree_size
-from core.security import open_sqlite_db
+from core.security import get_instance_secret, open_sqlite_db
 from core.settings_io import (
     load_settings,
     load_maint_config,
     save_maint_report,
 )
 from services.semantic_pruning import run_semantic_pruning
+
+if HAS_ECHO_LIBS:
+    from echo_crypto import encrypt_backup_stream, is_encrypted_backup_file
+else:
+    encrypt_backup_stream = None
+
+    def is_encrypted_backup_file(_file_path: str) -> bool:
+        return False
 
 __all__ = [
     'perform_backup_task',
@@ -121,10 +134,17 @@ def perform_backup_task(record_report: bool = False):
     MAINTENANCE_STATE["percent"] = 2
     MAINTENANCE_STATE["status"] = "Sauvegarde (1/3) : Estimation du volume de données..."
 
-    archive_name = f"echo_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.xz"
+    archive_name = f"echo_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.xz.enc"
     fpath = os.path.join(BACKUP_DIR, archive_name)
+    part_path = f"{fpath}.part"
     ext_error = None
     try:
+        backup_key = get_instance_secret("ECHO_BACKUP_ENCRYPTION_KEY")
+        if not backup_key or not HAS_ECHO_LIBS or encrypt_backup_stream is None:
+            raise RuntimeError(
+                "ECHO_BACKUP_ENCRYPTION_KEY absente ou moteur echo_crypto indisponible : sauvegarde refusée (Fail-Closed)."
+            )
+
         sets = load_settings()
         ext_mode = sets.get("ext_mode", "local")
         has_ext = ext_mode in ("sftp", "rclone")
@@ -146,11 +166,14 @@ def perform_backup_task(record_report: bool = False):
                 '/app/auth-data',
                 N8N_DATA_DIR,
                 MCP_CACHE_DIR,
+                RCLONE_CONF_DIR,
+                SETTINGS_FILE,
                 SECRETS_DIR,
-                HOST_ENV_FILE,
             )
             if os.path.exists(d)
         ]
+        if not os.path.isfile(HOST_ENV_FILE) and os.path.isfile(LEGACY_HOST_ENV_FILE):
+            tar_sources.append(LEGACY_HOST_ENV_FILE)
         total_src_bytes = max(1, sum(_get_tree_size(d) for d in tar_sources))
 
         MAINTENANCE_STATE["percent"] = 5
@@ -171,8 +194,8 @@ def perform_backup_task(record_report: bool = False):
             except Exception:
                 pass
 
-        # Phase 2 : Compression locale tar -cJf à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1")
-        tar_cmd = ['tar', '-cJf', fpath, *tar_sources]
+        # Phase 2 : Compression tar.xz pipée en direct vers chiffrement streaming AES-256-GCM (Zéro-RAM)
+        tar_cmd = ['tar', '-cJf', '-', *tar_sources]
         if shutil.which("ionice"):
             tar_cmd = ["ionice", "-c", "3"] + tar_cmd
         if shutil.which("nice"):
@@ -181,33 +204,74 @@ def perform_backup_task(record_report: bool = False):
         tar_env = os.environ.copy()
         tar_env["XZ_OPT"] = "-T2 -1"
 
-        subp_kwargs = {"stderr": subprocess.PIPE, "text": True, "env": tar_env}
+        subp_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "env": tar_env}
         if hasattr(os, "nice"):
             subp_kwargs["preexec_fn"] = lambda: os.nice(19)
         elif os.name == "nt":
             subp_kwargs["creationflags"] = 0x00000040  # IDLE_PRIORITY_CLASS
 
         proc_tar = subprocess.Popen(tar_cmd, **subp_kwargs)
-        while proc_tar.poll() is None:
+        stderr_chunks = []
+        enc_errors = []
+
+        def _drain_stderr():
+            if proc_tar.stderr is None:
+                return
+            try:
+                stderr_chunks.append(proc_tar.stderr.read().decode("utf-8", errors="ignore"))
+            except Exception:
+                pass
+
+        def _enc_worker():
+            try:
+                fd = os.open(part_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as f_out:
+                    encrypt_backup_stream(proc_tar.stdout, f_out, backup_key)
+            except Exception as enc_exc:
+                enc_errors.append(enc_exc)
+
+        t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_enc = threading.Thread(target=_enc_worker, daemon=True)
+        t_err.start()
+        t_enc.start()
+
+        while proc_tar.poll() is None or t_enc.is_alive():
             try:
                 read_b = 0
-                if HAS_PSUTIL and psutil is not None:
+                if proc_tar.poll() is None and HAS_PSUTIL and psutil is not None:
                     read_b = psutil.Process(proc_tar.pid).io_counters().read_bytes
                 tar_pct = min(99.0, (read_b * 100.0) / total_src_bytes) if read_b > 0 else 0.0
-                cur_arch = os.path.getsize(fpath) if os.path.exists(fpath) else 0
+                cur_arch = os.path.getsize(part_path) if os.path.exists(part_path) else 0
                 span = 50.0 if has_ext else 90.0
                 MAINTENANCE_STATE["percent"] = round(5.0 + (tar_pct / 100.0) * span, 1)
                 MAINTENANCE_STATE["status"] = (
-                    f"Sauvegarde (2/{step_total}) : Compression tar.xz... {tar_pct:.0f}% "
+                    f"Sauvegarde (2/{step_total}) : Compression & chiffrement AES-256-GCM... {tar_pct:.0f}% "
                     f"(Archive : {human_size(cur_arch)})"
                 )
             except Exception:
                 pass
             time.sleep(1)
 
+        t_enc.join()
+        t_err.join()
+        if proc_tar.stdout:
+            try:
+                proc_tar.stdout.close()
+            except Exception:
+                pass
+        if proc_tar.stderr:
+            try:
+                proc_tar.stderr.close()
+            except Exception:
+                pass
+
+        if enc_errors:
+            raise RuntimeError(f"Échec chiffrement sauvegarde : {enc_errors[0]}")
         if proc_tar.returncode != 0:
-            err_tar = (proc_tar.stderr.read() if proc_tar.stderr else "").strip()[:200]
+            err_tar = "".join(stderr_chunks).strip()[:200]
             raise RuntimeError(f"Échec compression tar (code {proc_tar.returncode}): {err_tar}")
+
+        os.replace(part_path, fpath)
 
         MAINTENANCE_STATE["status"] = f"Sauvegarde (2/{step_total}) : Redémarrage des services..."
         target.start()
@@ -220,7 +284,11 @@ def perform_backup_task(record_report: bool = False):
         sets = load_settings()
         ext_mode = sets.get("ext_mode", "local")
         if sets.get("auto_cleanup", True):
-            files = sorted(glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')), key=os.path.getmtime, reverse=True)
+            files = sorted(
+                (f for f in glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')) if not f.endswith('.part')),
+                key=os.path.getmtime,
+                reverse=True,
+            )
             mode, val = sets.get("cleanup_mode", "count"), int(sets.get("cleanup_value", 5))
             if mode == 'count' and val > 0 and len(files) > val:
                 for f in files[val:]:
@@ -231,7 +299,7 @@ def perform_backup_task(record_report: bool = False):
                         os.remove(f)
 
         arch_size = max(1, os.path.getsize(fpath) if os.path.exists(fpath) else 0)
-        local_kept = len(glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')))
+        local_kept = len([f for f in glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')) if not f.endswith('.part')])
 
         # Phase 3 : Externalisation
         if ext_mode == "sftp":
@@ -375,6 +443,11 @@ def perform_backup_task(record_report: bool = False):
 
         return backup_info
     except Exception as e:
+        if os.path.exists(part_path):
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
         for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS):
             try:
                 docker.from_env().containers.get(c_name).start()
@@ -524,5 +597,17 @@ def update_system_schedules():
     except Exception: pass
 
 def get_backup_list():
-    files = sorted(glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')), key=os.path.getmtime, reverse=True)
-    return [{'name': os.path.basename(f), 'size': human_size(os.path.getsize(f)), 'date': datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%d/%m/%Y %H:%M')} for f in files]
+    files = sorted(
+        (f for f in glob.glob(os.path.join(BACKUP_DIR, 'echo_backup_*.tar.*')) if not f.endswith('.part')),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    return [
+        {
+            'name': os.path.basename(f),
+            'size': human_size(os.path.getsize(f)),
+            'date': datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%d/%m/%Y %H:%M'),
+            'encrypted': is_encrypted_backup_file(f),
+        }
+        for f in files
+    ]

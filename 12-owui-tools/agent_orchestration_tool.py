@@ -3,16 +3,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.20.3.1
+version: 6.23.1.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.23.1.1: Préfixage anti-collision m{idx}_{sid} sur multiplier > 1, bornage SSOT cid/clean_pid, consommation USR_ORCHESTRATOR_COUNCIL_* (echo_prompts) et garde [POSITION_STABILISEE] sans angle mort.
+# 6.23.0.1: Concile de Delphes V2 (allowed_tools, cache KV chaud, historique 100%, unanimité [POSITION_STABILISEE], continuité multi-séances via council_state:<cid>).
+# 6.20.3.2: Enrichissement reST (:param) des docstrings Skills (forge_skill, read_skill, search_skill, delete_user_skill).
 # 6.20.3.1: Migration de la confirmation delete_user_skill vers events.confirm (Markdown et timeout_seconds).
 # 6.20.2.1: Ajout de l'avertissement coût tokens et de l'accord préalable Utilisateur dans la docstring de consult_phalanx.
-# 6.19.0.1: Remplacement de consult_supervised_workers par consult_phalanx (Phalange multi-niveaux Stratège/Capitaine/Hoplite).
-# 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans delete_user_skill.
-# 6.7.7.1: Migration vers le découpage en tours d'outils (COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3 [0..6], ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120, ECHO_AUTONOMOUS_MAX_TURNS = 15, ECHO_AUTONOMOUS_TIMEOUT_SEC = 300).
 
 import sys
 import orjson as json
@@ -29,16 +29,21 @@ from echo_protocol import SkillRouterOutput
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
-from echo_subagent_hub import EchoSubagentController, save_subagent_meta
+from echo_subagent_hub import EchoSubagentController, get_subagent_system_prompt, save_subagent_meta
 from echo_constants import (
+    COUNCIL_STATE_PREFIX,
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
     ECHO_AUTONOMOUS_MAX_TURNS,
     ECHO_AUTONOMOUS_TIMEOUT_SEC,
     ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
+    ECHO_COUNCIL_ID_MAX_LEN,
+    ECHO_COUNCIL_INSTANCE_ID_MAX_LEN,
     ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
+    ECHO_COUNCIL_STABILIZED_MARKER,
     ECHO_LLM_CALL_TIMEOUT,
     ECHO_MAX_PHALANX_DEPTH,
+    ECHO_PHALANX_ID_MAX_LEN,
     get_generation_config,
     get_headless_block_reason,
 )
@@ -49,6 +54,10 @@ from echo_prompts import (
     SYS_ORCHESTRATOR_COUNCIL_EXPERT,
     SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS,
     SYS_ORCHESTRATOR_PHALANX,
+    USR_ORCHESTRATOR_COUNCIL_FINAL_ROUND,
+    USR_ORCHESTRATOR_COUNCIL_INTERMEDIATE,
+    USR_ORCHESTRATOR_COUNCIL_R1_FOLLOWUP,
+    USR_ORCHESTRATOR_COUNCIL_R1_INITIAL,
 )
 
 _COUNCIL_LOCKS: dict[str, asyncio.Lock] = {}
@@ -98,7 +107,15 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Crée ou met à jour une expertise spécialisée (Skill) pour les sous-agents."""
+        """Crée un nouveau Skill réutilisable pour les sous-agents ou remplace intégralement un Skill existant.
+        Avant toute mise à jour, lire le Skill existant avec read_skill pour éviter de perdre des directives.
+
+        :param skill_id: Identifiant unique en snake_case (ex: "expert_sec_cloud"). Un ID existant est écrasé.
+        :param name: Titre court sur une seule ligne (ex: "Expert Sécurité Cloud").
+        :param description: Résumé sur une seule ligne du domaine et des cas d'usage (utilisé par search_skill).
+        :param instructions: Prompt système complet du sous-agent (protocole PAS, sans en-tête YAML '---').
+        :param require_web_grounding: Si True, impose au sous-agent de vérifier l'état de l'art sur le Web avant toute réponse ou action.
+        """
         if require_web_grounding:
             grounding_directive = (
                 "\n\n<directive_obligatoire>\n"
@@ -147,7 +164,10 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Lit le contenu brut et les directives d'une expertise (Skill) existante."""
+        """Lit le contenu brut et les directives d'une expertise (Skill) existante.
+
+        :param skill_id: Identifiant du Skill à inspecter (obtenu via list_skills ou search_skill).
+        """
         user_id = __user__.get("id", "system") if __user__ else "system"
 
         content = await asyncio.to_thread(get_skill_content, user_id, skill_id)
@@ -166,7 +186,10 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Identifie jusqu'à 3 expertises (Skills) pertinentes pour un besoin spécifique."""
+        """Identifie jusqu'à 3 expertises (Skills) pertinentes pour un besoin spécifique.
+
+        :param need_description: Description précise du besoin ou de l'expertise recherchée.
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
 
@@ -232,7 +255,11 @@ class Tools:
         __event_call__: callable = None,
         __metadata__: dict = {}
     ) -> str:
-        """Supprime une expertise (Skill) après confirmation interactive de l'utilisateur."""
+        """Supprime une expertise (Skill) après confirmation interactive de l'utilisateur.
+
+        :param skill_id: Identifiant du Skill à supprimer définitivement.
+        :param timeout_seconds: Délai d'attente de la confirmation utilisateur en secondes (défaut 300).
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
 
@@ -293,6 +320,7 @@ class Tools:
         rounds: Optional[int] = None,
         multiplier: int = 1,
         close_on_finish: bool = False,
+        allowed_tools: Optional[List[str]] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
@@ -386,7 +414,7 @@ class Tools:
             )
 
         # Résolution et normalisation du council_id (évite toute collision avec le séparateur '_')
-        cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")
+        cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")[:ECHO_COUNCIL_ID_MAX_LEN]
 
         # Chargement et validation de chaque skill, puis démultiplication par multiplier
         roster = []
@@ -422,7 +450,7 @@ class Tools:
             meta = parse_skill_metadata(content)
             base_name = meta.get("name", sid)
             for m_idx in range(1, multiplier + 1):
-                inst_id = f"{sid}_{m_idx}" if multiplier > 1 else sid
+                inst_id = (f"m{m_idx}_{sid}" if multiplier > 1 else sid)[:ECHO_COUNCIL_INSTANCE_ID_MAX_LEN]
                 inst_name = f"{base_name} #{m_idx}" if multiplier > 1 else base_name
                 roster.append({
                     "idx": participant_idx,
@@ -446,15 +474,61 @@ class Tools:
         council_sids: List[str] = []  # Pour la purge finale
 
         async with _get_council_lock(user_id, chat_id, cid):
+            council_state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+            state_key = f"{COUNCIL_STATE_PREFIX}{cid}"
+            session_num = 1
+            prev_last_round: Dict[str, str] = {}
+            session_started_at = datetime.datetime.now().replace(microsecond=0).isoformat()
+            raw_council_state = council_state_mgr.get_session_setting(state_key)
+            if raw_council_state:
+                try:
+                    parsed_state = json.loads(raw_council_state)
+                    if (
+                        isinstance(parsed_state, dict)
+                        and int(parsed_state.get("session_num") or 0) >= 1
+                    ):
+                        session_num = int(parsed_state.get("session_num") or 0) + 1
+                        raw_prev = parsed_state.get("last_round_responses")
+                        if isinstance(raw_prev, dict):
+                            prev_last_round = {str(k): str(v) for k, v in raw_prev.items()}
+                        if parsed_state.get("session_started_at"):
+                            session_started_at = str(parsed_state["session_started_at"])
+                except Exception:
+                    session_num = 1
+                    prev_last_round = {}
+                    session_started_at = datetime.datetime.now().replace(microsecond=0).isoformat()
+
+            members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
+
             for round_num in range(1, effective_rounds + 1):
                 await events.status(
-                    f"🏛️ Conseil [{cid}] — Tour {round_num}/{effective_rounds}..."
+                    f"🏛️ Conseil [{cid}] — Séance #{session_num}, Tour {round_num}/{effective_rounds}..."
                 )
 
                 # Construction du prompt par participant
                 if round_num == 1:
-                    base_prompt = f"### QUESTION SOUMISE AU CONSEIL\n{question}"
-                    round_prompts = {p["instance_id"]: base_prompt for p in roster}
+                    if session_num == 1:
+                        base_prompt = USR_ORCHESTRATOR_COUNCIL_R1_INITIAL.format(
+                            effective_rounds=effective_rounds,
+                            question=question,
+                        )
+                        round_prompts = {p["instance_id"]: base_prompt for p in roster}
+                    else:
+                        round_prompts = {}
+                        for p in roster:
+                            inst_id = p["instance_id"]
+                            others_prev = "\n\n".join(
+                                f"**{r['alias']}** ({r['name']}) :\n{prev_last_round[r['instance_id']]}"
+                                for r in roster
+                                if r["instance_id"] != inst_id and r["instance_id"] in prev_last_round
+                            )
+                            round_prompts[inst_id] = USR_ORCHESTRATOR_COUNCIL_R1_FOLLOWUP.format(
+                                prev_session_num=session_num - 1,
+                                others_prev=others_prev or "(Aucune contribution précédente)",
+                                session_num=session_num,
+                                effective_rounds=effective_rounds,
+                                question=question,
+                            )
                 else:
                     prev = all_rounds[-1]
                     round_prompts = {}
@@ -465,44 +539,64 @@ class Tools:
                             for r in roster
                             if r["instance_id"] != inst_id and r["instance_id"] in prev
                         )
-                        round_prompts[inst_id] = (
-                            f"### CONTRIBUTIONS DU TOUR {round_num - 1}\n{others}\n\n"
-                            f"### MISSION DU MODÈLE\n"
-                            f"Le Modèle est {p['alias']} ({p['name']}). Il DOIT prendre connaissance des contributions ci-dessus "
-                            f"pour exprimer son analyse, ses accords, ses désaccords et ses compléments. "
-                            f"Le Modèle PEUT signifier qu'il préfère ne pas répondre."
-                        )
+                        if round_num == effective_rounds:
+                            round_prompts[inst_id] = USR_ORCHESTRATOR_COUNCIL_FINAL_ROUND.format(
+                                session_num=session_num,
+                                round_num=round_num,
+                                prev_round_num=round_num - 1,
+                                effective_rounds=effective_rounds,
+                                others=others,
+                                participant_alias=p["alias"],
+                                participant_name=p["name"],
+                                stabilized_marker=ECHO_COUNCIL_STABILIZED_MARKER,
+                            )
+                        else:
+                            round_prompts[inst_id] = USR_ORCHESTRATOR_COUNCIL_INTERMEDIATE.format(
+                                session_num=session_num,
+                                round_num=round_num,
+                                prev_round_num=round_num - 1,
+                                effective_rounds=effective_rounds,
+                                others=others,
+                                participant_alias=p["alias"],
+                                participant_name=p["name"],
+                                stabilized_marker=ECHO_COUNCIL_STABILIZED_MARKER,
+                            )
 
                 # Appels parallèles — chaque participant est un agent indépendant
                 async def _call_participant(participant: dict, prompt: str) -> Tuple[str, str]:
-                    """Appelle un participant via delegate_to_agent et retourne (instance_id, texte)."""
+                    """Appelle un participant via EchoSubagentController et retourne (instance_id, texte)."""
                     sid = participant["skill_id"]
                     inst_id = participant["instance_id"]
                     agent_sid = f"thread_council_{cid}_{inst_id}"
                     if agent_sid not in council_sids:
                         council_sids.append(agent_sid)
 
-                    # Prompt système enrichi avec le contexte du conseil
-                    members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
-                    current_time = datetime.datetime.now().isoformat()
-                    council_system = SYS_ORCHESTRATOR_COUNCIL_EXPERT.format(
-                        participant_alias=f"{participant['alias']} ({participant['name']})",
-                        roster_length=len(roster),
-                        members=members,
-                        round_num=round_num,
-                        effective_rounds=effective_rounds,
-                        max_calls_per_round=max_turns_per_round,
-                        current_time=current_time
+                    already_init = bool(
+                        get_subagent_system_prompt(council_state_mgr, agent_sid)
+                        or council_state_mgr.get_thread_history(agent_sid)
                     )
+                    if not already_init:
+                        council_system: Optional[str] = SYS_ORCHESTRATOR_COUNCIL_EXPERT.format(
+                            participant_alias=f"{participant['alias']} ({participant['name']})",
+                            roster_length=len(roster),
+                            members=members,
+                            max_calls_per_round=max_turns_per_round,
+                            current_time=session_started_at,
+                        )
+                        call_skill_id: Optional[str] = sid
+                    else:
+                        council_system = None
+                        call_skill_id = None
 
                     result = await EchoSubagentController.run_or_resume(
                         user_id=user_id,
                         chat_id=chat_id,
                         task=prompt,
                         system_prompt=council_system,
-                        skill_id=sid,
+                        skill_id=call_skill_id,
                         sub_sid=agent_sid,
                         target_model_key=target_model,
+                        allowed_tools=allowed_tools,
                         slice_max_turns=max_turns_per_round,
                         slice_timeout_sec=ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
                         autonomous_slice=True,
@@ -540,8 +634,10 @@ class Tools:
 
                 # Collecte — un participant qui échoue ne bloque pas le conseil
                 round_responses: Dict[str, str] = {}
+                round_had_exception = False
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
+                        round_had_exception = True
                         inst_id = roster[i]["instance_id"]
                         alias = roster[i]["alias"]
                         round_responses[inst_id] = f"⚠️ {alias} n'a pas pu répondre."
@@ -553,10 +649,23 @@ class Tools:
 
                 all_rounds.append(round_responses)
 
+                if (
+                    2 <= round_num < effective_rounds
+                    and not round_had_exception
+                    and all(
+                        ECHO_COUNCIL_STABILIZED_MARKER in (round_responses.get(p["instance_id"]) or "")
+                        for p in roster
+                    )
+                ):
+                    await events.status(
+                        f"🏛️ Conseil [{cid}] — Séance #{session_num} stabilisée à l'unanimité au tour {round_num}/{effective_rounds}."
+                    )
+                    break
+
             # ── Phase 3 : Synthèse finale ──
             await events.status("📝 Synthèse du conseil en cours...")
 
-            transcript = f"### QUESTION\n{question}\n\n"
+            transcript = f"### SÉANCE #{session_num} — QUESTION\n{question}\n\n"
             for rnd, responses in enumerate(all_rounds, 1):
                 transcript += f"---\n### TOUR {rnd}\n\n"
                 for p in roster:
@@ -574,10 +683,14 @@ class Tools:
                 role_name=f"Synthèse du Conseil ({cid})",
                 target_model_key=synthesis_model,
                 user_prompt=transcript,
-                display_user_prompt=f"Synthèse du conseil [{cid}] ({len(roster)} experts, {effective_rounds} tours) — Question : {question[:500]}",
+                display_user_prompt=(
+                    f"Synthèse du conseil [{cid}] — Séance #{session_num} "
+                    f"({len(roster)} experts, {len(all_rounds)} tours) — Question : {question[:500]}"
+                ),
                 system_prompt=synthesis_system,
                 group_id=cid,
                 role_order=999,
+                append_history=True,
                 override_thinking="high",
                 max_output_tokens=16000,
                 timeout=self.valves.COGNITIVE_TIMEOUT,
@@ -591,11 +704,20 @@ class Tools:
                 await EchoSubagentController.execute_control_action(
                     action="close", user_id=user_id, chat_id=chat_id, target_ids=[cid]
                 )
+                council_state_mgr.save_session_setting(state_key, "")
+            else:
+                state_payload = json.dumps({
+                    "session_num": session_num,
+                    "session_started_at": session_started_at,
+                    "last_round_responses": all_rounds[-1] if all_rounds else {},
+                }).decode("utf-8")
+                council_state_mgr.save_session_setting(state_key, state_payload)
 
         roster_summary = ", ".join(f"{p['alias']} ({p['name']})" for p in roster)
         await events.status("🏛️ Conseil terminé.", done=True)
         return (
-            f"### SYNTHÈSE DU CONSEIL [{cid}] ({len(roster)} experts, {effective_rounds} tours)\n"
+            f"### SYNTHÈSE DU CONSEIL [{cid}] — Séance #{session_num} "
+            f"({len(roster)} experts, {len(all_rounds)} tours)\n"
             f"**Participants** : {roster_summary}\n\n"
             f"{synthesis_text}"
         )
@@ -630,7 +752,7 @@ class Tools:
 
         clean_pid = sanitize_echo_id(
             phalanx_id or uuid.uuid4().hex[:8], fallback="phalanx"
-        ).replace("_", "-")
+        ).replace("_", "-")[:ECHO_PHALANX_ID_MAX_LEN]
         group_id = clean_pid if clean_pid.startswith("phx_") else f"phx_{clean_pid}"
         strategist_sid = f"thread_phalanx_{clean_pid}_strategist"
 
