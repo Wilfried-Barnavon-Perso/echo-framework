@@ -3,21 +3,20 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.24.0.1
-description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
+version: 6.24.6.1
+description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & Terminaux Local/SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Consolidation de l'exécution SSH one-shot et des sessions terminales interactives (Local/SSH) dans manage_terminal via echo_terminals.
 # 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
 # 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
 # 6.19.0.1: Isolation paresseuse des exécutions sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 # 6.17.4.1: Propagation du jeton HMAC sandbox_callback_token lors de l'exécution et alignement Option B (sans Pacemaker WS/BidiRouter).
-# 6.16.0.2: Retrait bidi_polling/poller, raccordement /wait_ready, offsets WM, abort léger et garde expose_app(background=True).
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
 import asyncio
-import json
 import os
 import re
 import sys
@@ -38,11 +37,20 @@ from echo_constants import (  # noqa: E402
     ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS,
     ECHO_SUBAGENT_CONTEXT,
     SANDBOX_LISTEN_MAX_WAIT_SEC,
+    is_automation_context,
 )
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
 from echo_paths import get_echo_session_path, sanitize_echo_id, scope_subagent_sandbox_path  # noqa: E402
-from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_terminals import (  # noqa: E402
+    format_terminal_locked_message,
+    worker_close_terminal,
+    worker_exec_ssh_oneshot,
+    worker_list_terminals,
+    worker_open_terminal,
+    worker_read_terminal,
+    worker_write_terminal,
+)
 from echo_window_manager import get_window_manager  # noqa: E402
 
 
@@ -508,113 +516,260 @@ class Tools:
             return f"❌ Erreur Client: {str(e)}"
 
     @echo_tool
-    async def ssh_executor(
+    async def manage_terminal(
         self,
-        account_id: str,
-        command: str,
+        action: Literal["exec", "open", "list", "read", "write", "close"],
+        mode: Optional[Literal["local", "ssh"]] = None,
+        account_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        name: Optional[str] = None,
+        command: Optional[str] = None,
+        signal_key: Optional[Literal["ctrl_c", "ctrl_d", "ctrl_z", "enter"]] = None,
+        append_newline: bool = True,
+        tail_lines: int = 100,
+        wait_ms: int = 400,
         timeout_sec: int = 60,
         __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
-        """Exécute une commande sur un serveur SSH configuré dans l'Identity Vault sans exposer ses secrets."""
+        """Exécute une commande SSH isolée ou pilote les sessions terminales interactives (Sandbox locale et SSH distant)."""
         uid, cid, _ = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
             return "❌ Contexte de session manquant (chat_id)."
 
-        clean_acc = (account_id or "").strip()
-        clean_cmd = (command or "").strip()
-        if not clean_acc or not clean_cmd:
-            return "❌ Les paramètres 'account_id' et 'command' sont obligatoires."
-
-        if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
-            return (
-                f"❌ timeout_sec ({timeout_sec}s) doit être compris "
-                f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
-            )
-
         events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
+        clean_acc = (account_id or "").strip()
+        clean_sid = (session_id or "").strip()
+        clean_name = (name or "").strip() or None
 
-        def _load_ssh_creds() -> str:
-            return EchoStateManager(user_id=uid).get_vault_credential("ssh", clean_acc)
-
-        raw_creds = await asyncio.to_thread(_load_ssh_creds)
-        if not raw_creds:
-            return (
-                f"❌ Identifiants SSH introuvables pour '{clean_acc}'. "
-                "Vérifier les comptes disponibles avec list_identities(service=\"ssh\")."
-            )
-
-        try:
-            creds = json.loads(raw_creds)
-        except Exception:
-            return f"❌ Configuration SSH invalide (JSON corrompu) pour '{clean_acc}'."
-
-        host = str(creds.get("host") or "").strip()
-        user = str(creds.get("user") or "").strip()
-        if not host or not user:
-            return f"❌ Configuration SSH incomplète pour '{clean_acc}' ('host' et 'user' requis)."
-
-        try:
-            port = int(creds.get("port") or 22)
-        except (TypeError, ValueError):
-            port = 22
-
-        password = str(creds.get("password") or "")
-        private_key = str(creds.get("private_key") or "")
-
-        await events.status(f"🔐 Exécution SSH sur '{clean_acc}' ({user}@{host}:{port})...")
-        sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
-
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=float(timeout_sec) + 10.0) as client:
-                response = await client.post(
-                    f"{sandbox_base}/ssh",
-                    json={
-                        "user_id": uid,
-                        "chat_id": cid,
-                        "host": host,
-                        "port": port,
-                        "user": user,
-                        "password": password,
-                        "private_key": private_key,
-                        "command": clean_cmd,
-                        "timeout": timeout_sec,
-                    },
+        if action == "exec":
+            clean_cmd = (command or "").strip()
+            if not clean_acc or not clean_cmd:
+                return wrap_tool_output(
+                    text="❌ Les paramètres 'account_id' et 'command' sont obligatoires pour action='exec'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
+                return wrap_tool_output(
+                    text=(
+                        f"❌ timeout_sec ({timeout_sec}s) doit être compris "
+                        f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
+                    ),
+                    status={"status": "error", "error_code": "invalid_arguments"},
                 )
 
-            if response.status_code != 200:
-                err_msg = f"Erreur Worker SSH (HTTP {response.status_code}) : {response.text[:300]}"
+            await events.status(f"🔐 Exécution SSH sur '{clean_acc}'...")
+            res = await worker_exec_ssh_oneshot(uid, cid, clean_acc, clean_cmd, timeout_sec=timeout_sec)
+            if res.get("status") != "success" and res.get("exit_code", -1) == -1:
+                err_msg = res.get("error") or "Erreur SSH."
                 await events.status(err_msg, done=True)
                 return wrap_tool_output(
-                    text="",
+                    text=res.get("output") or err_msg,
                     status={"status": "error", "account_id": clean_acc, "exit_code": -1, "error": err_msg},
                 )
 
-            res_data = response.json()
-            status_val = res_data.get("status", "error")
-            exit_code = res_data.get("exit_code", -1)
-            text_out = res_data.get("output") or ""
-            err_out = res_data.get("error") or ""
-            if err_out:
-                text_out = f"{text_out}\n\n⚠️ Erreur SSH :\n{err_out}".strip()
-
+            text_out = res.get("output") or ""
+            if res.get("error"):
+                text_out = f"{text_out}\n\n⚠️ Erreur SSH :\n{res['error']}".strip()
+            exit_code = res.get("exit_code", -1)
             await events.status(f"Exécution SSH terminée (code {exit_code}).", done=True)
             return wrap_tool_output(
                 text=text_out,
                 status={
-                    "status": "success" if status_val == "success" else "error",
+                    "status": res.get("status", "error"),
                     "account_id": clean_acc,
+                    "target": res.get("target", ""),
                     "exit_code": exit_code,
                 },
             )
-        except httpx.RequestError as e:
-            err_msg = f"Service Coding Worker injoignable : {str(e)}"
-            await events.status(err_msg, done=True)
-            return f"❌ {err_msg}"
-        except Exception as e:
-            err_msg = f"Erreur Client SSH : {str(e)}"
-            await events.status(err_msg, done=True)
-            return f"❌ {err_msg}"
+
+        if action == "open":
+            if is_automation_context(__metadata__):
+                return wrap_tool_output(
+                    text="❌ Action refusée : l'ouverture d'un terminal interactif est interdite en contexte headless/automatisé.",
+                    status={"status": "error", "error_code": "headless_forbidden"},
+                )
+            eff_mode = mode or ("ssh" if clean_acc else "local")
+            if eff_mode == "local" and clean_acc:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'account_id' est interdit lorsque mode='local'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            if eff_mode == "ssh" and not clean_acc:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+
+            msg_id = str((__metadata__ or {}).get("message_id") or "").strip() or None
+            await events.status(f"🖥️ Ouverture d'un terminal {eff_mode}...")
+            res = await worker_open_terminal(
+                uid,
+                cid,
+                mode=eff_mode,
+                account_id=clean_acc or None,
+                name=clean_name,
+                message_id=msg_id,
+            )
+            if res.get("status") != "success":
+                err_msg = res.get("error") or "Erreur ouverture terminal."
+                await events.status(err_msg, done=True)
+                return wrap_tool_output(text=err_msg, status={"status": "error", "error": err_msg})
+
+            sess = res["session"]
+            wm = get_window_manager()
+            await wm.open_tab(
+                uid,
+                cid,
+                "terminal",
+                {
+                    "sessionId": sess["id"],
+                    "name": sess["name"],
+                    "mode": sess["mode"],
+                    "accountId": sess.get("account_id") or "",
+                    "target": sess.get("target") or "",
+                    "agentLocked": bool(sess.get("agent_locked")),
+                    "auto": True,
+                },
+            )
+            await wm.broadcast_terminal_state(uid, cid, sess, "opened")
+
+            if sess.get("mode") == "ssh":
+                msg_text = (
+                    f"🖥️ Session terminale SSH '{sess['name']}' (`{sess['id']}`) ouverte sur `{sess.get('target') or ''}`.\n"
+                    "🔒 Session ouverte verrouillée en lecture seule par défaut : "
+                    "L'Utilisateur peut la déverrouiller dans l'interface si une interaction d'écriture par le Modèle est requise."
+                )
+            else:
+                msg_text = (
+                    f"🖥️ Session terminale locale '{sess['name']}' (`{sess['id']}`) "
+                    f"ouverte sur `{sess.get('target') or 'local:/sandbox'}` (🔓 déverrouillée)."
+                )
+            await events.status(f"Terminal '{sess['name']}' ouvert.", done=True)
+            return wrap_tool_output(text=msg_text, status={"status": "success", "session": sess})
+
+        if action == "list":
+            res = await worker_list_terminals(uid, cid)
+            if res.get("status") != "success":
+                err_msg = res.get("error") or "Erreur liste terminaux."
+                return wrap_tool_output(text=err_msg, status={"status": "error", "error": err_msg, "items": [], "count": 0})
+            items = res.get("items") or []
+            if not items:
+                text_out = "Aucune session terminale active dans cette conversation."
+            else:
+                lines = [f"**{len(items)} session(s) terminale(s) active(s)**\n"]
+                lines.append("| ID | Nom | Mode | Cible | État | Verrou agent |")
+                lines.append("|---|---|---|---|---|---|")
+                for item in items:
+                    lock_lbl = "🔒 Verrouillé" if item.get("agent_locked") else "🔓 Déverrouillé"
+                    alive_lbl = "Actif" if item.get("alive", True) else "Terminé"
+                    lines.append(
+                        f"| `{item.get('id', '')}` | {item.get('name', '')} | {item.get('mode', '')} "
+                        f"| `{item.get('target', '')}` | {alive_lbl} | {lock_lbl} |"
+                    )
+                text_out = "\n".join(lines)
+            return wrap_tool_output(
+                text=text_out,
+                status={"status": "success", "count": len(items), "items": items},
+            )
+
+        if action == "read":
+            if not clean_sid:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'session_id' est obligatoire pour action='read'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            res = await worker_read_terminal(clean_sid, tail_lines=tail_lines)
+            if res.get("status") != "success":
+                return wrap_tool_output(text=res.get("error") or "Erreur lecture terminal.", status=res)
+            text_out = res.get("text") or ""
+            return wrap_tool_output(
+                text=text_out if text_out else "(Buffer terminal vide)",
+                status={
+                    "status": "success",
+                    "session": res.get("session") or {},
+                    "cursor": res.get("cursor", 0),
+                    "truncated": bool(res.get("truncated")),
+                    "total_buffered_bytes": res.get("total_buffered_bytes", 0),
+                },
+            )
+
+        if action == "write":
+            if not clean_sid or ((command is None or command == "") and signal_key is None):
+                return wrap_tool_output(
+                    text="❌ Les paramètres 'session_id' et ('command' ou 'signal_key') sont obligatoires pour action='write'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            res = await worker_write_terminal(
+                clean_sid,
+                input_text=command,
+                actor="agent",
+                append_newline=append_newline,
+                signal=signal_key,
+                wait_ms=wait_ms,
+            )
+            if res.get("error_code") == "terminal_locked":
+                sess_name = str(res.get("name") or clean_sid)
+                sid = str(res.get("session_id") or clean_sid)
+                return wrap_tool_output(
+                    text=format_terminal_locked_message(sess_name, sid),
+                    status={
+                        "status": "error",
+                        "error_code": "terminal_locked",
+                        "session_id": sid,
+                        "name": sess_name,
+                        "agent_locked": True,
+                    },
+                )
+            if res.get("status") != "success":
+                return wrap_tool_output(text=res.get("error") or "Erreur écriture terminal.", status=res)
+            text_out = res.get("text") or ""
+            return wrap_tool_output(
+                text=text_out if text_out else "(Entrée transmise, aucune nouvelle sortie)",
+                status={
+                    "status": "success",
+                    "session": res.get("session") or {},
+                    "cursor": res.get("cursor", 0),
+                    "truncated": bool(res.get("truncated")),
+                },
+            )
+
+        if action == "close":
+            if not clean_sid:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'session_id' est obligatoire pour action='close'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            res = await worker_close_terminal(uid, cid, clean_sid, actor="agent")
+            if res.get("error_code") == "terminal_locked":
+                sess_name = str(res.get("name") or clean_sid)
+                sid = str(res.get("session_id") or clean_sid)
+                return wrap_tool_output(
+                    text=format_terminal_locked_message(sess_name, sid),
+                    status={
+                        "status": "error",
+                        "error_code": "terminal_locked",
+                        "session_id": sid,
+                        "name": sess_name,
+                        "agent_locked": True,
+                    },
+                )
+            if res.get("status") == "error":
+                return wrap_tool_output(text=res.get("error") or "Erreur fermeture terminal.", status=res)
+            wm = get_window_manager()
+            await wm.broadcast_terminal_state(uid, cid, {"id": clean_sid}, "closed")
+            return wrap_tool_output(
+                text=f"🛑 Session terminale `{clean_sid}` fermée.",
+                status={
+                    "status": "terminated",
+                    "id": clean_sid,
+                    "already_closed": bool(res.get("already_closed")),
+                },
+            )
+
+        return wrap_tool_output(
+            text=f"❌ Action terminale invalide : '{action}'.",
+            status={"status": "error", "error_code": "invalid_arguments"},
+        )

@@ -706,7 +706,7 @@ export const deleteEchoVaultSecret = async (
 export interface EchoVaultSchemaField {
 	id: string;
 	label: string;
-	type?: string;
+	type?: 'text' | 'password' | 'textarea' | 'textarea_secret' | string;
 	required?: boolean;
 	help?: string;
 	placeholder?: string;
@@ -756,3 +756,92 @@ export const getEchoSlashCommands = async (token: string): Promise<EchoSlashComm
 	_cachedSlashCommands = items;
 	return items;
 };
+
+export interface EchoSshTargetItem {
+	account_id: string;
+	host: string;
+	port: number;
+	user: string;
+	description: string;
+	has_certificate: boolean;
+}
+
+export interface EchoTerminalSessionInfo {
+	id: string;
+	chat_id: string;
+	user_id?: string;
+	name: string;
+	mode: 'local' | 'ssh';
+	account_id: string;
+	target: string;
+	alive: boolean;
+	agent_locked: boolean;
+	cursor?: number;
+	created_at?: number;
+	last_activity_at?: number;
+	_closed?: boolean;
+}
+
+export const getEchoTerminalSshTargets = async (token: string): Promise<EchoSshTargetItem[]> => {
+	const res = await echoRequestJson<{ items?: EchoSshTargetItem[]; count?: number } | EchoSshTargetItem[]>(
+		'/terminals/ssh-targets',
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des cibles SSH'
+	);
+	if (Array.isArray(res)) return res;
+	return Array.isArray(res?.items) ? res.items : [];
+};
+
+export const listEchoChatTerminals = async (
+	token: string,
+	chatId: string
+): Promise<EchoTerminalSessionInfo[]> => {
+	const res = await echoRequestJson<
+		{ items?: EchoTerminalSessionInfo[]; count?: number } | EchoTerminalSessionInfo[]
+	>(
+		`/terminals/${encodeURIComponent(chatId)}`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des terminaux de la conversation'
+	);
+	if (Array.isArray(res)) return res;
+	return Array.isArray(res?.items) ? res.items : [];
+};
+
+export const openEchoTerminalSession = async (
+	token: string,
+	chatId: string,
+	payload: { mode?: 'local' | 'ssh'; account_id?: string; name?: string }
+): Promise<EchoTerminalSessionInfo> =>
+	echoRequestJson<EchoTerminalSessionInfo>(
+		`/terminals/${encodeURIComponent(chatId)}/open`,
+		token,
+		{ method: 'POST', body: JSON.stringify(payload) },
+		'Échec d’ouverture du terminal'
+	);
+
+export const setEchoTerminalLock = async (
+	token: string,
+	chatId: string,
+	sessionId: string,
+	agentLocked: boolean
+): Promise<EchoTerminalSessionInfo> =>
+	echoRequestJson<EchoTerminalSessionInfo>(
+		`/terminals/${encodeURIComponent(chatId)}/${encodeURIComponent(sessionId)}/lock`,
+		token,
+		{ method: 'PATCH', body: JSON.stringify({ agent_locked: agentLocked }) },
+		'Échec de mise à jour du verrou terminal'
+	);
+
+export const closeEchoTerminalSession = async (
+	token: string,
+	chatId: string,
+	sessionId: string
+): Promise<{ status: string; id: string }> =>
+	echoRequestJson<{ status: string; id: string }>(
+		`/terminals/${encodeURIComponent(chatId)}/${encodeURIComponent(sessionId)}`,
+		token,
+		{ method: 'DELETE' },
+		'Échec de fermeture du terminal'
+	);

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+from contextlib import closing
 import copy
 import importlib.util
 import json
@@ -130,10 +131,13 @@ import echo_crypto  # noqa: E402
 import echo_db_schema  # noqa: E402
 import echo_paths  # noqa: E402
 import echo_prompts  # noqa: E402
+import echo_session_clone  # noqa: E402
 import echo_state_manager  # noqa: E402
 import echo_subagent_hub  # noqa: E402
+import echo_terminals  # noqa: E402
 from echo_constants import (  # noqa: E402
     DELEGATE_AGENT_BLACKLIST,
+    ECHO_AUTOMATION_CONTEXT,
     ECHO_SUBAGENT_CONTEXT,
     ECHO_SUBAGENT_ENGINES_REGISTRY,
     GEMINI_ALLOWED_SCHEMA_KEYS,
@@ -153,6 +157,9 @@ n8n_orch_mod = _load_module_from_path(
 )
 n8n_api_mod = _load_module_from_path(
     "zone_a_n8n_api", REPO_ROOT / "26-docker-n8n-worker" / "n8n_api.py", force_reload=True
+)
+query_registry_mod = _load_module_from_path(
+    "zone_a_query_registry_tool", TOOLS_DIR / "query_registry_tool.py", force_reload=True
 )
 visual_gen_mod = _load_module_from_path(
     "zone_a_universal_visual_generator", TOOLS_DIR / "universal_visual_generator.py", force_reload=True
@@ -270,6 +277,11 @@ class TestAstCountAndSchemas(unittest.TestCase):
             RESOURCE_STATUS_MAP["generated"],
             list(echo_constants.FILE_INGESTION_STATUS.values()),
         )
+        self.assertEqual(RESOURCE_TYPES.get("terminal"), "terminal")
+        self.assertEqual(
+            RESOURCE_STATUS_MAP.get("terminal"),
+            ["active_unlocked", "active_locked", "closed"],
+        )
 
         n8n_allowed = ECHO_SUBAGENT_ENGINES_REGISTRY["n8n_grapher"]["default_allowed_tools"]
         for expected in ("manage_n8n_workflow", "manage_n8n_template", "n8n_hub", "query_n8n_documentation"):
@@ -313,6 +325,9 @@ class TestAstCountAndSchemas(unittest.TestCase):
             (n8n_tools.manage_n8n_workflow, "action"): ["prepare", "update", "stop", "delete", "run_oneshot", "deploy_daemon"],
             (n8n_tools.n8n_hub, "action"): ["search", "download"],
             (exec_tools.control_sandbox_execution, "action"): ["status", "listen", "kill"],
+            (exec_tools.manage_terminal, "action"): ["exec", "open", "list", "read", "write", "close"],
+            (exec_tools.manage_terminal, "mode"): ["local", "ssh"],
+            (exec_tools.manage_terminal, "signal_key"): ["ctrl_c", "ctrl_d", "ctrl_z", "enter"],
         }
 
         for method in (
@@ -323,6 +338,7 @@ class TestAstCountAndSchemas(unittest.TestCase):
             n8n_tools.manage_n8n_workflow,
             n8n_tools.n8n_hub,
             exec_tools.control_sandbox_execution,
+            exec_tools.manage_terminal,
         ):
             cleaned = _build_cleaned_gemini_tool_schema(method)
             _assert_all_params_have_type(cleaned, path=method.__name__)
@@ -815,6 +831,310 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
         self.assertEqual(fake_wm.popped, ["run_owned"])
         self.assertEqual(len(post_calls), 1)
         self.assertEqual(post_calls[0][1]["run_id"], "run_owned")
+
+    async def test_manage_terminal_and_registry_e2e(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            users_root = os.path.join(tmp_dir, "users")
+            os.makedirs(users_root, exist_ok=True)
+            uid = "user_term"
+            cid = "chat_term"
+            ghost_cid = "chat_ghost"
+
+            class _FakeWM:
+                def __init__(self) -> None:
+                    self.opened_tabs: list[tuple[str, str, str, dict]] = []
+                    self.terminal_states: list[tuple[str, str, dict, str]] = []
+
+                async def open_tab(self, u: str, c: str, kind: str, payload: dict) -> None:
+                    self.opened_tabs.append((u, c, kind, payload))
+
+                async def broadcast_terminal_state(self, u: str, c: str, terminal_data: dict, action: str = "updated") -> None:
+                    self.terminal_states.append((u, c, terminal_data, action))
+
+            class _FakeResponse:
+                def __init__(self, status_code: int, payload: dict) -> None:
+                    self.status_code = status_code
+                    self._payload = payload
+                    self.text = json.dumps(payload, ensure_ascii=False)
+
+                def json(self) -> dict:
+                    return self._payload
+
+            class _FakeTerminalWorkerClient:
+                def __init__(self) -> None:
+                    self.sessions: dict[str, dict] = {}
+                    self.ssh_exec_calls: list[dict] = []
+                    self._seq = 0
+
+                async def get(self, url: str, params=None, headers=None, timeout=None):
+                    if url.endswith("/api/terminals"):
+                        req_cid = (params or {}).get("chat_id") or ""
+                        items = [dict(s) for s in self.sessions.values() if s["chat_id"] == req_cid and s["alive"]]
+                        return _FakeResponse(200, {"items": items, "count": len(items)})
+                    if "/buffer" in url:
+                        sid = url.split("/api/terminals/")[1].split("/buffer")[0]
+                        sess = self.sessions.get(sid)
+                        if not sess:
+                            return _FakeResponse(404, {"error": "Terminal session not found"})
+                        return _FakeResponse(200, {
+                            "session": dict(sess),
+                            "text": f"output:{sess['name']}",
+                            "cursor": sess["cursor"],
+                            "truncated": False,
+                            "total_buffered_bytes": 16,
+                        })
+                    return _FakeResponse(404, {"error": "Unknown GET"})
+
+                async def post(self, url: str, json=None, headers=None, timeout=None):
+                    data = json or {}
+                    if url.endswith("/ssh"):
+                        self.ssh_exec_calls.append(data)
+                        return _FakeResponse(200, {"status": "success", "exit_code": 0, "output": "ok-cert", "error": ""})
+                    if url.endswith("/api/terminals"):
+                        self._seq += 1
+                        sid = f"term_{self._seq:012x}"
+                        mode = data.get("mode") or "local"
+                        acc = data.get("account_id") or ""
+                        ssh_cfg = data.get("ssh_config") or {}
+                        target = (
+                            f"{ssh_cfg.get('user')}@{ssh_cfg.get('host')}:{ssh_cfg.get('port')}"
+                            if mode == "ssh"
+                            else "local:/sandbox"
+                        )
+                        sess = {
+                            "id": sid,
+                            "chat_id": data.get("chat_id") or "",
+                            "user_id": data.get("user_id") or "",
+                            "name": data.get("name") or ("Sandbox" if mode == "local" else acc),
+                            "mode": mode,
+                            "account_id": acc,
+                            "target": target,
+                            "alive": True,
+                            "agent_locked": True if mode == "ssh" else bool(data.get("agent_locked", False)),
+                            "cursor": 10,
+                        }
+                        self.sessions[sid] = sess
+                        return _FakeResponse(200, dict(sess))
+                    if "/input" in url:
+                        sid = url.split("/api/terminals/")[1].split("/input")[0]
+                        sess = self.sessions.get(sid)
+                        if not sess:
+                            return _FakeResponse(404, {"error": "Terminal session not found"})
+                        if data.get("actor", "agent") != "user" and sess["agent_locked"]:
+                            return _FakeResponse(423, {
+                                "status": "error",
+                                "error_code": "terminal_locked",
+                                "session_id": sid,
+                                "name": sess["name"],
+                                "agent_locked": True,
+                                "error": "Session terminale verrouillée en lecture seule.",
+                            })
+                        sess["cursor"] += 5
+                        return _FakeResponse(200, {
+                            "status": "success",
+                            "session": dict(sess),
+                            "text": f"wrote:{data.get('input') or data.get('signal')}",
+                            "cursor": sess["cursor"],
+                            "truncated": False,
+                        })
+                    return _FakeResponse(404, {"error": "Unknown POST"})
+
+                async def patch(self, url: str, json=None, headers=None, timeout=None):
+                    sid = url.split("/api/terminals/")[1].split("/lock")[0]
+                    sess = self.sessions.get(sid)
+                    if not sess:
+                        return _FakeResponse(404, {"error": "Terminal session not found"})
+                    sess["agent_locked"] = bool((json or {}).get("agent_locked"))
+                    return _FakeResponse(200, dict(sess))
+
+                async def delete(self, url: str, params=None, headers=None, timeout=None):
+                    sid = url.split("/api/terminals/")[1]
+                    sess = self.sessions.get(sid)
+                    if not sess:
+                        return _FakeResponse(404, {"error": "Terminal session not found"})
+                    if (params or {}).get("actor") == "agent" and sess["agent_locked"]:
+                        return _FakeResponse(423, {
+                            "status": "error",
+                            "error_code": "terminal_locked",
+                            "session_id": sid,
+                            "name": sess["name"],
+                            "agent_locked": True,
+                            "error": "Session terminale verrouillée : fermeture interdite à l'agent.",
+                        })
+                    sess["alive"] = False
+                    return _FakeResponse(200, {"status": "terminated", "id": sid})
+
+            fake_wm = _FakeWM()
+            fake_worker = _FakeTerminalWorkerClient()
+            exec_tools = code_executor_mod.Tools()
+            reg_tools = query_registry_mod.Tools()
+
+            with (
+                mock.patch.dict(os.environ, {"ECHO_VAULT_ENCRYPTION_KEY": "test-zone-a-master-key-32bytes!!"}),
+                mock.patch.object(echo_constants, "ECHO_USERS_ROOT", users_root),
+                mock.patch.object(echo_paths, "ECHO_USERS_ROOT", users_root),
+                mock.patch.object(echo_state_manager, "ECHO_USERS_ROOT", users_root),
+                mock.patch.object(echo_terminals, "_get_global_client", return_value=fake_worker),
+                mock.patch.object(code_executor_mod, "get_window_manager", return_value=fake_wm),
+                mock.patch.object(query_registry_mod.EchoCompactionEngine, "load_active_branch_ids", new=mock.AsyncMock(return_value=[])),
+            ):
+                echo_crypto._SCOPED_KEY_CACHE.clear()
+                try:
+                    echo_terminals.ensure_echo_session_environment(uid, cid)
+                    echo_state_manager.EchoStateManager(user_id=uid).save_vault_credential(
+                        "ssh",
+                        "vps-prod",
+                        json.dumps({
+                            "host": "192.168.1.50",
+                            "port": "2222",
+                            "user": "ubuntu",
+                            "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nKEY\n-----END OPENSSH PRIVATE KEY-----",
+                            "certificate": "ssh-ed25519-cert-v01@openssh.com CERTDATA",
+                            "description": "Prod VPS",
+                        }),
+                    )
+
+                    # 1. exec SSH avec certificat
+                    res_exec = await exec_tools.manage_terminal(
+                        action="exec",
+                        account_id="vps-prod",
+                        command="uname -a",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_exec["status"]["status"], "success")
+                    self.assertEqual(res_exec["status"]["exit_code"], 0)
+                    self.assertEqual(len(fake_worker.ssh_exec_calls), 1)
+                    self.assertIn("CERTDATA", fake_worker.ssh_exec_calls[0]["certificate"])
+
+                    # 2. Garde headless_forbidden sur action="open" en automatisation
+                    tok_auto = ECHO_AUTOMATION_CONTEXT.set({"is_automation": True, "automation_id": "auto-1"})
+                    try:
+                        res_headless = await exec_tools.manage_terminal(
+                            action="open", mode="local", __user__={"id": uid}, __metadata__={"chat_id": cid}
+                        )
+                    finally:
+                        ECHO_AUTOMATION_CONTEXT.reset(tok_auto)
+                    self.assertEqual(res_headless["status"]["error_code"], "headless_forbidden")
+
+                    # 3. open local déverrouillé + diffusion WM
+                    res_open_local = await exec_tools.manage_terminal(
+                        action="open",
+                        mode="local",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid, "message_id": "msg-1"},
+                    )
+                    self.assertEqual(res_open_local["status"]["status"], "success")
+                    local_sess = res_open_local["status"]["session"]
+                    self.assertFalse(local_sess["agent_locked"])
+                    self.assertEqual(fake_wm.opened_tabs[-1][2], "terminal")
+                    self.assertFalse(fake_wm.opened_tabs[-1][3]["agentLocked"])
+                    self.assertEqual(fake_wm.terminal_states[-1][3], "opened")
+
+                    # 4. open SSH verrouillé par défaut
+                    res_open_ssh = await exec_tools.manage_terminal(
+                        action="open",
+                        mode="ssh",
+                        account_id="vps-prod",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid, "message_id": "msg-2"},
+                    )
+                    self.assertEqual(res_open_ssh["status"]["status"], "success")
+                    ssh_sess = res_open_ssh["status"]["session"]
+                    ssh_sid = ssh_sess["id"]
+                    self.assertTrue(ssh_sess["agent_locked"])
+                    self.assertIn("verrouillée en lecture seule par défaut", res_open_ssh["text"])
+
+                    # 5. list + read autorisé sous verrou
+                    res_list = await exec_tools.manage_terminal(
+                        action="list", __user__={"id": uid}, __metadata__={"chat_id": cid}
+                    )
+                    self.assertEqual(res_list["status"]["count"], 2)
+
+                    res_read = await exec_tools.manage_terminal(
+                        action="read", session_id=ssh_sid, __user__={"id": uid}, __metadata__={"chat_id": cid}
+                    )
+                    self.assertEqual(res_read["status"]["status"], "success")
+                    self.assertIn("output:vps-prod", res_read["text"])
+
+                    # 6. write et close bloqués sous verrou (423 -> terminal_locked + PAS exact)
+                    expected_pas = echo_terminals.format_terminal_locked_message("vps-prod", ssh_sid)
+                    res_write_locked = await exec_tools.manage_terminal(
+                        action="write",
+                        session_id=ssh_sid,
+                        command="ls",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_write_locked["status"]["error_code"], "terminal_locked")
+                    self.assertEqual(res_write_locked["text"], expected_pas)
+
+                    res_close_locked = await exec_tools.manage_terminal(
+                        action="close",
+                        session_id=ssh_sid,
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_close_locked["status"]["error_code"], "terminal_locked")
+                    self.assertEqual(res_close_locked["text"], expected_pas)
+
+                    # 7. query_registry(resource_type="terminal") et détail par resource_id
+                    reg_list = await reg_tools.query_registry(
+                        resource_type="terminal", __user__={"id": uid}, __metadata__={"chat_id": cid}
+                    )
+                    reg_list_text = reg_list["text"] if isinstance(reg_list, dict) else reg_list
+                    self.assertIn(ssh_sid, reg_list_text)
+                    self.assertIn("active_locked", reg_list_text)
+
+                    reg_detail = await reg_tools.query_registry(
+                        resource_id=ssh_sid, __user__={"id": uid}, __metadata__={"chat_id": cid}
+                    )
+                    reg_detail_text = reg_detail["text"] if isinstance(reg_detail, dict) else reg_detail
+                    self.assertIn("🔒 Verrouillé (lecture seule)", reg_detail_text)
+                    self.assertIn("ubuntu@192.168.1.50:2222", reg_detail_text)
+
+                    # 8. Déverrouillage + write + close
+                    unlock_res = await echo_terminals.worker_set_terminal_lock(uid, cid, ssh_sid, False)
+                    self.assertEqual(unlock_res["status"], "success")
+                    res_write_ok = await exec_tools.manage_terminal(
+                        action="write",
+                        session_id=ssh_sid,
+                        command="uptime",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_write_ok["status"]["status"], "success")
+                    res_close_ok = await exec_tools.manage_terminal(
+                        action="close",
+                        session_id=ssh_sid,
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_close_ok["status"]["status"], "terminated")
+                    self.assertEqual(fake_wm.terminal_states[-1][3], "closed")
+
+                    # 9. Garde anti-BDD fantôme sur reconcile_chat_terminals_registry
+                    ghost_db = echo_paths.get_echo_session_path(uid, ghost_cid, "db")
+                    self.assertFalse(os.path.exists(ghost_db))
+                    ghost_items = await echo_terminals.reconcile_chat_terminals_registry(uid, ghost_cid)
+                    self.assertEqual(ghost_items, [])
+                    self.assertFalse(os.path.exists(ghost_db))
+
+                    # 10. Purge 'terminal' dans echo_session_clone.purge_conversational_state
+                    with closing(echo_db_schema.open_db(echo_paths.get_echo_session_path(uid, cid, "db"))) as conn:
+                        cur = conn.cursor()
+                        before_cnt = cur.execute(
+                            "SELECT COUNT(*) FROM echo_resources WHERE resource_type = 'terminal'"
+                        ).fetchone()[0]
+                        self.assertGreaterEqual(before_cnt, 2)
+                        echo_session_clone.purge_conversational_state(cur)
+                        conn.commit()
+                        after_cnt = cur.execute(
+                            "SELECT COUNT(*) FROM echo_resources WHERE resource_type = 'terminal'"
+                        ).fetchone()[0]
+                        self.assertEqual(after_cnt, 0)
+                finally:
+                    echo_crypto._SCOPED_KEY_CACHE.clear()
 
 
 class TestN8NOrchestratorE2E(unittest.IsolatedAsyncioTestCase):
@@ -1578,6 +1898,7 @@ class TestDocGovernanceAndToolGuides(unittest.TestCase):
         "list_ui_automations",
         "create_ui_tasks",
         "update_ui_task",
+        "ssh_executor",
     )
 
     def test_ast_to_tool_guides_bijection_and_no_duplicates(self) -> None:

@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.24.1.1
-updated_at: 2026-11-26
+version: 6.24.6.1
+updated_at: 2026-11-27
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
-description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
-tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, ssh_executor]
-keywords: [registre, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, ssh, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, hash, sha256, plans, generated, browserviews]
+description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et pilotage des terminaux interactifs Local/SSH (manage_terminal).
+tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, manage_terminal]
+keywords: [registre, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, ssh, terminal, certificat, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, hash, sha256, plans, generated, browserviews]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -19,6 +19,7 @@ Avant toute manipulation d'un fichier, d'un document Codex, d'un plan, d'un méd
     - `"vectorized_sum_up"` : Résumé présent dans `<artifact id="AEC_smart_context">`, contenu détaillé interrogeable dans la Mémoire Vectorielle de la session (`search_sessions_context`).
     - `"indexed"` : Fichier enregistré (ID connu), consultable via les outils d'exploration de fichiers.
   - Captures et clips MP4 du Navigateur Autonome (`"browserview"`) : `"transient"` (temporaire, purgé en fin de session navigateur), `"retained"` (préservé sur disque).
+  - Sessions terminales interactives (`"terminal"`) : `"active_unlocked"` (session active, écriture et fermeture autorisées au Modèle), `"active_locked"` (session active verrouillée en lecture seule : `read` autorisé, `write` et `close` bloqués), `"closed"` (session terminée).
   - Plans (`"plan"`) : `"proposed"`, `"executing"`, `"success"`, `"partial"`, `"failed"`, `"abandoned"`.
   - Workflows N8N de session (`"n8n_workflow"`) : `"ready"`, `"executing"`, `"error"`, `"deployed"`.
   - Templates N8N globaux (`"n8n_template"`) : **Statique — NE PREND AUCUN STATUT** (Le Modèle DOIT toujours laisser `status=None`, sinon une erreur d'interruption est levée).
@@ -104,7 +105,20 @@ Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l
 #### Cycle de Vie & Arrêt Propre de la Vue Interactive :
 - Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_main")` retourne `True`, `wait_until_closed()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
 
-### 3.4 Exécution SSH Distante (`ssh_executor`)
-1. **Découverte préalable** : Le Modèle DOIT appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.
-2. **Exécution sécurisée sans exposition de secret (MPSI)** : Le Modèle DOIT appeler `ssh_executor(account_id="...", command="...", timeout_sec=60)` (`timeout_sec` borné sur le Worker à `5..900s`). Les identifiants sont injectés côté serveur dans un environnement isolé sans exposition au Modèle (répertoire courant `/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated`, `/files` et `/browserviews` en lecture seule).
-3. **Interdiction absolue (MPSI)** : Il est ABSOLUMENT INTERDIT de demander à L'Utilisateur un mot de passe ou une clé privée SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir dans l'onglet **Coffre & Identité**.
+### 3.4 Pilotage Terminal Interactif & Exécution SSH (`manage_terminal`)
+- **Signature** : `manage_terminal(action, mode=None, account_id=None, session_id=None, name=None, command=None, signal_key=None, append_newline=True, tail_lines=100, wait_ms=400, timeout_sec=60)` avec `action` $\in$ `{"exec", "open", "list", "read", "write", "close"}`.
+1. **Exécution SSH one-shot isolée (`action="exec"`)** :
+   - Le Modèle DOIT préalablement appeler `list_identities(service="ssh")` pour identifier l'`account_id` cible, puis invoquer `manage_terminal(action="exec", account_id="...", command="...", timeout_sec=60)` (`timeout_sec` borné côté Worker à `5..900s`).
+   - Les secrets du Coffre (`password`, `private_key` et `certificate` OpenSSH `*-cert.pub` optionnel) sont injectés côté Worker dans un environnement isolé `bwrap` sans exposition au Modèle (`/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated`, `/files` et `/browserviews` en lecture seule).
+2. **Ouverture de session terminale interactive (`action="open"`)** :
+   - **Garde Headless** : **ABSOLUMENT INTERDIT** en contexte d'automatisation planifiée (`headless_forbidden`).
+   - **Mode `local` vs `ssh`** : `mode` déduit automatiquement en `"ssh"` si `account_id` est fourni, sinon `"local"`. En mode `"local"`, `account_id` est interdit et la session s'ouvre **déverrouillée par défaut (`agent_locked=False`)**. En mode `"ssh"`, `account_id` est obligatoire et la session s'ouvre **verrouillée en lecture seule par défaut (`agent_locked=True`)**.
+   - Ouvre automatiquement l'onglet Terminal dans l'interface utilisateur et enregistre la session dans `query_registry(resource_type="terminal")`.
+3. **Liste, Lecture, Écriture & Fermeture (`list` | `read` | `write` | `close`)** :
+   - `action="list"` : Restitue les sessions terminales actives de la conversation (`id`, `name`, `mode`, `target`, `alive`, `agent_locked`) et réconcilie le registre.
+   - `action="read"` : Exige `session_id` et lit les `tail_lines` dernières lignes nettoyées sans séquences ANSI (`1..500`, défaut `100`). **Autorisé y compris lorsque la session est verrouillée (`agent_locked=True`)**.
+   - `action="write"` : Exige `session_id` et (`command` non vide ou `signal_key` $\in$ `{"ctrl_c", "ctrl_d", "ctrl_z", "enter"}`), avec `append_newline=True` et `wait_ms` (`0..5000ms`, défaut `400ms`).
+   - `action="close"` : Exige `session_id` et ferme la session interactive.
+4. **Protocole Strict sous Verrou (`terminal_locked`) & MPSI** :
+   - Sur `action="write"` ou `action="close"`, si la session est verrouillée (`error_code == "terminal_locked"`), Le Modèle **NE DOIT PAS** tenter de contournement : Le Modèle **DOIT** informer L'Utilisateur de déverrouiller la session nommée dans l'interface pour autoriser l'interaction.
+   - **Interdiction absolue (MPSI)** : Il est **ABSOLUMENT INTERDIT** de demander à L'Utilisateur un mot de passe, une clé privée ou un certificat SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir dans l'onglet **Coffre & Identité**.

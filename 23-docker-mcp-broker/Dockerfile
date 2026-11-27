@@ -23,7 +23,7 @@ COPY modules /app/modules
 COPY server.py /app/server.py
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="6.18.6.1"
+LABEL version="6.24.6.1"
 LABEL description="ECHO MCP Broker (Search, Corporate, Academic & Providers)"
 
 # Exposition du port FastMCP

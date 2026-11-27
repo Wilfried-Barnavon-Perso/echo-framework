@@ -3,16 +3,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.21.12.1
+version: 6.24.6.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Purge des ressources volatiles 'terminal' lors du clonage, fork partiel ou reprise de session.
 # 6.21.12.1: Élagage des bornes context_checkpoint via prune_checkpoint_payload(cutoff_ts, live_msg_ids) dans sync_cloned_session.
 # 6.18.23.1: Durcissement SQLite WAL/NORMAL/busy_timeout via echo_db_schema.open_db(..., require_version=False) et réapplication WAL post-backup sur new_db dans backup_session_db.
 # 6.14.2.2: Retrait du ré-ancrage obsolète de echo_settings['wm_state'] dans reassign_session_ids et inclusion de tools_output/ dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 6.13.1.1: Réécriture de echo_resources.metadata dans reassign_session_ids et ajout de _prune_transient_browserviews_on_clone (transfert retained uniquement lors du clone/resume).
-# 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
 
 from contextlib import closing
 import asyncio
@@ -262,7 +262,7 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
 
     try:
         cur.execute(
-            "DELETE FROM echo_resources WHERE resource_type IN ('aec_event', 'aec_directive')"
+            "DELETE FROM echo_resources WHERE resource_type IN ('aec_event', 'aec_directive', 'terminal')"
         )
     except Exception:
         pass
@@ -916,7 +916,7 @@ def sync_cloned_session(
 
         if is_partial_fork and cutoff_ts is not None:
             cur.execute(
-                "DELETE FROM echo_resources WHERE resource_type IN ('aec_event', 'aec_directive') AND created_at > ?",
+                "DELETE FROM echo_resources WHERE resource_type IN ('aec_event', 'aec_directive', 'terminal') AND created_at > ?",
                 (cutoff_ts,),
             )
             cur.execute(

@@ -37,7 +37,7 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
   - Client, Parsing & Utilitaires : `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`.
 - **Shell & Utilitaires CLI (`/bin/bash`)** : `curl`, `git`, `jq`, `less`, `nano`, `ping`, `dig`/`nslookup`, `tar`, `gzip`, `ssh`, `scp`, `sshpass`.
 - Pour tout paquet tiers absent de cette liste, Le Modèle DOIT renseigner le paramètre `dependencies` lors de l'appel à `code_executor` (installé dans `/.deps/python` ou `/.deps/node`).
-- Pour l'administration SSH sur des hôtes distants via l'Identity Vault, Le Modèle DOIT utiliser l'outil dédié `ssh_executor(account_id, command, timeout_sec)`.
+- Pour l'administration SSH one-shot ou le pilotage de terminaux interactifs (Sandbox locale ou SSH distant) via l'Identity Vault, Le Modèle DOIT utiliser l'outil unifié `manage_terminal(action, ...)`.
 
 ---
 

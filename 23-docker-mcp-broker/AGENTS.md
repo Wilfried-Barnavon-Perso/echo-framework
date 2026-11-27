@@ -8,9 +8,9 @@ Ce dossier contient le **MCP Broker** (Model Context Protocol). Il s'agit d'un s
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `server.py` (v6.11.0.1) & `core/cache_manager.py` (v5.231.20.1)
+### `server.py` (v6.24.6.1) & `core/cache_manager.py` (v5.231.20.1)
 Fichier d'entrée du Broker instanciant le serveur `FastMCP` propulsé par `Uvicorn`.
-- **Sémantique ASGI & Proxy** : Le serveur expose ses outils via le protocole natif MCP (`streamable-http` sur `/mcp`) ainsi que les routes REST `/schemas` (incluant le schéma `"ssh"` dans `SERVICE_SCHEMAS` sous `category: "orchestration"` pour le coffre `Identity Vault` via `EchoVaultTab.svelte` & `ssh_executor` et la précision `Google People API [Contacts]` sur `google_workspace`), `/proxy_mcp`, `POST /upload_drive` (streaming brut vers `provider.upload_file_stream` via `_build_broker_exception_response`) et `/health`. Il agit comme un **Proxy HTTP complet** sans accès direct aux bases de données d'Open WebUI.
+- **Sémantique ASGI & Proxy** : Le serveur expose ses outils via le protocole natif MCP (`streamable-http` sur `/mcp`) ainsi que les routes REST `/schemas` (incluant le schéma `"ssh"` dans `SERVICE_SCHEMAS` sous `category: "orchestration"` pour le coffre `Identity Vault` via `EchoVaultTab.svelte` & `manage_terminal`, avec `private_key` en `textarea_secret`, champ optionnel `certificate` OpenSSH en `textarea`, et la précision `Google People API [Contacts]` sur `google_workspace`), `/proxy_mcp`, `POST /upload_drive` (streaming brut vers `provider.upload_file_stream` via `_build_broker_exception_response`) et `/health`. Il agit comme un **Proxy HTTP complet** sans accès direct aux bases de données d'Open WebUI.
 - **WebUI User Middleware (`WebUIUserMiddleware`)** : Middleware pur ASGI interceptant les en-têtes HTTP `x-openwebui-user-id` (fallback `x-echo-user-id`), `x-openwebui-chat-id` (fallback `x-echo-chat-id`) et `x-echo-credentials` (Base64 JSON) afin d'injecter l'identifiant utilisateur, l'identifiant de conversation et les secrets dans les `ContextVar` `user_id_var`, `chat_id_var` et `credentials_var` (`core/security.py` v5.231.37.1).
 - **Cache Manager** : `core/cache_manager.py` met en cache les résultats d'exécution des outils par empreinte MD5 préfixée par `user_id` (`{uid}_{tool_name}_{arg_str}`) dans la base SQLite locale `/app/data/mcp_cache.db` (table `cache_entries`).
 
@@ -30,7 +30,7 @@ Dossiers contenant la logique métier des outils exposés par le Broker.
   - **Éviction** : toute exception (`except BaseException:`, incluant `asyncio.CancelledError` et `TimeoutError`) entraîne le retrait de la session du cache sous `_get_session_lock(cache_key)` et sa fermeture protégée par `asyncio.shield(holder.close())`.
 
 ### `Dockerfile`
-- **Build & Runtime** : Hérite de `echo-python-base:latest`. Embarque **Node.js 22.x LTS** (`setup_22.x`, patché CVE-2026-111497) et Git afin de supporter l'exécution sécurisée de serveurs MCP JavaScript/TypeScript (via `npx` / `node`) et de packages distants, avec bloc `LABEL` (`version="6.18.6.1"`) positionné tout en bas avant `EXPOSE 8000` et en-têtes `SPDX-License-Identifier: Apache-2.0`.
+- **Build & Runtime** : Hérite de `echo-python-base:latest`. Embarque **Node.js 22.x LTS** (`setup_22.x`, patché CVE-2026-111497) et Git afin de supporter l'exécution sécurisée de serveurs MCP JavaScript/TypeScript (via `npx` / `node`) et de packages distants, avec bloc `LABEL` (`version="6.24.6.1"`) positionné tout en bas avant `EXPOSE 8000` et en-têtes `SPDX-License-Identifier: Apache-2.0`.
 
 ## 3. Dépendances Logiques
 - Le MCP Broker est interrogé par l'outil `12-owui-tools/echo_mcp_tool.py` et le routeur `16-docker-echo-webui/backend/open_webui/echo/routers/vault.py` (`EchoVaultTab.svelte`) via ses endpoints HTTP REST (`http://echo-mcp-broker:8000/proxy_mcp` et `/schemas`).

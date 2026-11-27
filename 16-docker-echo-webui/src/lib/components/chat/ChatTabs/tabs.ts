@@ -36,6 +36,10 @@ export type PanelTab = {
 	connection?: TerminalConnection;
 	browserBaseUrl?: string;
 	context?: TerminalContext | null;
+	terminalMode?: 'local' | 'ssh';
+	terminalAccountId?: string;
+	terminalTarget?: string;
+	agentLocked?: boolean;
 };
 export type PanelGroup = { id: string; tabIds: string[]; activeId: string };
 export type SplitEdge = 'left' | 'right' | 'top' | 'bottom';

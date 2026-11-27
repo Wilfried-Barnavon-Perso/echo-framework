@@ -3,16 +3,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.24.0.1
+version: 6.24.6.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Ajout du type ressource 'terminal' (RESOURCE_TYPES/RESOURCE_STATUS_MAP), TERMINAL_SESSION_STATUS et constantes TTL/lecture terminal.
 # 6.24.0.1: Ajout de RESOURCE_TYPES/RESOURCE_STATUS_MAP['generated'], mise à jour n8n_grapher (manage_n8n_workflow/template, n8n_hub) et DELEGATE_AGENT_BLACKLIST (manage_ui_tasks).
 # 6.23.10.1: Ajout de ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS (131072) et ECHO_CODEX_INLINE_BLOB_MIN_CHARS (1024).
 # 6.23.1.1: Ajout des plafonds SSOT d'identifiants sous-agents (ECHO_MAX_SUBAGENT_SID_LEN = 96, ECHO_COUNCIL_ID_MAX_LEN = 36, ECHO_COUNCIL_INSTANCE_ID_MAX_LEN = 42, ECHO_PHALANX_ID_MAX_LEN = 48).
 # 6.23.0.1: Ajout de ECHO_COUNCIL_STABILIZED_MARKER, DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS, préfixes SQLite/XML sous-agents V2 (SUBAGENT_SYS_PREFIX, COUNCIL_STATE_PREFIX, ECHO_MSG_*) et normalisation du registre.
-# 6.22.0.1: Alignement ECHO_CHAT_EAGER_DETAILS_TAIL=8 et purge racine dans prune_checkpoint_payload.
 
 import os
 import json
@@ -646,6 +646,7 @@ RESOURCE_TYPES = {
     "weburl": "weburl",  # Pages web distillées
     "n8n_template": "n8n_template", # Modèles N8N
     "n8n_workflow": "n8n_workflow", # Workflows N8N
+    "terminal": "terminal", # Sessions terminales interactives (Sandbox locale & SSH)
 }
 
 # ==============================================================================
@@ -672,6 +673,12 @@ BROWSER_VIEW_STATUS = {
     "RETAINED":  "retained",
 }
 
+TERMINAL_SESSION_STATUS = {
+    "ACTIVE_UNLOCKED": "active_unlocked",
+    "ACTIVE_LOCKED":   "active_locked",
+    "CLOSED":          "closed",
+}
+
 BROWSER_CLIP_MIME = "video/mp4"
 BROWSER_CLIP_EXT = "_clip.mp4"
 BROWSER_TRANSIENT_GRACE_SEC = 1800.0
@@ -689,6 +696,7 @@ RESOURCE_STATUS_MAP = {
     "n8n_workflow": list(N8N_WORKFLOW_STATUS.values()),
     "n8n_template": [], # Hub global statique, pas de statut
     "browserview":  list(BROWSER_VIEW_STATUS.values()),
+    "terminal":     list(TERMINAL_SESSION_STATUS.values()),
 }
 
 # ==============================================================================
@@ -1348,6 +1356,11 @@ SANDBOX_LISTEN_MAX_WAIT_SEC = 60
 ECHO_CANVAS_READY_TIMEOUT_SEC = 8.0
 ECHO_CANVAS_IDLE_TTL_SEC = 1800.0
 ECHO_CANVAS_MAX_LIFETIME_SEC = 14400.0
+TERMINAL_DEFAULT_READ_LINES = 100
+TERMINAL_MAX_READ_LINES = 500
+TERMINAL_MAX_WAIT_MS = 5000
+TERMINAL_SSH_IDLE_TTL_SEC = 1800.0
+TERMINAL_LOCAL_IDLE_TTL_SEC = 7200.0
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
 NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"

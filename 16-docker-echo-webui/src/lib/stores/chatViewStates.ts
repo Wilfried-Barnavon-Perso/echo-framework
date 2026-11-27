@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 import { v4 as uuidv4 } from 'uuid';
 import { writable } from 'svelte/store';
 import { getChatView, updateChatView } from '$lib/apis/chats/view';
+import { getEchoToken, openEchoTerminalSession } from '$lib/apis/echo';
 import { terminalRequest, type TerminalConnection } from '$lib/apis/terminal';
 import { createBrowserSession } from '$lib/apis/terminal/browser';
 import { isSavedChatId } from '$lib/utils/chatId';
@@ -73,7 +74,11 @@ export function serializeChatView(state: ChatViewState): ChatViewState {
 				path: tab.path,
 				page: tab.page,
 				sessionId: tab.sessionId,
-				directory: tab.directory
+				directory: tab.directory,
+				terminalMode: tab.terminalMode,
+				terminalAccountId: tab.terminalAccountId,
+				terminalTarget: tab.terminalTarget,
+				agentLocked: tab.agentLocked
 			}))
 		}
 	};
@@ -187,16 +192,43 @@ export function createViewSession(entry: Entry, id: string, connection: Terminal
 	if (pending) return pending;
 	const tab = entry.state.panels.tabs.find((tab) => tab.id === id);
 	if (!tab) return Promise.resolve();
+	if (tab.kind === 'terminal' && tab.sessionId) {
+		return Promise.resolve();
+	}
 	delete entry.sessionErrors[id];
 	const request = (async () => {
 		try {
-			const session =
-				tab.kind === 'browser'
-					? await createBrowserSession(connection, entry.chatId, tab.path ?? '')
-					: await terminalRequest<{ id: string }>(connection, entry.chatId, '/api/terminals', {
-							method: 'POST'
-						});
-			updateViewTab(entry, id, { sessionId: session.id });
+			if (tab.kind === 'browser') {
+				const session = await createBrowserSession(connection, entry.chatId, tab.path ?? '');
+				updateViewTab(entry, id, { sessionId: session.id });
+			} else {
+				const echoToken = tab.kind === 'terminal' ? getEchoToken() : '';
+				if (tab.kind === 'terminal' && echoToken && entry.chatId) {
+					const session = await openEchoTerminalSession(echoToken, entry.chatId, {
+						mode: tab.terminalMode ?? 'local',
+						account_id: tab.terminalAccountId,
+						name: tab.label
+					});
+					updateViewTab(entry, id, {
+						sessionId: session.id,
+						label: session.name || tab.label,
+						terminalMode: session.mode,
+						terminalAccountId: session.account_id || undefined,
+						terminalTarget: session.target || undefined,
+						agentLocked: session.agent_locked
+					});
+				} else if (tab.kind === 'terminal' && tab.terminalMode === 'ssh') {
+					throw new Error('Jeton ECHO ou conversation manquante pour ouvrir une session SSH.');
+				} else {
+					const session = await terminalRequest<{ id: string }>(
+						connection,
+						entry.chatId,
+						'/api/terminals',
+						{ method: 'POST' }
+					);
+					updateViewTab(entry, id, { sessionId: session.id });
+				}
+			}
 		} catch (error) {
 			entry.sessionErrors[id] = String(error);
 		} finally {

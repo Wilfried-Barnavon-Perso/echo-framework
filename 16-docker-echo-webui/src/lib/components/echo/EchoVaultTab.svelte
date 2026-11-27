@@ -24,8 +24,12 @@
 	let newAccountId = '';
 	let newSecret = '';
 	let dynamicValues: Record<string, string> = {};
+	let revealedFields: Record<string, boolean> = {};
 	let isSaving = false;
 	let isDeleting = false;
+
+	const VAULT_FIELD_CLASS =
+		'w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500';
 
 	const N8N_FALLBACK_SCHEMA: EchoVaultServiceSchema = {
 		name: 'Automatisations n8n',
@@ -90,6 +94,7 @@
 			nextValues[f.id] = '';
 		}
 		dynamicValues = nextValues;
+		revealedFields = {};
 		showAddModal = true;
 	};
 
@@ -99,7 +104,13 @@
 		newAccountId = '';
 		newSecret = '';
 		dynamicValues = {};
+		revealedFields = {};
 		showAddModal = true;
+	};
+
+	const closeAddModal = () => {
+		showAddModal = false;
+		revealedFields = {};
 	};
 
 	$: activeSchema = selectedSchemaKey ? schemas[selectedSchemaKey] ?? null : null;
@@ -152,7 +163,7 @@
 				secret: secretPayload
 			});
 			toast.success('Identifiant enregistré dans le coffre sécurisé.');
-			showAddModal = false;
+			closeAddModal();
 			selectedSchemaKey = null;
 			newService = '';
 			newAccountId = '';
@@ -392,7 +403,7 @@
 					<button
 						type="button"
 						class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-						on:click={() => (showAddModal = false)}
+						on:click={closeAddModal}
 					>
 						✕
 					</button>
@@ -416,7 +427,7 @@
 							<input
 								id="vault-service-input"
 								type="text"
-								class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+								class={VAULT_FIELD_CLASS}
 								placeholder="ex: github, aws, notion"
 								bind:value={newService}
 							/>
@@ -430,7 +441,7 @@
 						<input
 							id="vault-account-input"
 							type="text"
-							class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+							class={VAULT_FIELD_CLASS}
 							placeholder={selectedSchemaKey ? 'ex: default, pro, perso' : 'ex: user@domain.com ou principal'}
 							bind:value={newAccountId}
 						/>
@@ -442,11 +453,38 @@
 								<label for={`vault-field-${field.id}`} class="block text-gray-600 dark:text-gray-400 mb-1 font-semibold">
 									{field.label}{#if field.required}<span class="text-red-500 ml-0.5">*</span>{/if}
 								</label>
-								{#if field.type === 'password'}
+								{#if field.type === 'textarea_secret'}
+									<div class="space-y-1">
+										<div class="flex justify-end">
+											<button
+												type="button"
+												class="text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+												on:click={() => (revealedFields[field.id] = !revealedFields[field.id])}
+											>
+												{revealedFields[field.id] ? 'Masquer' : 'Afficher pour vérifier'}
+											</button>
+										</div>
+										<textarea
+											id={`vault-field-${field.id}`}
+											rows="4"
+											class="{VAULT_FIELD_CLASS} text-xs {revealedFields[field.id] ? '' : '[-webkit-text-security:disc]'}"
+											placeholder={field.placeholder || '-----BEGIN OPENSSH PRIVATE KEY-----'}
+											bind:value={dynamicValues[field.id]}
+										></textarea>
+									</div>
+								{:else if field.type === 'textarea'}
+									<textarea
+										id={`vault-field-${field.id}`}
+										rows="3"
+										class="{VAULT_FIELD_CLASS} text-xs"
+										placeholder={field.placeholder || ''}
+										bind:value={dynamicValues[field.id]}
+									></textarea>
+								{:else if field.type === 'password'}
 									<input
 										id={`vault-field-${field.id}`}
 										type="password"
-										class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+										class={VAULT_FIELD_CLASS}
 										placeholder={field.placeholder || '••••••••••••••••'}
 										bind:value={dynamicValues[field.id]}
 									/>
@@ -454,7 +492,7 @@
 									<input
 										id={`vault-field-${field.id}`}
 										type="text"
-										class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+										class={VAULT_FIELD_CLASS}
 										placeholder={field.placeholder || ''}
 										bind:value={dynamicValues[field.id]}
 									/>
@@ -472,7 +510,7 @@
 							<input
 								id="vault-secret-input"
 								type="password"
-								class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+								class={VAULT_FIELD_CLASS}
 								placeholder="••••••••••••••••"
 								bind:value={newSecret}
 							/>
@@ -484,7 +522,7 @@
 					<button
 						type="button"
 						class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium transition"
-						on:click={() => (showAddModal = false)}
+						on:click={closeAddModal}
 					>
 						Annuler
 					</button>

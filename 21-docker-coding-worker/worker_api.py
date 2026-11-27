@@ -3,19 +3,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.19.0.1
+VERSION : 6.24.6.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-23
+DATE MAJ : 2026-11-27
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Unification PTY Local/SSH (mode='ssh', CertificateFile, _prepare_ssh_bwrap_auth), verrou serveur agent_locked (HTTP 423) et routes /api/terminals*.
 # 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
 # 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
 # 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
 # 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
-# 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
 
 import asyncio
 import json
@@ -92,7 +92,28 @@ FINISHED_JOBS_MAX_PER_CHAT = 20
 FINISHED_JOBS_TTL_SEC = 900
 DEFAULT_BG_IDLE_TTL_SEC = float(os.environ.get("SANDBOX_BG_IDLE_TTL_SEC", 1800.0))
 DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC", 14400.0))
+TERMINAL_LOCAL_IDLE_TTL_SEC = 7200.0
+TERMINAL_SSH_IDLE_TTL_SEC = 1800.0
+TERMINAL_MAX_READ_LINES = 500
 ECHO_WEBUI_INTERNAL_URL = os.environ.get("ECHO_WEBUI_INTERNAL_URL", "http://echo-webui:8080").rstrip("/")
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
+
+
+def _strip_ansi_and_cr(raw_text: str) -> str:
+    """Retire les séquences ANSI (CSI/OSC) et résout les retours chariot \\r sans casser \\r\\n."""
+    if not raw_text:
+        return ""
+    cleaned = _ANSI_ESCAPE_RE.sub("", raw_text).replace("\r\n", "\n")
+    resolved_lines: list[str] = []
+    for line in cleaned.split("\n"):
+        if "\r" in line:
+            parts = line.split("\r")
+            non_empty = [p for p in parts if p != ""]
+            resolved_lines.append(parts[-1] if parts[-1] != "" else (non_empty[-1] if non_empty else ""))
+        else:
+            resolved_lines.append(line)
+    return "\n".join(resolved_lines)
 
 _JOBS_REGISTRY = {}
 _JOBS_LOCK = threading.Lock()
@@ -965,16 +986,171 @@ def _start_sandbox_job(
 
 
 # ================================================================================
-# GESTIONNAIRE DE SESSIONS PTY INTERACTIVES (XTerminal.svelte)
+# GESTIONNAIRE DE SESSIONS PTY INTERACTIVES (XTerminal.svelte & manage_terminal)
 # ================================================================================
 
+_SSH_IDENT_RE = re.compile(r"^[A-Za-z0-9._:@-]+$")
+
+
+def _normalize_ssh_private_key(raw_key: str) -> str:
+    """Normalise une clé privée PEM/OpenSSH (CRLF, \\n littéraux et découpage 64 car./ligne)."""
+    cleaned = raw_key.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+    match = re.match(
+        r"^(-----BEGIN [A-Z0-9 ]+-----)\s*(.*?)\s*(-----END [A-Z0-9 ]+-----)$",
+        cleaned,
+        re.DOTALL,
+    )
+    if not match:
+        return cleaned + "\n"
+    header, body, footer = match.groups()
+    body_compact = re.sub(r"\s+", "", body)
+    wrapped = "\n".join(body_compact[i:i + 64] for i in range(0, len(body_compact), 64))
+    return f"{header}\n{wrapped}\n{footer}\n"
+
+
+def _prepare_ssh_bwrap_auth(
+    ssh_tmp_dir: str,
+    host: str,
+    port: int,
+    user: str,
+    password: str = "",
+    private_key: str = "",
+    certificate: str = "",
+    interactive: bool = False,
+    command: str = "",
+) -> tuple[list[str], list[str]]:
+    """Valide et prépare les fichiers temporaires et arguments bwrap/ssh partagés."""
+    host_str = str(host or "").strip()
+    user_str = str(user or "").strip()
+    cmd_str = str(command or "").strip()
+
+    if not host_str or not user_str:
+        raise ValueError("Champs SSH requis : host et user.")
+    if not interactive and not cmd_str:
+        raise ValueError("Champs requis : host, user, command.")
+
+    if (
+        host_str.startswith("-")
+        or user_str.startswith("-")
+        or not _SSH_IDENT_RE.match(host_str)
+        or not _SSH_IDENT_RE.match(user_str)
+    ):
+        raise ValueError("Paramètre host ou user invalide.")
+
+    try:
+        port_int = int(port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Port SSH invalide.") from exc
+    if not (1 <= port_int <= 65535):
+        raise ValueError("Port SSH hors plage (1-65535).")
+
+    key_str = str(private_key or "")
+    pass_str = str(password or "")
+    cert_clean = str(certificate or "").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+    has_key = bool(key_str.strip())
+    has_password = bool(pass_str)
+
+    if cert_clean and not has_key:
+        raise ValueError("Un certificat SSH nécessite une clé privée associée (private_key).")
+    if not has_key and not has_password:
+        raise ValueError("Authentification SSH requise : private_key ou password manquant.")
+
+    extra_bwrap_args: list[str] = []
+    ssh_args: list[str] = ["ssh"]
+    if interactive:
+        ssh_args.append("-tt")
+    ssh_args.extend([
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "UserKnownHostsFile=/sandbox/.ssh_known_hosts",
+        "-o", "ConnectTimeout=10",
+        "-o", "ServerAliveInterval=15",
+    ])
+    if interactive:
+        ssh_args.extend(["-o", "ServerAliveCountMax=3"])
+    ssh_args.extend(["-p", str(port_int)])
+
+    if has_key:
+        os.makedirs(ssh_tmp_dir, exist_ok=True)
+        try:
+            os.chmod(ssh_tmp_dir, 0o755)
+        except Exception:
+            pass
+        key_file = os.path.join(ssh_tmp_dir, "id_key")
+        with open(key_file, "w", encoding="utf-8") as kf:
+            kf.write(_normalize_ssh_private_key(key_str))
+        os.chmod(key_file, 0o600)
+
+        if cert_clean:
+            cert_file = os.path.join(ssh_tmp_dir, "id_key-cert.pub")
+            with open(cert_file, "w", encoding="utf-8") as cf:
+                cf.write(cert_clean + "\n")
+            os.chmod(cert_file, 0o600)
+
+        extra_bwrap_args.extend(["--ro-bind-try", ssh_tmp_dir, "/ssh_auth"])
+        ssh_args.extend(["-i", "/ssh_auth/id_key", "-o", "IdentitiesOnly=yes"])
+        if cert_clean:
+            ssh_args.extend(["-o", "CertificateFile=/ssh_auth/id_key-cert.pub"])
+
+        if has_password:
+            extra_bwrap_args.extend(["--setenv", "SSHPASS", pass_str])
+            ssh_args = ["sshpass", "-e", "-P", "assphrase"] + ssh_args
+        else:
+            ssh_args.extend(["-o", "BatchMode=yes"])
+    else:
+        extra_bwrap_args.extend(["--setenv", "SSHPASS", pass_str])
+        ssh_args.extend([
+            "-o", "PreferredAuthentications=password,keyboard-interactive",
+            "-o", "PubkeyAuthentication=no",
+        ])
+        ssh_args = ["sshpass", "-e"] + ssh_args
+
+    if interactive:
+        ssh_args.append(f"{user_str}@{host_str}")
+    else:
+        ssh_args.extend([f"{user_str}@{host_str}", cmd_str])
+
+    return extra_bwrap_args, ssh_args
+
+
 class TerminalSession:
-    def __init__(self, session_id: str, user_id: str, chat_id: str, sandbox_dir: str):
+    def __init__(
+        self,
+        session_id: str,
+        user_id: str,
+        chat_id: str,
+        sandbox_dir: str,
+        mode: str = "local",
+        name: str = "Sandbox",
+        account_id: str = "",
+        agent_locked: bool | None = None,
+        ssh_config: dict | None = None,
+    ):
         self.id = session_id
         self.user_id = user_id
         self.chat_id = chat_id
         self.sandbox_dir = sandbox_dir
+        self.mode = "ssh" if mode == "ssh" else "local"
+        self.account_id = str(account_id or "").strip() if self.mode == "ssh" else ""
+        self.name = str(name or "").strip() or (
+            "Sandbox" if self.mode == "local" else (self.account_id or "SSH")
+        )
+        self.ssh_config = dict(ssh_config or {}) if self.mode == "ssh" else {}
+        if self.mode == "ssh":
+            ssh_host = str(self.ssh_config.get("host") or "").strip()
+            ssh_user = str(self.ssh_config.get("user") or "").strip()
+            try:
+                ssh_port = int(self.ssh_config.get("port") or 22)
+            except (TypeError, ValueError):
+                ssh_port = 22
+            self.target = f"{ssh_user}@{ssh_host}:{ssh_port}"
+            self.agent_locked = True
+        else:
+            self.target = "local:/sandbox"
+            self.agent_locked = bool(agent_locked) if agent_locked is not None else False
+
         self.created_at = time.time()
+        self.last_activity_at = self.created_at
+        self._ssh_tmp_dir: str | None = None
         self.cursor = 0
         self.max_buffer = 65536
         self.buffer = bytearray()
@@ -988,9 +1164,68 @@ class TerminalSession:
         self.cols = 80
         self.rows = 24
 
-        self._start()
+        try:
+            self._start()
+        except Exception:
+            self.terminate()
+            raise
+
+    def _spawn_session_process(
+        self,
+        cmd: list[str],
+        use_pty: bool,
+        slave_fd: int | None = None,
+        env: dict | None = None,
+    ):
+        """Lance le sous-processus PTY ou pipe (point d'extension testable)."""
+        if use_pty and slave_fd is not None:
+            import fcntl
+            import termios
+
+            def _attach_ctty():
+                os.setsid()
+                fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+            return subprocess.Popen(
+                cmd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                preexec_fn=_attach_ctty,
+                close_fds=True,
+            )
+
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=self.sandbox_dir if os.path.isdir(self.sandbox_dir) else None,
+            env=env,
+            bufsize=0,
+        )
 
     def _start(self):
+        extra_bwrap_args: list[str] = []
+        ssh_cmd_args: list[str] = []
+        if self.mode == "ssh":
+            self._ssh_tmp_dir = tempfile.mkdtemp(prefix="echo_ssh_term_")
+            os.chmod(self._ssh_tmp_dir, 0o755)
+            try:
+                ssh_port = int(self.ssh_config.get("port") or 22)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Port SSH invalide.") from exc
+            extra_bwrap_args, ssh_cmd_args = _prepare_ssh_bwrap_auth(
+                ssh_tmp_dir=self._ssh_tmp_dir,
+                host=str(self.ssh_config.get("host") or ""),
+                port=ssh_port,
+                user=str(self.ssh_config.get("user") or ""),
+                password=str(self.ssh_config.get("password") or ""),
+                private_key=str(self.ssh_config.get("private_key") or ""),
+                certificate=str(self.ssh_config.get("certificate") or ""),
+                interactive=True,
+            )
+
         has_bwrap = shutil.which("bwrap") is not None
         has_pty = False
         try:
@@ -1016,37 +1251,65 @@ class TerminalSession:
             flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
             fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-            cmd = _build_interactive_bwrap_cmd(self.user_id, self.chat_id, self.sandbox_dir)
+            if self.mode == "ssh":
+                sandbox_tmp = os.path.join(self.sandbox_dir, ".tmp")
+                os.makedirs(sandbox_tmp, exist_ok=True)
+                files_dir = f"/app/backend/data/users/{self.user_id}/chats/{self.chat_id}/files" if self.chat_id else None
+                browserviews_dir = (
+                    f"/app/backend/data/users/{self.user_id}/chats/{self.chat_id}/browserviews"
+                    if self.chat_id else None
+                )
+                global_files_dir = f"/app/backend/data/users/{self.user_id}/files" if self.chat_id else None
+                cmd = _build_base_bwrap_cmd(
+                    safe_uid=self.user_id,
+                    safe_cid=self.chat_id,
+                    sandbox_dir=self.sandbox_dir,
+                    sandbox_tmp=sandbox_tmp,
+                    files_dir=files_dir,
+                    global_files_dir=global_files_dir,
+                    browserviews_dir=browserviews_dir,
+                )
+                cmd.extend(["--setenv", "HOME", "/sandbox", "--setenv", "TERM", "xterm-256color"])
+                cmd.extend(extra_bwrap_args)
+                cmd.extend(ssh_cmd_args)
+            else:
+                cmd = _build_interactive_bwrap_cmd(self.user_id, self.chat_id, self.sandbox_dir)
 
-            def _attach_ctty():
-                os.setsid()
-                fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-
-            self.proc = subprocess.Popen(
-                cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                preexec_fn=_attach_ctty,
-                close_fds=True,
-            )
-            os.close(slave_fd)
+            try:
+                self.proc = self._spawn_session_process(cmd, use_pty=True, slave_fd=slave_fd)
+            finally:
+                os.close(slave_fd)
         else:
             # Fallback portable multi-plateforme (tests locaux .venv Windows ou hôte sans bwrap)
-            if os.name == "nt":
+            spawn_env = None
+            if self.mode == "ssh" and shutil.which("ssh"):
+                host_ssh_args = list(ssh_cmd_args)
+                if host_ssh_args and host_ssh_args[0] == "sshpass" and not shutil.which("sshpass"):
+                    # Strip sshpass wrapper on platforms without sshpass (ex: Windows)
+                    if len(host_ssh_args) >= 4 and host_ssh_args[1] == "-e" and host_ssh_args[2] == "-P":
+                        host_ssh_args = host_ssh_args[4:]
+                    elif len(host_ssh_args) >= 2 and host_ssh_args[1] == "-e":
+                        host_ssh_args = host_ssh_args[2:]
+                known_hosts_local = os.path.join(self.sandbox_dir, ".ssh_known_hosts")
+                adapted_args: list[str] = []
+                for arg in host_ssh_args:
+                    if self._ssh_tmp_dir and arg.startswith("/ssh_auth/"):
+                        arg = os.path.join(self._ssh_tmp_dir, arg[len("/ssh_auth/"):])
+                    elif arg == "UserKnownHostsFile=/sandbox/.ssh_known_hosts":
+                        arg = f"UserKnownHostsFile={known_hosts_local}"
+                    adapted_args.append(arg)
+                cmd = adapted_args
+                ssh_pass = str(self.ssh_config.get("password") or "")
+                if ssh_pass:
+                    spawn_env = os.environ.copy()
+                    spawn_env["SSHPASS"] = ssh_pass
+            elif os.name == "nt":
                 cmd = ["cmd.exe", "/q"]
             else:
                 shell_bin = "/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh"
                 cmd = [shell_bin, "-i"]
 
-            self.proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=self.sandbox_dir if os.path.isdir(self.sandbox_dir) else None,
-                bufsize=0,
-            )
+            self.proc = self._spawn_session_process(cmd, use_pty=False, env=spawn_env)
 
         self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader_thread.start()
@@ -1094,6 +1357,7 @@ class TerminalSession:
             if len(self.buffer) > self.max_buffer:
                 self.buffer = self.buffer[-self.max_buffer:]
                 self.truncated = True
+            self.last_activity_at = time.time()
         self.out_queue.put(chunk)
 
     def write_input(self, data: bytes | str):
@@ -1107,6 +1371,7 @@ class TerminalSession:
             elif self.proc and self.proc.stdin:
                 self.proc.stdin.write(data)
                 self.proc.stdin.flush()
+            self.last_activity_at = time.time()
         except Exception as e:
             logger.warning(f"Terminal write_input error: {e}")
 
@@ -1125,6 +1390,64 @@ class TerminalSession:
     def is_alive(self) -> bool:
         return self.alive and self.proc is not None and self.proc.poll() is None
 
+    def set_agent_locked(self, locked: bool):
+        self.agent_locked = bool(locked)
+        self.last_activity_at = time.time()
+
+    def read_clean_text(self, tail_lines: int = 100, since_cursor: int = 0) -> dict:
+        """Retourne le texte nettoyé (sans ANSI/CR) depuis since_cursor, borné à tail_lines."""
+        tail_limit = max(1, min(int(tail_lines or 100), TERMINAL_MAX_READ_LINES))
+        cursor_from = max(0, int(since_cursor or 0))
+        with self.lock:
+            buffered = bytes(self.buffer)
+            curr_cursor = self.cursor
+            is_trunc = self.truncated
+            self.last_activity_at = time.time()
+
+        if cursor_from > 0 and curr_cursor >= cursor_from:
+            delta = curr_cursor - cursor_from
+            truncated_slice = delta > len(buffered)
+            raw_bytes = buffered[-delta:] if delta > 0 else b""
+        elif cursor_from > 0:
+            truncated_slice = is_trunc
+            raw_bytes = buffered
+        else:
+            truncated_slice = is_trunc
+            raw_bytes = buffered
+
+        decoded = raw_bytes.decode("utf-8", errors="replace")
+        cleaned = _strip_ansi_and_cr(decoded)
+        if cleaned:
+            lines = cleaned.splitlines()
+            if len(lines) > tail_limit:
+                cleaned = "\n".join(lines[-tail_limit:])
+                truncated_slice = True
+
+        return {
+            "text": cleaned,
+            "cursor": curr_cursor,
+            "truncated": truncated_slice,
+            "total_buffered_bytes": len(buffered),
+        }
+
+    def to_dict(self) -> dict:
+        with self.lock:
+            curr_cursor = self.cursor
+        return {
+            "id": self.id,
+            "chat_id": self.chat_id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "mode": self.mode,
+            "account_id": self.account_id,
+            "target": self.target,
+            "alive": self.is_alive(),
+            "agent_locked": self.agent_locked,
+            "cursor": curr_cursor,
+            "created_at": self.created_at,
+            "last_activity_at": self.last_activity_at,
+        }
+
     def terminate(self):
         self.alive = False
         if self.proc:
@@ -1135,6 +1458,9 @@ class TerminalSession:
             except Exception:
                 pass
             self.master_fd = None
+        if self._ssh_tmp_dir:
+            shutil.rmtree(self._ssh_tmp_dir, ignore_errors=True)
+            self._ssh_tmp_dir = None
         self.out_queue.put(b"")
 
 
@@ -1143,13 +1469,64 @@ class TerminalSessionManager:
         self._sessions: dict[str, TerminalSession] = {}
         self._lock = threading.Lock()
 
-    def create_session(self, user_id: str, chat_id: str) -> TerminalSession:
+    def _allocate_session_name(
+        self,
+        safe_uid: str,
+        safe_cid: str,
+        mode: str,
+        raw_name: str,
+        account_id: str,
+        ssh_config: dict | None,
+    ) -> str:
+        explicit = str(raw_name or "").strip()
+        if explicit:
+            return explicit
+        if mode == "ssh":
+            base_name = str(account_id or "").strip() or str((ssh_config or {}).get("host") or "").strip() or "SSH"
+        else:
+            base_name = "Sandbox"
+        existing_names = {
+            s.name for s in self._sessions.values()
+            if s.user_id == safe_uid and s.chat_id == safe_cid
+        }
+        if base_name not in existing_names:
+            return base_name
+        idx = 2
+        while f"{base_name} #{idx}" in existing_names:
+            idx += 1
+        return f"{base_name} #{idx}"
+
+    def create_session(
+        self,
+        user_id: str,
+        chat_id: str,
+        mode: str = "local",
+        name: str = "",
+        account_id: str = "",
+        agent_locked: bool | None = None,
+        ssh_config: dict | None = None,
+    ) -> TerminalSession:
         safe_uid = _sanitize_id(user_id)
         safe_cid = _sanitize_id(chat_id, default="")
+        norm_mode = "ssh" if mode == "ssh" else "local"
+        norm_account = str(account_id or "").strip() if norm_mode == "ssh" else ""
         sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
         if not sandbox_dir:
             sandbox_dir = os.path.join(tempfile.gettempdir(), "echo_terminals", safe_uid, safe_cid or "general")
         os.makedirs(sandbox_dir, exist_ok=True)
+
+        with self._lock:
+            to_terminate = self._prune_sessions()
+            resolved_name = self._allocate_session_name(
+                safe_uid=safe_uid,
+                safe_cid=safe_cid,
+                mode=norm_mode,
+                raw_name=name,
+                account_id=norm_account,
+                ssh_config=ssh_config,
+            )
+        for dead_sess in to_terminate:
+            dead_sess.terminate()
 
         session_id = f"term_{uuid.uuid4().hex[:12]}"
         session = TerminalSession(
@@ -1157,16 +1534,42 @@ class TerminalSessionManager:
             user_id=safe_uid,
             chat_id=safe_cid,
             sandbox_dir=sandbox_dir,
+            mode=norm_mode,
+            name=resolved_name,
+            account_id=norm_account,
+            agent_locked=agent_locked,
+            ssh_config=ssh_config,
         )
         with self._lock:
-            self._prune_sessions()
             self._sessions[session_id] = session
-        logger.info(f"🖥️ Terminal session CREATED | ID: {session_id} | User: {safe_uid} | Chat: {safe_cid}")
+        logger.info(
+            f"🖥️ Terminal session CREATED | ID: {session_id} | Mode: {norm_mode} | "
+            f"Name: {resolved_name} | User: {safe_uid} | Chat: {safe_cid}"
+        )
         return session
 
     def get_session(self, session_id: str) -> TerminalSession | None:
         with self._lock:
             return self._sessions.get(session_id)
+
+    def list_sessions(self, user_id: str = "", chat_id: str = "") -> list[dict]:
+        safe_uid = _sanitize_id(user_id, default="") if user_id else ""
+        safe_cid = _sanitize_id(chat_id, default="") if chat_id else ""
+        with self._lock:
+            to_terminate = self._prune_sessions()
+            sessions = list(self._sessions.values())
+        for dead_sess in to_terminate:
+            dead_sess.terminate()
+
+        items = []
+        for s in sessions:
+            if safe_uid and s.user_id != safe_uid:
+                continue
+            if safe_cid and s.chat_id != safe_cid:
+                continue
+            items.append(s.to_dict())
+        items.sort(key=lambda item: item["created_at"])
+        return items
 
     def terminate_session(self, session_id: str):
         with self._lock:
@@ -1175,14 +1578,22 @@ class TerminalSessionManager:
             session.terminate()
             logger.info(f"🛑 Terminal session TERMINATED | ID: {session_id}")
 
-    def _prune_sessions(self):
+    def _prune_sessions(self) -> list[TerminalSession]:
+        """Élagage des sessions mortes (>300s) ou inactives au-delà du TTL local/SSH (appelé sous lock)."""
         now = time.time()
-        to_del = []
+        to_del: list[str] = []
         for sid, s in self._sessions.items():
+            ttl = TERMINAL_SSH_IDLE_TTL_SEC if s.mode == "ssh" else TERMINAL_LOCAL_IDLE_TTL_SEC
             if not s.is_alive() and (now - s.created_at > 300):
                 to_del.append(sid)
+            elif (now - s.last_activity_at) > ttl:
+                to_del.append(sid)
+        removed: list[TerminalSession] = []
         for sid in to_del:
-            del self._sessions[sid]
+            sess = self._sessions.pop(sid, None)
+            if sess is not None:
+                removed.append(sess)
+        return removed
 
 
 TERMINAL_MANAGER = TerminalSessionManager()
@@ -1498,9 +1909,42 @@ def openapi_spec():
     })
 
 
+_TERMINAL_SIGNAL_MAP = {
+    "ctrl_c": "\x03",
+    "ctrl_d": "\x04",
+    "ctrl_z": "\x1a",
+    "enter": "\r",
+}
+
+
+def _build_terminal_locked_response(session: TerminalSession, message: str):
+    return jsonify({
+        "status": "error",
+        "error_code": "terminal_locked",
+        "session_id": session.id,
+        "name": session.name,
+        "agent_locked": True,
+        "error": message,
+    }), 423
+
+
+@app.route('/api/terminals', methods=['GET'])
+def list_terminals():
+    """Liste les sessions terminales actives filtrées par user_id/chat_id."""
+    user_id = request.args.get("user_id") or request.headers.get("X-User-Id") or ""
+    chat_id = (
+        request.args.get("chat_id")
+        or request.headers.get("X-Session-Id")
+        or request.headers.get("X-Terminal-Context-Id")
+        or ""
+    )
+    items = TERMINAL_MANAGER.list_sessions(user_id=user_id, chat_id=chat_id)
+    return jsonify({"items": items, "count": len(items)})
+
+
 @app.route('/api/terminals', methods=['POST'])
 def create_terminal():
-    """Crée une session terminal interactive PTY."""
+    """Crée une session terminal interactive PTY (locale ou SSH)."""
     req_json = request.get_json(silent=True) or {}
     user_id = request.headers.get("X-User-Id") or req_json.get("user_id") or "system"
     chat_id = (
@@ -1509,8 +1953,34 @@ def create_terminal():
         or req_json.get("chat_id")
         or ""
     )
-    session = TERMINAL_MANAGER.create_session(user_id=user_id, chat_id=chat_id)
-    return jsonify({"id": session.id})
+    mode = str(req_json.get("mode") or "local").strip().lower()
+    if mode not in ("local", "ssh"):
+        return jsonify({"status": "error", "error": f"Mode terminal invalide : {mode}"}), 400
+
+    name = str(req_json.get("name") or "").strip()
+    account_id = str(req_json.get("account_id") or "").strip()
+    raw_locked = req_json.get("agent_locked")
+    agent_locked = bool(raw_locked) if raw_locked is not None else None
+    ssh_config = req_json.get("ssh_config") if isinstance(req_json.get("ssh_config"), dict) else None
+    if mode == "ssh" and not ssh_config:
+        return jsonify({"status": "error", "error": "Configuration ssh_config requise pour mode='ssh'."}), 400
+
+    try:
+        session = TERMINAL_MANAGER.create_session(
+            user_id=user_id,
+            chat_id=chat_id,
+            mode=mode,
+            name=name,
+            account_id=account_id,
+            agent_locked=agent_locked,
+            ssh_config=ssh_config,
+        )
+    except ValueError as ve:
+        return jsonify({"status": "error", "error": str(ve)}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Erreur création session terminal : {str(e)}"}), 500
+
+    return jsonify(session.to_dict())
 
 
 @app.route('/api/terminals/<session_id>', methods=['GET'])
@@ -1519,34 +1989,111 @@ def get_terminal(session_id):
     session = TERMINAL_MANAGER.get_session(session_id)
     if not session:
         return jsonify({"error": "Terminal session not found"}), 404
+    return jsonify(session.to_dict())
+
+
+@app.route('/api/terminals/<session_id>/buffer', methods=['GET'])
+def get_terminal_buffer(session_id):
+    """Lit la sortie nettoyée (sans séquences ANSI) d'une session terminale."""
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session:
+        return jsonify({"error": "Terminal session not found"}), 404
+    try:
+        tail_lines = int(request.args.get("tail_lines", 100))
+    except (TypeError, ValueError):
+        tail_lines = 100
+    tail_lines = max(1, min(tail_lines, TERMINAL_MAX_READ_LINES))
+    try:
+        since_cursor = max(0, int(request.args.get("since_cursor", 0)))
+    except (TypeError, ValueError):
+        since_cursor = 0
+
+    buf_data = session.read_clean_text(tail_lines=tail_lines, since_cursor=since_cursor)
+    return jsonify({"session": session.to_dict(), **buf_data})
+
+
+@app.route('/api/terminals/<session_id>/input', methods=['POST'])
+def post_terminal_input(session_id):
+    """Envoie une entrée ou un signal sur une session terminale (avec verrou agent)."""
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session:
+        return jsonify({"error": "Terminal session not found"}), 404
+
+    req_json = request.get_json(silent=True) or {}
+    actor = str(req_json.get("actor") or "agent").strip().lower()
+    if actor != "user" and session.agent_locked:
+        return _build_terminal_locked_response(session, "Session terminale verrouillée en lecture seule.")
+
+    if not session.is_alive():
+        return jsonify({
+            "status": "error",
+            "error_code": "terminal_closed",
+            "session_id": session.id,
+            "error": "Session terminale terminée.",
+        }), 409
+
+    sig_name = req_json.get("signal")
+    raw_input = req_json.get("input")
+    append_newline = bool(req_json.get("append_newline", True))
+    try:
+        wait_ms = max(0, min(int(req_json.get("wait_ms", 400)), 5000))
+    except (TypeError, ValueError):
+        wait_ms = 400
+
+    if sig_name is not None:
+        sig_key = str(sig_name).strip().lower()
+        if sig_key not in _TERMINAL_SIGNAL_MAP:
+            return jsonify({"status": "error", "error": f"Signal terminal invalide : {sig_key}"}), 400
+        payload_str = (str(raw_input) if raw_input is not None else "") + _TERMINAL_SIGNAL_MAP[sig_key]
+    elif raw_input is not None:
+        text_input = str(raw_input)
+        if append_newline and not text_input.endswith(("\n", "\r")):
+            text_input += "\n"
+        payload_str = text_input
+    else:
+        return jsonify({"status": "error", "error": "Paramètre 'input' ou 'signal' requis."}), 400
+
+    with session.lock:
+        prev_cursor = session.cursor
+
+    session.write_input(payload_str)
+    if wait_ms > 0:
+        time.sleep(wait_ms / 1000.0)
+
+    buf_data = session.read_clean_text(tail_lines=100, since_cursor=prev_cursor)
     return jsonify({
-        "id": session.id,
-        "chat_id": session.chat_id,
-        "alive": session.is_alive(),
+        "status": "success",
+        "session": session.to_dict(),
+        **buf_data,
     })
+
+
+@app.route('/api/terminals/<session_id>/lock', methods=['PATCH'])
+def patch_terminal_lock(session_id):
+    """Bascule le verrouillage agent (agent_locked) d'une session terminale."""
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session:
+        return jsonify({"error": "Terminal session not found"}), 404
+    req_json = request.get_json(silent=True) or {}
+    if "agent_locked" not in req_json:
+        return jsonify({"status": "error", "error": "Champ 'agent_locked' requis."}), 400
+    session.set_agent_locked(bool(req_json.get("agent_locked")))
+    return jsonify(session.to_dict())
 
 
 @app.route('/api/terminals/<session_id>', methods=['DELETE'])
 def delete_terminal(session_id):
-    """Termine une session terminal."""
+    """Termine une session terminal (refus 423 si actor=agent sur session verrouillée)."""
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if session:
+        actor = str(request.args.get("actor") or "").strip().lower()
+        if actor == "agent" and session.agent_locked:
+            return _build_terminal_locked_response(
+                session,
+                "Session terminale verrouillée : fermeture interdite à l'agent.",
+            )
     TERMINAL_MANAGER.terminate_session(session_id)
     return jsonify({"status": "terminated", "id": session_id})
-
-
-def _normalize_ssh_private_key(raw_key: str) -> str:
-    """Normalise une clé privée PEM/OpenSSH (CRLF, \\n littéraux et découpage 64 car./ligne)."""
-    cleaned = raw_key.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
-    match = re.match(
-        r"^(-----BEGIN [A-Z0-9 ]+-----)\s*(.*?)\s*(-----END [A-Z0-9 ]+-----)$",
-        cleaned,
-        re.DOTALL,
-    )
-    if not match:
-        return cleaned + "\n"
-    header, body, footer = match.groups()
-    body_compact = re.sub(r"\s+", "", body)
-    wrapped = "\n".join(body_compact[i:i + 64] for i in range(0, len(body_compact), 64))
-    return f"{header}\n{wrapped}\n{footer}\n"
 
 
 @app.route('/ssh', methods=['POST'])
@@ -1557,24 +2104,16 @@ def execute_ssh():
     user = str(data.get("user") or "").strip()
     command = str(data.get("command") or "").strip()
     private_key = str(data.get("private_key") or "")
+    certificate = str(data.get("certificate") or "")
     password = str(data.get("password") or "")
 
     if not host or not user or not command:
         return jsonify({"status": "error", "error": "Champs requis : host, user, command."}), 400
 
-    safe_ident_re = re.compile(r"^[A-Za-z0-9._:@-]+$")
-    if (
-        host.startswith("-") or user.startswith("-")
-        or not safe_ident_re.match(host) or not safe_ident_re.match(user)
-    ):
-        return jsonify({"status": "error", "error": "Paramètre host ou user invalide."}), 400
-
     try:
         port = int(data.get("port", 22))
     except (TypeError, ValueError):
         return jsonify({"status": "error", "error": "Port SSH invalide."}), 400
-    if not (1 <= port <= 65535):
-        return jsonify({"status": "error", "error": "Port SSH hors plage (1-65535)."}), 400
 
     try:
         timeout = max(5, min(int(data.get("timeout", 60)), 900))
@@ -1596,6 +2135,21 @@ def execute_ssh():
     ssh_tmp_dir = tempfile.mkdtemp(prefix="echo_ssh_")
     try:
         os.chmod(ssh_tmp_dir, 0o755)
+        try:
+            extra_bwrap_args, ssh_args = _prepare_ssh_bwrap_auth(
+                ssh_tmp_dir=ssh_tmp_dir,
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                private_key=private_key,
+                certificate=certificate,
+                interactive=False,
+                command=command,
+            )
+        except ValueError as ve:
+            return jsonify({"status": "error", "error": str(ve)}), 400
+
         if not sandbox_dir:
             sandbox_dir = os.path.join(ssh_tmp_dir, "sandbox")
         os.makedirs(sandbox_dir, exist_ok=True)
@@ -1612,39 +2166,7 @@ def execute_ssh():
             browserviews_dir=browserviews_dir,
         )
         bwrap_cmd.extend(["--setenv", "HOME", "/sandbox"])
-
-        ssh_args = [
-            "ssh",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "UserKnownHostsFile=/sandbox/.ssh_known_hosts",
-            "-o", "ConnectTimeout=10",
-            "-o", "ServerAliveInterval=15",
-            "-p", str(port),
-        ]
-
-        if private_key.strip():
-            key_file = os.path.join(ssh_tmp_dir, "id_key")
-            with open(key_file, "w", encoding="utf-8") as kf:
-                kf.write(_normalize_ssh_private_key(private_key))
-            os.chmod(key_file, 0o600)
-            bwrap_cmd.extend(["--ro-bind-try", ssh_tmp_dir, "/ssh_auth"])
-            ssh_args.extend(["-i", "/ssh_auth/id_key", "-o", "IdentitiesOnly=yes"])
-            if password:
-                bwrap_cmd.extend(["--setenv", "SSHPASS", password])
-                ssh_args = ["sshpass", "-e", "-P", "assphrase"] + ssh_args
-            else:
-                ssh_args.extend(["-o", "BatchMode=yes"])
-        elif password:
-            bwrap_cmd.extend(["--setenv", "SSHPASS", password])
-            ssh_args.extend([
-                "-o", "PreferredAuthentications=password,keyboard-interactive",
-                "-o", "PubkeyAuthentication=no",
-            ])
-            ssh_args = ["sshpass", "-e"] + ssh_args
-        else:
-            ssh_args.extend(["-o", "BatchMode=yes"])
-
-        ssh_args.extend([f"{user}@{host}", command])
+        bwrap_cmd.extend(extra_bwrap_args)
         bwrap_cmd.extend(ssh_args)
 
         proc = subprocess.run(bwrap_cmd, capture_output=True, text=True, timeout=timeout)

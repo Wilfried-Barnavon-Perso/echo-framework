@@ -98,6 +98,8 @@
 	import EchoBrowserTab from '$lib/components/echo/EchoBrowserTab.svelte';
 	import EchoVaultTab from '$lib/components/echo/EchoVaultTab.svelte';
 	import EchoCanvasTab from '$lib/components/echo/EchoCanvasTab.svelte';
+	import EchoTerminalHeader from '$lib/components/echo/EchoTerminalHeader.svelte';
+	import EchoTerminalCreateMenu from '$lib/components/echo/EchoTerminalCreateMenu.svelte';
 	import {
 		echoBrowserTarget,
 		echoCanvasActiveFrame,
@@ -106,9 +108,16 @@
 		echoCognitionSelectedSubSid,
 		echoOpenSecondaryTabsCount,
 		echoTabOpenRequest,
+		echoTerminalStates,
+		refreshEchoSshTargets,
 		removeEchoCanvasFrames
 	} from '$lib/stores/echo';
-	import { getEchoToken, postEchoWmRpc } from '$lib/apis/echo';
+	import {
+		closeEchoTerminalSession,
+		getEchoToken,
+		postEchoWmRpc,
+		setEchoTerminalLock
+	} from '$lib/apis/echo';
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
@@ -580,39 +589,124 @@
 	$: if ($echoTabOpenRequest && $echoTabOpenRequest.chatId === chatId && viewReady && viewEntry) {
 		const req = $echoTabOpenRequest;
 		echoTabOpenRequest.set(null);
-		if (req.payload?.subSid && chatId) {
-			echoCognitionSelectedSubSid.update((curr) => ({ ...curr, [chatId]: req.payload!.subSid! }));
-		}
-		if (req.kind === 'echo-codex' && chatId) {
-			echoCodexTarget.set({
-				chatId,
-				workspace: req.payload?.workspace,
-				file: req.payload?.file,
-				commitHash: req.payload?.commitHash,
-				targetChatId: req.payload?.targetChatId
-			});
-		}
-		if (req.kind === 'echo-browser' && chatId) {
-			echoBrowserTarget.set({
-				chatId,
-				sessionId: req.payload?.sessionId,
-				frameId: req.payload?.frameId,
-				frameIndex: req.payload?.frameIndex
-			});
-		}
-		if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
-			echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
-		}
-		if (req.kind === 'echo-canvas') {
-			dismissedAutoTabs.delete('echo-canvas');
-		}
-		if (req.payload?.auto === true) {
-			if (!dismissedAutoTabs.has(req.kind)) {
-				openFeature(req.kind, true, true);
+		if (req.kind === 'terminal') {
+			if (selectedConnection) {
+				const targetSessionId = req.payload?.sessionId;
+				const existing = targetSessionId
+					? tabs.tabs.find((t) => t.kind === 'terminal' && t.sessionId === targetSessionId)
+					: undefined;
+				if (existing) {
+					if (req.payload?.auto !== true) {
+						selectTab(existing.id);
+					}
+				} else {
+					const mode: 'local' | 'ssh' = req.payload?.mode === 'ssh' ? 'ssh' : 'local';
+					let terminalNumber = 1;
+					while (
+						tabs.tabs.some(
+							(tab) => tab.kind === 'terminal' && tab.terminalNumber === terminalNumber
+						)
+					) {
+						terminalNumber++;
+					}
+					openPanel(
+						{
+							id: uuidv4(),
+							kind: 'terminal',
+							label:
+								req.payload?.name ||
+								(mode === 'ssh' ? req.payload?.accountId || 'SSH' : 'Sandbox'),
+							terminalNumber,
+							sessionId: targetSessionId,
+							terminalMode: mode,
+							terminalAccountId: req.payload?.accountId || undefined,
+							terminalTarget: req.payload?.target || undefined,
+							agentLocked: req.payload?.agentLocked ?? mode === 'ssh',
+							terminalId: selectedConnection.selector,
+							connection: { ...selectedConnection }
+						},
+						true,
+						req.payload?.auto === true
+					);
+				}
 			}
 		} else {
-			dismissedAutoTabs.delete(req.kind);
-			openFeature(req.kind, true, false);
+			if (req.payload?.subSid && chatId) {
+				echoCognitionSelectedSubSid.update((curr) => ({ ...curr, [chatId]: req.payload!.subSid! }));
+			}
+			if (req.kind === 'echo-codex' && chatId) {
+				echoCodexTarget.set({
+					chatId,
+					workspace: req.payload?.workspace,
+					file: req.payload?.file,
+					commitHash: req.payload?.commitHash,
+					targetChatId: req.payload?.targetChatId
+				});
+			}
+			if (req.kind === 'echo-browser' && chatId) {
+				echoBrowserTarget.set({
+					chatId,
+					sessionId: req.payload?.sessionId,
+					frameId: req.payload?.frameId,
+					frameIndex: req.payload?.frameIndex
+				});
+			}
+			if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
+				echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
+			}
+			if (req.kind === 'echo-canvas') {
+				dismissedAutoTabs.delete('echo-canvas');
+			}
+			if (req.payload?.auto === true) {
+				if (!dismissedAutoTabs.has(req.kind)) {
+					openFeature(req.kind, true, true);
+				}
+			} else {
+				dismissedAutoTabs.delete(req.kind);
+				openFeature(req.kind, true, false);
+			}
+		}
+	}
+
+	$: if (viewReady && viewEntry?.chatId && $echoTerminalStates[viewEntry.chatId]) {
+		const chatTerms = $echoTerminalStates[viewEntry.chatId];
+		let nextPanels = viewEntry.state.panels;
+		let changed = false;
+		for (const tab of viewEntry.state.panels.tabs) {
+			if (tab.kind !== 'terminal' || !tab.sessionId) continue;
+			const live = chatTerms[tab.sessionId];
+			if (!live) continue;
+			if (live._closed) {
+				nextPanels = removeTab(nextPanels, tab.id);
+				changed = true;
+			} else if (
+				tab.agentLocked !== live.agent_locked ||
+				(live.name && tab.label !== live.name) ||
+				(live.target && tab.terminalTarget !== live.target)
+			) {
+				nextPanels = {
+					...nextPanels,
+					tabs: nextPanels.tabs.map((t) =>
+						t.id === tab.id
+							? {
+									...t,
+									agentLocked: live.agent_locked,
+									label: live.name || t.label,
+									terminalTarget: live.target || t.terminalTarget,
+									terminalMode: live.mode ?? t.terminalMode
+								}
+							: t
+					)
+				};
+				changed = true;
+			}
+		}
+		if (changed) {
+			changeChatView(viewEntry, { ...viewEntry.state, panels: nextPanels });
+			tabs = viewEntry.state.panels;
+			if (!tabs.tabs.length || tabs.tabs.every((t) => t.kind === 'chat')) {
+				showTabs.set(false);
+			}
 		}
 	}
 
@@ -762,8 +856,16 @@
 		resizingSplit = null;
 		dragged = false;
 	};
-	const newTerminal = () => {
+	const newTerminal = (opts?: {
+		mode?: 'local' | 'ssh';
+		accountId?: string;
+		name?: string;
+		target?: string;
+	}) => {
 		if (!terminalEnabled || !selectedConnection) return;
+		const cleanOpts =
+			opts && typeof opts === 'object' && 'mode' in opts ? opts : { mode: 'local' as const };
+		const mode: 'local' | 'ssh' = cleanOpts.mode === 'ssh' ? 'ssh' : 'local';
 		let terminalNumber = 1;
 		while (
 			tabs.tabs.some((tab) => tab.kind === 'terminal' && tab.terminalNumber === terminalNumber)
@@ -771,13 +873,23 @@
 			terminalNumber++;
 		}
 		const id = uuidv4();
+		const label =
+			mode === 'ssh'
+				? cleanOpts.name || cleanOpts.accountId || 'SSH'
+				: terminalNumber === 1
+					? 'Sandbox'
+					: `Sandbox ${terminalNumber}`;
 		openPanel({
 			id,
 			kind: 'terminal',
-			label: `${$i18n.t('Terminal')} ${terminalNumber}`,
+			label,
 			terminalNumber,
 			terminalId: selectedConnection.selector,
-			connection: { ...selectedConnection }
+			connection: { ...selectedConnection },
+			terminalMode: mode,
+			terminalAccountId: mode === 'ssh' ? cleanOpts.accountId : undefined,
+			terminalTarget: mode === 'ssh' ? cleanOpts.target : undefined,
+			agentLocked: mode === 'ssh'
 		});
 		if (viewEntry && viewReady) startSession(viewEntry, tabs.tabs.find((tab) => tab.id === id)!);
 	};
@@ -801,8 +913,13 @@
 			await owner.pending.get(id);
 			const tab = owner.state.panels.tabs.find((item) => item.id === id);
 			if (!tab) return;
+			const alreadyClosedRemotely = Boolean(
+				owner.chatId &&
+					tab.sessionId &&
+					$echoTerminalStates[owner.chatId]?.[tab.sessionId]?._closed
+			);
 			const connection =
-				tab.sessionId && tab.kind === 'terminal'
+				!alreadyClosedRemotely && tab.sessionId && tab.kind === 'terminal'
 					? tabConnection(tab)
 					: null;
 			if (
@@ -860,14 +977,22 @@
 			}
 			if (connection && tab.sessionId) {
 				try {
-					await terminalRequest(
-						connection,
-						owner.chatId,
-						`/api/terminals/${encodeURIComponent(tab.sessionId)}`,
-						{ method: 'DELETE' }
-					);
+					const echoToken = getEchoToken();
+					if (owner.chatId && echoToken) {
+						await closeEchoTerminalSession(echoToken, owner.chatId, tab.sessionId);
+					} else {
+						await terminalRequest(
+							connection,
+							owner.chatId,
+							`/api/terminals/${encodeURIComponent(tab.sessionId)}`,
+							{ method: 'DELETE' }
+						);
+					}
 				} catch (error) {
-					if (!(error instanceof TerminalRequestError) || error.status !== 404) {
+					const isNotFound =
+						(error instanceof TerminalRequestError && error.status === 404) ||
+						/404|not found|introuvable|inconnue/i.test(String(error));
+					if (!isNotFound) {
 						changeChatView(owner, {
 							...owner.state,
 							panels:
@@ -1743,20 +1868,69 @@
 							{/if}
 						</div>
 					{:else}
-						{#key `${tab.sessionId}:${sessionAttempts[tab.id] ?? 0}`}
-							<XTerminal
-								bind:this={terminalViews[tab.id]}
-								connection={connection!}
-								chatId={owner.chatId}
-								sessionId={tab.sessionId}
-								active={panelVisible && visibleTabIds.has(tab.id)}
-								overlay={dragged}
-								onUnavailable={(message, status) => {
-									if (owner === viewEntry)
-										sessionFailures = { ...sessionFailures, [tab.id]: { message, status } };
-								}}
+						{@const liveTerm =
+							owner.chatId && tab.sessionId
+								? $echoTerminalStates[owner.chatId]?.[tab.sessionId]
+								: undefined}
+						<div class="flex h-full min-h-0 flex-col">
+							<EchoTerminalHeader
+								sessionId={tab.sessionId ?? ''}
+								terminalName={liveTerm?.name || tab.label}
+								terminalMode={liveTerm?.mode ?? tab.terminalMode ?? 'local'}
+								terminalTarget={liveTerm?.target ?? tab.terminalTarget ?? ''}
+								agentLocked={liveTerm?.agent_locked ??
+									tab.agentLocked ??
+									tab.terminalMode === 'ssh'}
+								onToggleLock={owner.chatId && tab.sessionId
+									? async (nextLocked) => {
+											const token = getEchoToken();
+											if (!token || !owner.chatId || !tab.sessionId) return;
+											try {
+												const updated = await setEchoTerminalLock(
+													token,
+													owner.chatId,
+													tab.sessionId,
+													nextLocked
+												);
+												updateViewTab(owner, tab.id, { agentLocked: updated.agent_locked });
+												if (owner === viewEntry) {
+													tabs = owner.state.panels;
+												}
+												echoTerminalStates.update((all) => {
+													const cid = owner.chatId!;
+													const chatMap = all[cid] ?? {};
+													return {
+														...all,
+														[cid]: { ...chatMap, [updated.id]: updated }
+													};
+												});
+											} catch (err) {
+												toast.error(
+													err instanceof Error
+														? err.message
+														: 'Impossible de modifier le verrou terminal.'
+												);
+											}
+										}
+									: null}
 							/>
-						{/key}
+							<div class="relative flex-1 min-h-0">
+								{#key `${tab.sessionId}:${sessionAttempts[tab.id] ?? 0}`}
+									<XTerminal
+										bind:this={terminalViews[tab.id]}
+										connection={connection!}
+										chatId={owner.chatId}
+										sessionId={tab.sessionId}
+										active={panelVisible && visibleTabIds.has(tab.id)}
+										overlay={dragged}
+										onUnavailable={(message, status) => {
+											if (owner === viewEntry)
+												sessionFailures = { ...sessionFailures, [tab.id]: { message, status } };
+										}}
+									/>
+								{/key}
+							</div>
+						</div>
 					{/if}
 				{:else if tab.untitled && connection}
 					<UntitledFile
@@ -1882,14 +2056,7 @@
 					</div>
 					<div class="flex w-full flex-wrap items-center justify-center gap-2">
 						{#if terminalMenuVisible && terminalMenuClickable}
-							<button
-								type="button"
-								class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:bg-gray-800"
-								on:click={newTerminal}
-							>
-								<Icon name="terminal" size={14} />
-								<span>{$i18n.t('New Terminal')}</span>
-							</button>
+							<EchoTerminalCreateMenu variant="pill" clickable={true} onCreate={newTerminal} />
 						{/if}
 						{#each newTabViews as view (view.kind)}
 							<button
@@ -2013,6 +2180,9 @@
 						if (open && !terminalEnabled && !terminalChecking && selectedConnection && !terminalNeedsSavedChat) {
 							void checkTerminal();
 						}
+						if (open && !terminalNeedsSavedChat) {
+							void refreshEchoSshTargets();
+						}
 					}}
 				>
 					<button
@@ -2023,33 +2193,14 @@
 					<div slot="content">
 						<DropdownMenu className="min-w-56">
 							{#if terminalMenuVisible}
-								{#if terminalMenuClickable}
-									<button on:click={newTerminal}
-										><Icon name="terminal" size={14} /><span class="flex-1 text-start"
-											>{$i18n.t('New Terminal')}</span
-										><HotkeyHint name="newTerminal" className="ms-auto" /></button
-									>
-								{:else}
-									<Tooltip
-										content={terminalNeedsSavedChat
-											? "Démarrez d'abord une conversation pour ouvrir un terminal"
-											: $i18n.t('Terminal connection unavailable')}
-										placement="left"
-										className="flex w-full [&>button]:flex [&>button]:w-full [&>button]:h-[1.6875rem] [&>button]:items-center [&>button]:gap-2 [&>button]:rounded-xl! [&>button]:px-2! [&>button]:text-[0.8125rem] [&>button_svg]:size-3.5"
-									>
-										<button
-											type="button"
-											disabled
-											aria-disabled="true"
-											class="opacity-45 cursor-not-allowed text-gray-400 dark:text-gray-500"
-											on:click|preventDefault|stopPropagation
-										>
-											<Icon name="terminal" size={14} />
-											<span class="flex-1 text-start">{$i18n.t('New Terminal')}</span>
-											<HotkeyHint name="newTerminal" className="ms-auto" />
-										</button>
-									</Tooltip>
-								{/if}
+								<EchoTerminalCreateMenu
+									variant="menu"
+									clickable={terminalMenuClickable}
+									disabledReason={terminalNeedsSavedChat
+										? "Démarrez d'abord une conversation pour ouvrir un terminal"
+										: $i18n.t('Terminal connection unavailable')}
+									onCreate={newTerminal}
+								/>
 							{/if}
 							{#if desktopEnabled}<button on:click={openDesktop}
 									><Icon name="monitor" size={14} /><span class="flex-1 text-start"

@@ -4,16 +4,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.23.4.1
+version: 6.24.6.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Ajout de broadcast_terminal_state (echo_terminal_state) pour la diffusion temps réel des sessions terminales.
 # 6.23.4.1: Ajout de broadcast_active_model (echo_active_model) et de l'action RPC get_active_model pour la pastille Écho v6.
 # 6.21.9.1: Ajout de notify_cognition_update (bus WS echo_cognition_update), capture de _loop dans subscribe et cache _chat_owner_cache.
 # 6.20.3.1: Ajout de broadcast_wait_timer (echo_wait_timer) pour la diffusion temps réel du minuteur vers le bus WM.
 # 6.17.4.1: Suppression relais WS Canvas et file d'événements, ajout jetons HMAC sandbox_event et préservation src app_proxy dans upsert_canvas_frame.
-# 6.16.0.4: Registre _active_browser_sessions, relais WS Canvas/App, tickets HMAC app_proxy et purge code mort polling/pings/event.
 
 import asyncio
 import base64
@@ -313,6 +313,24 @@ class EchoWindowManager:
                 "chat_id": chat_id,
                 "kind": kind,
                 "payload": payload or {},
+            },
+        )
+
+    async def broadcast_terminal_state(
+        self,
+        user_id: str,
+        chat_id: str,
+        terminal_data: Dict[str, Any],
+        action: str = "updated",
+    ) -> None:
+        """Diffuse en temps réel sur le bus WM l'état d'une session terminale (opened, lock_changed, closed)."""
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_terminal_state",
+                "chat_id": chat_id,
+                "action": action,
+                "terminal": terminal_data or {},
             },
         )
 

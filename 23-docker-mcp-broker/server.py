@@ -3,18 +3,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 6.11.0.1
+VERSION : 6.24.6.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-20
+DATE MAJ : 2026-11-27
 ===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Enrichissement du schéma 'ssh' avec le champ 'certificate' (textarea), 'private_key' en 'textarea_secret' et instructions PAS pour manage_terminal.
 # 6.11.0.1: Ajout route streaming POST /upload_drive, factorisation _build_broker_exception_response et précision Google People API [Contacts].
 # 6.6.21.1: Ajout du schéma 'ssh' dans SERVICE_SCHEMAS pour l'Identity Vault et ssh_executor.
 # 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
 # 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
-# 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
 import base64
 import json
 import logging
@@ -333,12 +333,13 @@ SERVICE_SCHEMAS = {
         "category": "orchestration",
         "name": "Serveurs SSH Distants",
         "user_required_instructions": (
-            "Pour autoriser l'Agent à administrer un serveur via SSH (ssh_executor), "
+            "Pour ouvrir un terminal SSH ou autoriser l'Agent à administrer un serveur via SSH (manage_terminal), "
             "L'Utilisateur DOIT saisir ses identifiants de manière sécurisée dans l'onglet "
             "'Coffre' (Identity Vault) sous le service 'Serveurs SSH Distants' ('ssh'), "
             "avec un alias de compte explicite (ex: 'vps-prod', 'nas-local'). "
             "Renseigner 'host', 'user', 'description', ainsi que 'password' (ou passphrase) "
-            "et/ou 'private_key'. Ne jamais transmettre de secrets en clair dans le chat (MPSI)."
+            "et/ou 'private_key' (et 'certificate' OpenSSH optionnel). "
+            "Ne jamais transmettre de secrets en clair dans le chat (MPSI)."
         ),
         "fields": [
             {
@@ -371,8 +372,15 @@ SERVICE_SCHEMAS = {
             {
                 "id": "private_key",
                 "label": "Clé privée SSH (PEM / OpenSSH)",
-                "type": "password",
+                "type": "textarea_secret",
                 "help": "Optionnel : coller la clé privée complète (-----BEGIN ... PRIVATE KEY-----).",
+            },
+            {
+                "id": "certificate",
+                "label": "Certificat SSH OpenSSH (optionnel)",
+                "type": "textarea",
+                "placeholder": "ssh-ed25519-cert-v01@openssh.com AAAA...",
+                "help": "Optionnel : coller le certificat public signé (*-cert.pub) associé à la clé privée.",
             },
             {
                 "id": "description",

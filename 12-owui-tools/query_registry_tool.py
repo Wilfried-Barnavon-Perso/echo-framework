@@ -3,16 +3,16 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 6.13.1.1
+version: 6.24.6.1
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.24.6.1: Prise en charge de resource_type="terminal" avec réconciliation via reconcile_chat_terminals_registry et formatage des métadonnées dans _format_resource_detail.
 # 6.13.1.1: Affichage des métadonnées clip vidéo MP4 dans _format_resource_detail pour resource_type="browserview".
 # 6.6.5.1: Prise en charge de resource_type="browserview" et affichage de ses métadonnées dans _format_resource_detail.
 # 5.235.5.1: Calcul et affichage de la provenance des ressources de session (branche active vs hors branche).
 # 5.233.0.1: Décoration @echo_tool sur query_registry et remplacement intégral des 7 appels wrap_tool_output par des retours directs.
-# 5.232.5.1: Prise en charge de resource_type="generated", ajout du filtre workspace ("main", "plans", "generated") et de la colonne Localisation (storage_path).
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -23,6 +23,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool, EchoCompactionEngine
 from echo_session_gc import resource_provenance
 from echo_state_manager import EchoStateManager
+from echo_terminals import reconcile_chat_terminals_registry
 
 PROVENANCE_LABELS = {
     "active": "branche active",
@@ -41,7 +42,7 @@ class Tools:
     async def query_registry(
         self,
         # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ces Literal en cas d'évolution du Registre V2.
-        resource_type: Optional[Literal["codex", "plan", "generated", "media", "binary", "weburl", "n8n_workflow", "n8n_template", "browserview"]] = None,
+        resource_type: Optional[Literal["codex", "plan", "generated", "media", "binary", "weburl", "n8n_workflow", "n8n_template", "browserview", "terminal"]] = None,
         status: Optional[str] = None,
         search_term: str = None,
         resource_id: str = None,
@@ -51,7 +52,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Consulte l'état des ressources du Registre Unifié (fichiers, Codex, plans, médias générés, workflows N8N, URLs). Étape obligatoire avant manipulation."""
+        """Consulte l'état des ressources du Registre Unifié (fichiers, Codex, plans, médias générés, workflows N8N, URLs, navigateurs et terminaux)."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
 
@@ -73,6 +74,13 @@ class Tools:
 
         session_state = EchoStateManager(user_id=uid, chat_id=cid)
         global_state = EchoStateManager(user_id=uid)
+        if (resource_id and str(resource_id).startswith("term_")) or (
+            not resource_id and not workspace and resource_type in (None, "terminal")
+        ):
+            try:
+                await reconcile_chat_terminals_registry(uid, cid)
+            except Exception:
+                pass
         active_ids = set(await EchoCompactionEngine.load_active_branch_ids(cid))
 
         # Mode détail : une ressource spécifique par ID
@@ -188,6 +196,30 @@ class Tools:
                         f"- **Clip vidéo** : `{meta['clip_filename']}` ({float(meta.get('clip_duration_ms') or 0)/1000.0:.1f} s, {float(meta.get('clip_size_bytes') or 0)/1024.0:.0f} Ko)"
                     )
                 lines.append(f"- **Conservée** : {'Oui' if (r.get('status') == 'retained' or meta.get('retained')) else 'Non (éphémère)'}")
+
+        # Métadonnées Terminal
+        if r["resource_type"] == "terminal":
+            meta = r.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _std_json
+                    meta = _std_json.loads(meta)
+                except Exception:
+                    meta = {}
+            if isinstance(meta, dict):
+                mode = str(meta.get("mode") or "local")
+                lines.append(f"- **Mode** : `{mode}`")
+                if mode == "ssh" and meta.get("account_id"):
+                    lines.append(f"- **Compte SSH** : `{meta['account_id']}`")
+                if meta.get("target"):
+                    lines.append(f"- **Cible** : `{meta['target']}`")
+                lock_label = (
+                    "🔒 Verrouillé (lecture seule)"
+                    if meta.get("agent_locked")
+                    else "🔓 Déverrouillé (interaction autorisée)"
+                )
+                lines.append(f"- **Verrou agent** : {lock_label}")
+                lines.append(f"- **État processus** : {'Actif' if meta.get('alive', True) else 'Terminé'}")
 
         # Résumé (Smart Context)
         if r.get("summary"):

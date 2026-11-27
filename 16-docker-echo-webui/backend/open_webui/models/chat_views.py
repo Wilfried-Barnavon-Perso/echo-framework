@@ -29,6 +29,10 @@ class PanelTab(ViewModel):
     page: int | None = None
     sessionId: str | None = None
     directory: str | None = None
+    terminalMode: Literal['local', 'ssh'] | None = None
+    terminalAccountId: str | None = None
+    terminalTarget: str | None = None
+    agentLocked: bool | None = None
 
 
 class PanelGroup(ViewModel):

@@ -862,7 +862,7 @@ app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
 app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
 
-# [ECHO-V6-HOOK] Montage des routeurs souverains ECHO (Skills, Meta-Artifacts, Window Manager, Cognition, Codex, Vault, Embeds, LLM Auth, Chat Actions)
+# [ECHO-V6-HOOK] Montage des routeurs souverains ECHO (Skills, Meta-Artifacts, Window Manager, Cognition, Codex, Vault, Embeds, LLM Auth, Chat Actions, Terminals)
 from open_webui.echo.routers import (
     skills as echo_skills_router,
     meta_artifacts as echo_meta_artifacts_router,
@@ -873,6 +873,7 @@ from open_webui.echo.routers import (
     embeds as echo_embeds_router,
     llm_auth as echo_llm_auth_router,
     chat_actions as echo_chat_actions_router,
+    terminals as echo_terminals_router,
 )
 app.include_router(echo_skills_router.router, prefix='/echo/v1/skills', tags=['echo-skills'])
 app.include_router(echo_skills_router.router, prefix='/api/v1/skills', tags=['skills'])
@@ -884,6 +885,7 @@ app.include_router(echo_vault_router.router, prefix='/echo/v1/vault', tags=['ech
 app.include_router(echo_embeds_router.router, prefix='/echo/v1/embeds', tags=['echo-embeds'])
 app.include_router(echo_llm_auth_router.router, prefix='/echo/v1/llm-auth', tags=['echo-llm-auth'])
 app.include_router(echo_chat_actions_router.router, prefix='/echo/v1/chats', tags=['echo-chats'])
+app.include_router(echo_terminals_router.router, prefix='/echo/v1/terminals', tags=['echo-terminals'])
 # app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])

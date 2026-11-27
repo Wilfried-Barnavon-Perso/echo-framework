@@ -1,12 +1,15 @@
 // Copyright (c) 2025-2026 Wilfried BARNAVON
 // SPDX-License-Identifier: Apache-2.0
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import {
 	ECHO_API_BASE_URL,
 	buildEchoWsUrl,
 	getEchoCognitionSnapshot,
+	getEchoTerminalSshTargets,
 	getEchoToken,
-	registerEchoWmWsTransport
+	registerEchoWmWsTransport,
+	type EchoSshTargetItem,
+	type EchoTerminalSessionInfo
 } from '$lib/apis/echo';
 import type { EchoCompactionCheckpoint } from '$lib/apis/echo/chat_actions';
 import { isSavedChatId } from '$lib/utils/chatId';
@@ -258,7 +261,8 @@ export type EchoTabKind =
 	| 'echo-codex'
 	| 'echo-browser'
 	| 'echo-canvas'
-	| 'echo-vault';
+	| 'echo-vault'
+	| 'terminal';
 
 export interface EchoTabOpenRequest {
 	chatId: string;
@@ -273,6 +277,11 @@ export interface EchoTabOpenRequest {
 		sessionId?: string;
 		frameIndex?: number;
 		auto?: boolean;
+		mode?: 'local' | 'ssh';
+		accountId?: string;
+		name?: string;
+		target?: string;
+		agentLocked?: boolean;
 		[key: string]: any;
 	};
 }
@@ -397,6 +406,41 @@ export const removeEchoCanvasFrames = (chatId: string, frameIds?: string[]): voi
 		return curr;
 	});
 };
+export const echoTerminalStates = writable<Record<string, Record<string, EchoTerminalSessionInfo>>>(
+	{}
+);
+export const echoSshTargets = writable<EchoSshTargetItem[]>([]);
+
+let _sshTargetsInFlight: Promise<EchoSshTargetItem[]> | null = null;
+let _sshTargetsFetchedAt = 0;
+const SSH_TARGETS_TTL_MS = 15_000;
+
+export const refreshEchoSshTargets = async (force = false): Promise<EchoSshTargetItem[]> => {
+	const token = getEchoToken();
+	if (!token) {
+		echoSshTargets.set([]);
+		return [];
+	}
+	const now = Date.now();
+	if (!force && _sshTargetsFetchedAt > 0 && now - _sshTargetsFetchedAt < SSH_TARGETS_TTL_MS) {
+		return get(echoSshTargets);
+	}
+	if (_sshTargetsInFlight) {
+		return _sshTargetsInFlight;
+	}
+	_sshTargetsInFlight = getEchoTerminalSshTargets(token)
+		.then((items) => {
+			echoSshTargets.set(items);
+			_sshTargetsFetchedAt = Date.now();
+			return items;
+		})
+		.catch(() => get(echoSshTargets))
+		.finally(() => {
+			_sshTargetsInFlight = null;
+		});
+	return _sshTargetsInFlight;
+};
+
 export const requestEchoTabOpen = (
 	chatId: string,
 	kind: EchoTabKind,
@@ -717,6 +761,27 @@ const openWmSocket = () => {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
 				if (cid && data.kind) {
 					requestEchoTabOpen(cid, data.kind, data.payload);
+				}
+			} else if (data.type === 'echo_terminal_state') {
+				const cid = String(data.chat_id || wmGetActiveChatId() || '');
+				const term = data.terminal as EchoTerminalSessionInfo | undefined;
+				const sid = term?.id;
+				if (cid && sid && term) {
+					echoTerminalStates.update((all) => {
+						const chatMap = all[cid] ?? {};
+						const prev = chatMap[sid];
+						const nextTerm: EchoTerminalSessionInfo =
+							data.action === 'closed'
+								? { ...(prev || {}), ...term, alive: false, _closed: true }
+								: { ...(prev || {}), ...term, _closed: false };
+						return {
+							...all,
+							[cid]: {
+								...chatMap,
+								[sid]: nextTerm
+							}
+						};
+					});
 				}
 			} else if (data.type === 'echo_browser_frame') {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
