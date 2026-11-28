@@ -328,7 +328,15 @@
 	const startSession = (owner: NonNullable<typeof viewEntry>, tab: PanelTab) => {
 		const connection = tabConnection(tab);
 		if (connection) {
-			delete sessionFailures[tab.id];
+			const { [tab.id]: _clearedFailure, ...remainingFailures } = sessionFailures;
+			sessionFailures = remainingFailures;
+			sessionAttempts = {
+				...sessionAttempts,
+				[tab.id]: (sessionAttempts[tab.id] ?? 0) + 1
+			};
+			if (tab.kind === 'terminal' && tab.sessionId) {
+				updateViewTab(owner, tab.id, { sessionId: undefined });
+			}
 			void createViewSession(owner, tab.id, connection);
 		}
 	};
@@ -927,9 +935,10 @@
 			const tab = owner.state.panels.tabs.find((item) => item.id === id);
 			if (!tab) return;
 			const alreadyClosedRemotely = Boolean(
-				owner.chatId &&
-					tab.sessionId &&
-					$echoTerminalStates[owner.chatId]?.[tab.sessionId]?._closed
+				sessionFailures[id]?.status === 404 ||
+					(owner.chatId &&
+						tab.sessionId &&
+						$echoTerminalStates[owner.chatId]?.[tab.sessionId]?._closed)
 			);
 			const connection =
 				!alreadyClosedRemotely && tab.sessionId && tab.kind === 'terminal'
@@ -1843,91 +1852,91 @@
 						overlay={dragged}
 					/>
 				{:else if tab.kind === 'terminal'}
-					{#if owner.pending.has(tab.id)}
-						<p
-							role="status"
-							class="flex h-full items-center justify-center p-4 text-center text-xs text-gray-400 dark:text-gray-500"
-						>
-							{$i18n.t('Connecting…')}
-						</p>
-					{:else if !tab.sessionId || failure}
-						<div
-							role="status"
-							class="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-xs text-gray-400 dark:text-gray-500"
-						>
-							<p>
-								{failure?.status === 404
-									? $i18n.t('Session no longer available')
-									: (failure?.message ??
-										owner.sessionErrors[tab.id] ??
-										$i18n.t('Session no longer available'))}
-							</p>
-							{#if failure && failure.status !== 404}
-								<button
-									class="underline"
-									on:click={() => {
-										delete sessionFailures[tab.id];
-										sessionFailures = { ...sessionFailures };
-										sessionAttempts = {
-											...sessionAttempts,
-											[tab.id]: (sessionAttempts[tab.id] ?? 0) + 1
-										};
-									}}>{$i18n.t('Retry')}</button
-								>
-							{:else}
-								<button class="underline" on:click={() => startSession(owner, tab)}
-									>{$i18n.t('Start new terminal')}</button
-								>
-							{/if}
-						</div>
-					{:else}
-						{@const liveTerm =
-							owner.chatId && tab.sessionId
-								? $echoTerminalStates[owner.chatId]?.[tab.sessionId]
-								: undefined}
-						<div class="flex h-full min-h-0 flex-col">
-							<EchoTerminalHeader
-								sessionId={tab.sessionId ?? ''}
-								terminalName={liveTerm?.name || tab.label}
-								terminalMode={liveTerm?.mode ?? tab.terminalMode ?? 'local'}
-								terminalTarget={liveTerm?.target ?? tab.terminalTarget ?? ''}
-								agentLocked={liveTerm?.agent_locked ??
-									tab.agentLocked ??
-									tab.terminalMode === 'ssh'}
-								onToggleLock={owner.chatId && tab.sessionId
-									? async (nextLocked) => {
-											const token = getEchoToken();
-											if (!token || !owner.chatId || !tab.sessionId) return;
-											try {
-												const updated = await setEchoTerminalLock(
-													token,
-													owner.chatId,
-													tab.sessionId,
-													nextLocked
-												);
-												updateViewTab(owner, tab.id, { agentLocked: updated.agent_locked });
-												if (owner === viewEntry) {
-													tabs = owner.state.panels;
-												}
-												echoTerminalStates.update((all) => {
-													const cid = owner.chatId!;
-													const chatMap = all[cid] ?? {};
-													return {
-														...all,
-														[cid]: { ...chatMap, [updated.id]: updated }
-													};
-												});
-											} catch (err) {
-												toast.error(
-													err instanceof Error
-														? err.message
-														: 'Impossible de modifier le verrou terminal.'
-												);
+					{@const liveTerm =
+						owner.chatId && tab.sessionId
+							? $echoTerminalStates[owner.chatId]?.[tab.sessionId]
+							: undefined}
+					<div class="flex h-full min-h-0 flex-col">
+						<EchoTerminalHeader
+							sessionId={!failure ? (tab.sessionId ?? '') : ''}
+							terminalName={liveTerm?.name || tab.label}
+							terminalMode={liveTerm?.mode ?? tab.terminalMode ?? 'local'}
+							terminalTarget={liveTerm?.target ?? tab.terminalTarget ?? ''}
+							agentLocked={liveTerm?.agent_locked ??
+								tab.agentLocked ??
+								tab.terminalMode === 'ssh'}
+							onToggleLock={owner.chatId && tab.sessionId && !failure && !owner.pending.has(tab.id)
+								? async (nextLocked) => {
+										const token = getEchoToken();
+										if (!token || !owner.chatId || !tab.sessionId) return;
+										try {
+											const updated = await setEchoTerminalLock(
+												token,
+												owner.chatId,
+												tab.sessionId,
+												nextLocked
+											);
+											updateViewTab(owner, tab.id, { agentLocked: updated.agent_locked });
+											if (owner === viewEntry) {
+												tabs = owner.state.panels;
 											}
+											echoTerminalStates.update((all) => {
+												const cid = owner.chatId!;
+												const chatMap = all[cid] ?? {};
+												return {
+													...all,
+													[cid]: { ...chatMap, [updated.id]: updated }
+												};
+											});
+										} catch (err) {
+											toast.error(
+												err instanceof Error
+													? err.message
+													: 'Impossible de modifier le verrou terminal.'
+											);
 										}
-									: null}
-							/>
-							<div class="relative flex-1 min-h-0">
+									}
+								: null}
+						/>
+						<div class="relative flex-1 min-h-0">
+							{#if owner.pending.has(tab.id)}
+								<p
+									role="status"
+									class="flex h-full items-center justify-center p-4 text-center text-xs text-gray-400 dark:text-gray-500"
+								>
+									{$i18n.t('Connecting…')}
+								</p>
+							{:else if !tab.sessionId || failure}
+								<div
+									role="status"
+									class="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-xs text-gray-400 dark:text-gray-500"
+								>
+									<p>
+										{failure?.status === 404
+											? $i18n.t('Session no longer available')
+											: (failure?.message ??
+												owner.sessionErrors[tab.id] ??
+												$i18n.t('Session no longer available'))}
+									</p>
+									{#if failure && failure.status !== 404}
+										<button
+											class="underline"
+											on:click={() => {
+												delete sessionFailures[tab.id];
+												sessionFailures = { ...sessionFailures };
+												sessionAttempts = {
+													...sessionAttempts,
+													[tab.id]: (sessionAttempts[tab.id] ?? 0) + 1
+												};
+											}}>{$i18n.t('Retry')}</button
+										>
+									{:else}
+										<button class="underline" on:click={() => startSession(owner, tab)}
+											>{$i18n.t('Start new terminal')}</button
+										>
+									{/if}
+								</div>
+							{:else}
 								{#key `${tab.sessionId}:${sessionAttempts[tab.id] ?? 0}`}
 									<XTerminal
 										bind:this={terminalViews[tab.id]}
@@ -1942,9 +1951,9 @@
 										}}
 									/>
 								{/key}
-							</div>
+							{/if}
 						</div>
-					{/if}
+					</div>
 				{:else if tab.untitled && connection}
 					<UntitledFile
 						initialView={owner.drafts.get(tab.id)}

@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.26.0.1
+version: 6.26.2.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & Terminaux Local/SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.2.1: Distinction explicite active_count vs sessions récemment terminées dans manage_terminal(action='list').
 # 6.26.0.1: Consommation SSOT de TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC (900s), TERMINAL_MAX_EXEC_TIMEOUT_SEC (3600s), TERMINAL_DEFAULT_READ_LINES (100) et TERMINAL_DEFAULT_WAIT_MS (400ms) dans manage_terminal.
 # 6.25.3.1: Refonte de manage_terminal(action="exec") en macro factorisée sur session PTY visible (_open_and_broadcast_terminal + worker_exec_in_terminal + garde agent_locked).
 # 6.25.1.1: Support symétrique mode="local"|"ssh" sur manage_terminal(action="exec") via worker_exec_local_oneshot et normalisation PAS des error_code.
 # 6.24.6.1: Consolidation de l'exécution SSH one-shot et des sessions terminales interactives (Local/SSH) dans manage_terminal via echo_terminals.
-# 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -869,10 +869,15 @@ class Tools:
                     list_err["error_code"] = res["error_code"]
                 return wrap_tool_output(text=err_msg, status=list_err)
             items = res.get("items") or []
+            active_count = sum(1 for item in items if item.get("alive", True))
+            dead_count = len(items) - active_count
             if not items:
                 text_out = "Aucune session terminale active dans cette conversation."
             else:
-                lines = [f"**{len(items)} session(s) terminale(s) active(s)**\n"]
+                header = f"**{active_count} session(s) terminale(s) active(s)**"
+                if dead_count > 0:
+                    header += f" *(+ {dead_count} terminée(s) récemment)*"
+                lines = [f"{header}\n"]
                 lines.append("| ID | Nom | Mode | Cible | État | Verrou agent |")
                 lines.append("|---|---|---|---|---|---|")
                 for item in items:
@@ -885,7 +890,13 @@ class Tools:
                 text_out = "\n".join(lines)
             return wrap_tool_output(
                 text=text_out,
-                status={"status": "success", "count": len(items), "items": items},
+                status={
+                    "status": "success",
+                    "count": active_count,
+                    "active_count": active_count,
+                    "total_retained": len(items),
+                    "items": items,
+                },
             )
 
         if action == "read":

@@ -3,7 +3,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.26.0.1
+VERSION : 6.26.2.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-28
 
@@ -11,11 +11,11 @@ DATE MAJ : 2026-11-28
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.2.1: Thread spawner résident immortel (_spawn_on_immortal_thread) préservant bwrap --die-with-parent face aux WorkerThreads anyio (10s), quotas/noms filtrés sur is_alive() et priorité 409 terminal_closed avant 423 terminal_locked.
 # 6.26.0.1: Consommation directe SSOT echo_constants (/app/echo_libs), résilience PTY EAGAIN/EINTR/EIO, streaming WS multi-lecteurs par curseur sur Condition, maintien d'activité WS et garde exec_in_progress sur TTL.
 # 6.25.3.1: Purge de POST /ssh et de l'exécution inline hors-PTY, quotas de sessions (2 locaux/chat, 8 SSH/chat, 64 global -> HTTP 429) et route ASGI non-bloquante POST /api/terminals/{id}/exec (sentinelle OSC 777 + exit_code).
 # 6.25.1.1: Exécution Bash inline sans fichier Codex dans POST /execute (_start_sandbox_job) et auto-nommage par défaut "Terminal" (découplé de Sandbox).
 # 6.24.6.1: Unification PTY Local/SSH (mode='ssh', CertificateFile, _prepare_ssh_bwrap_auth), verrou serveur agent_locked (HTTP 423) et routes /api/terminals*.
-# 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
 
 import asyncio
 import errno
@@ -24,6 +24,7 @@ import logging
 import logging.config
 import orjson
 import os
+import queue
 import re
 import shutil
 import signal
@@ -35,6 +36,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 import uuid
 
@@ -129,6 +131,36 @@ TERMINAL_MAX_GLOBAL = int(os.environ.get("TERMINAL_MAX_GLOBAL", _SSOT_TERMINAL_M
 ECHO_WEBUI_INTERNAL_URL = os.environ.get("ECHO_WEBUI_INTERNAL_URL", "http://echo-webui:8080").rstrip("/")
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
+
+_SPAWN_REQUEST_QUEUE: "queue.Queue[tuple[Any, queue.Queue]]" = queue.Queue()
+
+
+def _immortal_spawner_loop() -> None:
+    """Thread résident immortel garantissant que PR_SET_PDEATHSIG (--die-with-parent) reste lié à la vie du processus."""
+    while True:
+        fn, reply_q = _SPAWN_REQUEST_QUEUE.get()
+        try:
+            reply_q.put((True, fn()))
+        except BaseException as exc:
+            reply_q.put((False, exc))
+
+
+_IMMORTAL_SPAWN_THREAD = threading.Thread(
+    target=_immortal_spawner_loop,
+    name="echo-immortal-bwrap-spawner",
+    daemon=True,
+)
+_IMMORTAL_SPAWN_THREAD.start()
+
+
+def _spawn_on_immortal_thread(fn):
+    """Exécute un subprocess.Popen sur le thread immortel hors des WorkerThreads éphémères (anyio MAX_IDLE_TIME=10s)."""
+    reply_q: queue.Queue = queue.Queue(maxsize=1)
+    _SPAWN_REQUEST_QUEUE.put((fn, reply_q))
+    ok, payload = reply_q.get()
+    if not ok:
+        raise payload
+    return payload
 
 
 def _strip_ansi_and_cr(raw_text: str) -> str:
@@ -957,13 +989,15 @@ def _start_sandbox_job(
                 "error": f"Quota global dépassé : {active_global}/{MAX_CONCURRENT_JOBS_GLOBAL} processus actifs.",
             }
 
-        proc = subprocess.Popen(
-            bwrap_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
+        proc = _spawn_on_immortal_thread(
+            lambda: subprocess.Popen(
+                bwrap_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
         )
         hub.job_pgid = proc.pid
         job_lock = threading.Lock()
@@ -1208,23 +1242,27 @@ class TerminalSession:
                 os.setsid()
                 fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-            return subprocess.Popen(
-                cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                preexec_fn=_attach_ctty,
-                close_fds=True,
+            return _spawn_on_immortal_thread(
+                lambda: subprocess.Popen(
+                    cmd,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    preexec_fn=_attach_ctty,
+                    close_fds=True,
+                )
             )
 
-        return subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=self.sandbox_dir if os.path.isdir(self.sandbox_dir) else None,
-            env=env,
-            bufsize=0,
+        return _spawn_on_immortal_thread(
+            lambda: subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=self.sandbox_dir if os.path.isdir(self.sandbox_dir) else None,
+                env=env,
+                bufsize=0,
+            )
         )
 
     def _start(self):
@@ -1523,7 +1561,7 @@ class TerminalSessionManager:
             base_name = "Terminal"
         existing_names = {
             s.name for s in self._sessions.values()
-            if s.user_id == safe_uid and s.chat_id == safe_cid
+            if s.is_alive() and s.user_id == safe_uid and s.chat_id == safe_cid
         }
         if base_name not in existing_names:
             return base_name
@@ -1554,13 +1592,14 @@ class TerminalSessionManager:
         quota_err_msg = None
         with self._lock:
             to_terminate = self._prune_sessions()
-            if len(self._sessions) >= TERMINAL_MAX_GLOBAL:
+            alive_global = sum(1 for s in self._sessions.values() if s.is_alive())
+            if alive_global >= TERMINAL_MAX_GLOBAL:
                 quota_err_msg = f"Quota global atteint ({TERMINAL_MAX_GLOBAL} sessions terminales actives simultanées)."
             else:
                 active_mode_count = sum(
                     1
                     for s in self._sessions.values()
-                    if s.user_id == safe_uid and s.chat_id == safe_cid and s.mode == norm_mode
+                    if s.is_alive() and s.user_id == safe_uid and s.chat_id == safe_cid and s.mode == norm_mode
                 )
                 if norm_mode == "local" and active_mode_count >= TERMINAL_MAX_LOCAL_PER_CHAT:
                     quota_err_msg = (
@@ -2088,9 +2127,6 @@ def post_terminal_input(session_id):
 
     req_json = request.get_json(silent=True) or {}
     actor = str(req_json.get("actor") or "agent").strip().lower()
-    if actor != "user" and session.agent_locked:
-        return _build_terminal_locked_response(session, "Session terminale verrouillée en lecture seule.")
-
     if not session.is_alive():
         return jsonify({
             "status": "error",
@@ -2098,6 +2134,9 @@ def post_terminal_input(session_id):
             "session_id": session.id,
             "error": "Session terminale terminée.",
         }), 409
+
+    if actor != "user" and session.agent_locked:
+        return _build_terminal_locked_response(session, "Session terminale verrouillée en lecture seule.")
 
     sig_name = req_json.get("signal")
     raw_input = req_json.get("input")
@@ -2701,6 +2740,17 @@ async def api_exec_terminal_endpoint(request):
             status_code=400,
         )
 
+    if not session.is_alive():
+        return JSONResponse(
+            {
+                "status": "error",
+                "error_code": "terminal_closed",
+                "session_id": session.id,
+                "error": "Session terminale terminée.",
+            },
+            status_code=409,
+        )
+
     if actor != "user" and session.agent_locked:
         return JSONResponse(
             {
@@ -2712,17 +2762,6 @@ async def api_exec_terminal_endpoint(request):
                 "error": "Session terminale verrouillée en lecture seule.",
             },
             status_code=423,
-        )
-
-    if not session.is_alive():
-        return JSONResponse(
-            {
-                "status": "error",
-                "error_code": "terminal_closed",
-                "session_id": session.id,
-                "error": "Session terminale terminée.",
-            },
-            status_code=409,
         )
 
     with session.lock:
