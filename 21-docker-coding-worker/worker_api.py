@@ -3,7 +3,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.25.1.1
+VERSION : 6.25.3.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-28
 
@@ -11,11 +11,11 @@ DATE MAJ : 2026-11-28
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.3.1: Purge de POST /ssh et de l'exécution inline hors-PTY, quotas de sessions (2 locaux/chat, 8 SSH/chat, 64 global -> HTTP 429) et route ASGI non-bloquante POST /api/terminals/{id}/exec (sentinelle OSC 777 + exit_code).
 # 6.25.1.1: Exécution Bash inline sans fichier Codex dans POST /execute (_start_sandbox_job) et auto-nommage par défaut "Terminal" (découplé de Sandbox).
 # 6.24.6.1: Unification PTY Local/SSH (mode='ssh', CertificateFile, _prepare_ssh_bwrap_auth), verrou serveur agent_locked (HTTP 423) et routes /api/terminals*.
 # 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
 # 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
-# 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
 
 import asyncio
 import json
@@ -40,7 +40,7 @@ from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImport
 import httpx
 from starlette.applications import Starlette
 from starlette.middleware.wsgi import WSGIMiddleware
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import uvicorn
@@ -95,6 +95,9 @@ DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC"
 TERMINAL_LOCAL_IDLE_TTL_SEC = 7200.0
 TERMINAL_SSH_IDLE_TTL_SEC = 1800.0
 TERMINAL_MAX_READ_LINES = 500
+TERMINAL_MAX_LOCAL_PER_CHAT = int(os.environ.get("TERMINAL_MAX_LOCAL_PER_CHAT", 2))
+TERMINAL_MAX_SSH_PER_CHAT = int(os.environ.get("TERMINAL_MAX_SSH_PER_CHAT", 8))
+TERMINAL_MAX_GLOBAL = int(os.environ.get("TERMINAL_MAX_GLOBAL", 64))
 ECHO_WEBUI_INTERNAL_URL = os.environ.get("ECHO_WEBUI_INTERNAL_URL", "http://echo-webui:8080").rstrip("/")
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
@@ -795,7 +798,6 @@ def _start_sandbox_job(
     max_lifetime_sec: float = DEFAULT_BG_MAX_LIFETIME_SEC,
     callback_token: str = "",
     sub_sid: str = "",
-    command: str = "",
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
@@ -811,35 +813,25 @@ def _start_sandbox_job(
         os.makedirs(deps_dir, exist_ok=True)
         os.chmod(deps_dir, 0o777)
 
-    clean_command = str(command or "").strip()
-    is_inline_bash = bool(clean_command and not str(file_path or "").strip())
+    abs_file_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
+    if not abs_file_path.startswith(os.path.abspath(sandbox_dir) + os.sep):
+        return None, {"status": "error", "error": "Accès refusé : Le fichier cible est hors du workspace."}
 
-    is_python = False
-    is_node = False
-    if is_inline_bash:
-        effective_job_file = "<inline-bash>"
-        lint_cmd = ["/bin/bash", "-n", "-c", clean_command]
+    if not os.path.isfile(abs_file_path):
+        return None, {"status": "error", "error": f"Fichier cible introuvable : {file_path}"}
+
+    is_python = file_path.endswith(".py")
+    is_node = file_path.endswith(".js")
+    is_shell = file_path.endswith(".sh")
+    if not (is_python or is_node or is_shell):
+        return None, {"status": "error", "error": "Extension non supportée. Seuls .py, .js et .sh sont acceptés."}
+
+    if is_python:
+        lint_cmd = ["python", "-m", "py_compile", abs_file_path]
+    elif is_node:
+        lint_cmd = ["node", "-c", abs_file_path]
     else:
-        effective_job_file = file_path
-        abs_file_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
-        if not abs_file_path.startswith(os.path.abspath(sandbox_dir) + os.sep):
-            return None, {"status": "error", "error": "Accès refusé : Le fichier cible est hors du workspace."}
-
-        if not os.path.isfile(abs_file_path):
-            return None, {"status": "error", "error": f"Fichier cible introuvable : {file_path}"}
-
-        is_python = file_path.endswith(".py")
-        is_node = file_path.endswith(".js")
-        is_shell = file_path.endswith(".sh")
-        if not (is_python or is_node or is_shell):
-            return None, {"status": "error", "error": "Extension non supportée. Seuls .py, .js et .sh sont acceptés."}
-
-        if is_python:
-            lint_cmd = ["python", "-m", "py_compile", abs_file_path]
-        elif is_node:
-            lint_cmd = ["node", "-c", abs_file_path]
-        else:
-            lint_cmd = ["/bin/bash", "-n", abs_file_path]
+        lint_cmd = ["/bin/bash", "-n", abs_file_path]
 
     try:
         lint_proc = subprocess.run(lint_cmd, capture_output=True, text=True, timeout=10)
@@ -849,7 +841,7 @@ def _start_sandbox_job(
     except subprocess.TimeoutExpired:
         return None, {"status": "error", "error": "Timeout lors de la vérification syntaxique."}
 
-    if not is_inline_bash and dependencies and deps_dir:
+    if dependencies and deps_dir:
         with _get_session_deps_lock(safe_uid, safe_cid):
             if is_python:
                 python_deps_dir = os.path.join(deps_dir, "python")
@@ -908,9 +900,7 @@ def _start_sandbox_job(
         "--setenv", "ECHO_APP_PORT", str(hub.allocated_port),
     ])
 
-    if is_inline_bash:
-        bwrap_cmd.extend(["--setenv", "HOME", "/sandbox", "/bin/bash", "-c", clean_command])
-    elif is_python:
+    if is_python:
         python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
         bwrap_cmd.extend(["--setenv", "PYTHONPATH", ":".join(python_paths), "python", f"/sandbox/{file_path}"])
     elif is_node:
@@ -968,7 +958,7 @@ def _start_sandbox_job(
             "run_id": run_id,
             "user_id": safe_uid,
             "chat_id": safe_cid,
-            "file_path": effective_job_file,
+            "file_path": file_path,
             "pid": proc.pid,
             "proc": proc,
             "state": "running",
@@ -1030,18 +1020,13 @@ def _prepare_ssh_bwrap_auth(
     password: str = "",
     private_key: str = "",
     certificate: str = "",
-    interactive: bool = False,
-    command: str = "",
 ) -> tuple[list[str], list[str]]:
-    """Valide et prépare les fichiers temporaires et arguments bwrap/ssh partagés."""
+    """Valide et prépare les fichiers temporaires et arguments bwrap/ssh interactifs."""
     host_str = str(host or "").strip()
     user_str = str(user or "").strip()
-    cmd_str = str(command or "").strip()
 
     if not host_str or not user_str:
         raise ValueError("Champs SSH requis : host et user.")
-    if not interactive and not cmd_str:
-        raise ValueError("Champs requis : host, user, command.")
 
     if (
         host_str.startswith("-")
@@ -1070,18 +1055,16 @@ def _prepare_ssh_bwrap_auth(
         raise ValueError("Authentification SSH requise : private_key ou password manquant.")
 
     extra_bwrap_args: list[str] = []
-    ssh_args: list[str] = ["ssh"]
-    if interactive:
-        ssh_args.append("-tt")
-    ssh_args.extend([
+    ssh_args: list[str] = [
+        "ssh",
+        "-tt",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "UserKnownHostsFile=/sandbox/.ssh_known_hosts",
         "-o", "ConnectTimeout=10",
         "-o", "ServerAliveInterval=15",
-    ])
-    if interactive:
-        ssh_args.extend(["-o", "ServerAliveCountMax=3"])
-    ssh_args.extend(["-p", str(port_int)])
+        "-o", "ServerAliveCountMax=3",
+        "-p", str(port_int),
+    ]
 
     if has_key:
         os.makedirs(ssh_tmp_dir, exist_ok=True)
@@ -1118,11 +1101,7 @@ def _prepare_ssh_bwrap_auth(
         ])
         ssh_args = ["sshpass", "-e"] + ssh_args
 
-    if interactive:
-        ssh_args.append(f"{user_str}@{host_str}")
-    else:
-        ssh_args.extend([f"{user_str}@{host_str}", cmd_str])
-
+    ssh_args.append(f"{user_str}@{host_str}")
     return extra_bwrap_args, ssh_args
 
 
@@ -1170,6 +1149,7 @@ class TerminalSession:
         self.buffer = bytearray()
         self.truncated = False
         self.lock = threading.Lock()
+        self.exec_in_progress = False
         self.out_queue = queue.Queue()
         self.alive = True
         self.is_pty = False
@@ -1237,7 +1217,6 @@ class TerminalSession:
                 password=str(self.ssh_config.get("password") or ""),
                 private_key=str(self.ssh_config.get("private_key") or ""),
                 certificate=str(self.ssh_config.get("certificate") or ""),
-                interactive=True,
             )
 
         has_bwrap = shutil.which("bwrap") is not None
@@ -1478,6 +1457,10 @@ class TerminalSession:
         self.out_queue.put(b"")
 
 
+class TerminalQuotaExceededError(Exception):
+    """Levée lorsque le quota maximal de sessions terminales actives est atteint."""
+
+
 class TerminalSessionManager:
     def __init__(self):
         self._sessions: dict[str, TerminalSession] = {}
@@ -1529,18 +1512,40 @@ class TerminalSessionManager:
             sandbox_dir = os.path.join(tempfile.gettempdir(), "echo_terminals", safe_uid, safe_cid or "general")
         os.makedirs(sandbox_dir, exist_ok=True)
 
+        quota_err_msg = None
         with self._lock:
             to_terminate = self._prune_sessions()
-            resolved_name = self._allocate_session_name(
-                safe_uid=safe_uid,
-                safe_cid=safe_cid,
-                mode=norm_mode,
-                raw_name=name,
-                account_id=norm_account,
-                ssh_config=ssh_config,
-            )
+            if len(self._sessions) >= TERMINAL_MAX_GLOBAL:
+                quota_err_msg = f"Quota global atteint ({TERMINAL_MAX_GLOBAL} sessions terminales actives simultanées)."
+            else:
+                active_mode_count = sum(
+                    1
+                    for s in self._sessions.values()
+                    if s.user_id == safe_uid and s.chat_id == safe_cid and s.mode == norm_mode
+                )
+                if norm_mode == "local" and active_mode_count >= TERMINAL_MAX_LOCAL_PER_CHAT:
+                    quota_err_msg = (
+                        f"Quota atteint : maximum {TERMINAL_MAX_LOCAL_PER_CHAT} terminaux locaux simultanés "
+                        "par conversation. Réutiliser un terminal actif ou en fermer un."
+                    )
+                elif norm_mode == "ssh" and active_mode_count >= TERMINAL_MAX_SSH_PER_CHAT:
+                    quota_err_msg = (
+                        f"Quota atteint : maximum {TERMINAL_MAX_SSH_PER_CHAT} terminaux SSH distants simultanés "
+                        "par conversation. Réutiliser un terminal actif ou en fermer un."
+                    )
+            if quota_err_msg is None:
+                resolved_name = self._allocate_session_name(
+                    safe_uid=safe_uid,
+                    safe_cid=safe_cid,
+                    mode=norm_mode,
+                    raw_name=name,
+                    account_id=norm_account,
+                    ssh_config=ssh_config,
+                )
         for dead_sess in to_terminate:
             dead_sess.terminate()
+        if quota_err_msg is not None:
+            raise TerminalQuotaExceededError(quota_err_msg)
 
         session_id = f"term_{uuid.uuid4().hex[:12]}"
         session = TerminalSession(
@@ -1642,7 +1647,6 @@ def _lookup_job(safe_uid: str, safe_cid: str, run_id: str = "", prune: bool = Fa
 def execute_code():
     data = request.json or {}
     file_path = data.get('file_path', '')
-    command = str(data.get('command') or '').strip()
     dependencies = data.get('dependencies') or []
     callback_token = str(data.get("callback_token") or "").strip()
     timeout = int(data.get('timeout', 30))
@@ -1659,12 +1663,12 @@ def execute_code():
     run_id = _sanitize_id(data.get('run_id') or f"run_{uuid.uuid4().hex[:8]}")
     safe_uid = _sanitize_id(data.get('user_id', 'system'))
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
-    raw_sub_sid = data.get("sub_sid") or data.get("workdir_subpath")
+    raw_sub_sid = data.get("sub_sid")
     safe_sub_sid = _sanitize_id(raw_sub_sid, default="") if raw_sub_sid else ""
 
     logger.info(
         f"🚀 Execution START | User: {safe_uid} | Chat: {safe_cid} | "
-        f"Run: {run_id} | File: {file_path or ('<inline-bash>' if command else '')} | Bg: {background} | Timeout: {timeout}s"
+        f"Run: {run_id} | File: {file_path} | Bg: {background} | Timeout: {timeout}s"
     )
 
     sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
@@ -1683,7 +1687,6 @@ def execute_code():
         max_lifetime_sec=max_lifetime_sec,
         callback_token=callback_token,
         sub_sid=safe_sub_sid,
-        command=command,
     )
     if err is not None:
         err["run_id"] = run_id
@@ -1992,6 +1995,12 @@ def create_terminal():
             agent_locked=agent_locked,
             ssh_config=ssh_config,
         )
+    except TerminalQuotaExceededError as qe:
+        return jsonify({
+            "status": "error",
+            "error_code": "terminal_quota_exceeded",
+            "error": str(qe),
+        }), 429
     except ValueError as ve:
         return jsonify({"status": "error", "error": str(ve)}), 400
     except Exception as e:
@@ -2111,106 +2120,6 @@ def delete_terminal(session_id):
             )
     TERMINAL_MANAGER.terminate_session(session_id)
     return jsonify({"status": "terminated", "id": session_id})
-
-
-@app.route('/ssh', methods=['POST'])
-def execute_ssh():
-    """Exécute une commande SSH isolée dans la sandbox bwrap."""
-    data = request.get_json(silent=True) or {}
-    host = str(data.get("host") or "").strip()
-    user = str(data.get("user") or "").strip()
-    command = str(data.get("command") or "").strip()
-    private_key = str(data.get("private_key") or "")
-    certificate = str(data.get("certificate") or "")
-    password = str(data.get("password") or "")
-
-    if not host or not user or not command:
-        return jsonify({"status": "error", "error": "Champs requis : host, user, command."}), 400
-
-    try:
-        port = int(data.get("port", 22))
-    except (TypeError, ValueError):
-        return jsonify({"status": "error", "error": "Port SSH invalide."}), 400
-
-    try:
-        timeout = max(5, min(int(data.get("timeout", 60)), 900))
-    except (TypeError, ValueError):
-        timeout = 60
-
-    try:
-        max_out = max(1000, int(data.get("max_output_length", 131072)))
-    except (TypeError, ValueError):
-        max_out = 131072
-
-    safe_uid = _sanitize_id(data.get("user_id", "system"))
-    safe_cid = _sanitize_id(data.get("chat_id"), default="")
-    sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
-    files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files" if safe_cid else None
-    global_files_dir = f"/app/backend/data/users/{safe_uid}/files" if safe_cid else None
-    browserviews_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/browserviews" if safe_cid else None
-
-    ssh_tmp_dir = tempfile.mkdtemp(prefix="echo_ssh_")
-    try:
-        os.chmod(ssh_tmp_dir, 0o755)
-        try:
-            extra_bwrap_args, ssh_args = _prepare_ssh_bwrap_auth(
-                ssh_tmp_dir=ssh_tmp_dir,
-                host=host,
-                port=port,
-                user=user,
-                password=password,
-                private_key=private_key,
-                certificate=certificate,
-                interactive=False,
-                command=command,
-            )
-        except ValueError as ve:
-            return jsonify({"status": "error", "error": str(ve)}), 400
-
-        if not sandbox_dir:
-            sandbox_dir = os.path.join(ssh_tmp_dir, "sandbox")
-        os.makedirs(sandbox_dir, exist_ok=True)
-        sandbox_tmp = os.path.join(sandbox_dir, ".tmp")
-        os.makedirs(sandbox_tmp, exist_ok=True)
-
-        bwrap_cmd = _build_base_bwrap_cmd(
-            safe_uid=safe_uid,
-            safe_cid=safe_cid,
-            sandbox_dir=sandbox_dir,
-            sandbox_tmp=sandbox_tmp,
-            files_dir=files_dir,
-            global_files_dir=global_files_dir,
-            browserviews_dir=browserviews_dir,
-        )
-        bwrap_cmd.extend(["--setenv", "HOME", "/sandbox"])
-        bwrap_cmd.extend(extra_bwrap_args)
-        bwrap_cmd.extend(ssh_args)
-
-        proc = subprocess.run(bwrap_cmd, capture_output=True, text=True, timeout=timeout)
-        stdout_str = (proc.stdout or "")[:max_out]
-        stderr_str = (proc.stderr or "")[:max_out]
-        return jsonify({
-            "status": "success" if proc.returncode == 0 else "error",
-            "exit_code": proc.returncode,
-            "output": stdout_str,
-            "error": stderr_str,
-        })
-    except subprocess.TimeoutExpired as te:
-        out_partial = (
-            te.stdout.decode("utf-8", errors="replace")
-            if isinstance(te.stdout, bytes)
-            else (te.stdout or "")
-        )
-        return jsonify({
-            "status": "timeout",
-            "exit_code": -1,
-            "output": out_partial[:max_out],
-            "error": f"Timeout SSH dépassé ({timeout}s).",
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "error": f"Erreur exécution SSH : {str(e)}"}), 500
-    finally:
-        shutil.rmtree(ssh_tmp_dir, ignore_errors=True)
 
 
 # ================================================================================
@@ -2654,9 +2563,239 @@ async def ws_app_proxy_endpoint(websocket: WebSocket):
             pass
 
 
+def _clean_terminal_exec_output(raw_slice_text: str, marker_start: int, clean_cmd: str, token: str) -> str:
+    """Nettoie la sortie capturée avant le marqueur de fin (retire ANSI/CR et échos techniques)."""
+    raw_before = raw_slice_text[:marker_start]
+    cleaned = _strip_ansi_and_cr(raw_before)
+    if not cleaned:
+        return ""
+    lines = cleaned.splitlines()
+
+    osc_needle = f"echo_done;{token};"
+    win_needle = f"__ECHO_DONE_{token}_"
+    cmd_lines = [ln.strip() for ln in clean_cmd.splitlines() if ln.strip()]
+
+    idx = 0
+    if idx < len(lines):
+        first_stripped = lines[idx].strip()
+        if first_stripped == "{" or re.match(r"^.*(?:\$|#|>) \{\s*$", lines[idx]):
+            idx += 1
+
+    cmd_idx = 0
+    while idx < len(lines) and cmd_idx < len(cmd_lines):
+        cur_ln = lines[idx].strip()
+        cur_no_ps2 = cur_ln[2:].strip() if cur_ln.startswith("> ") else cur_ln
+        cur_after_gt = cur_ln.split(">", 1)[-1].strip() if ">" in cur_ln else cur_ln
+        target_cmd = cmd_lines[cmd_idx]
+        if cur_ln == target_cmd or cur_no_ps2 == target_cmd or cur_after_gt == target_cmd:
+            idx += 1
+            cmd_idx += 1
+        else:
+            break
+
+    filtered: list[str] = []
+    for ln in lines[idx:]:
+        if osc_needle in ln or win_needle in ln:
+            continue
+        stripped_ln = ln.strip()
+        if stripped_ln.startswith("}; __echo_rc=$?;") or stripped_ln.startswith("> }; __echo_rc=$?;"):
+            continue
+        filtered.append(ln)
+
+    while filtered and filtered[0] == "":
+        filtered.pop(0)
+    while filtered and filtered[-1] == "":
+        filtered.pop()
+    return "\n".join(filtered)
+
+
+async def api_exec_terminal_endpoint(request):
+    """Exécute une commande bornée avec marqueur de fin dans une session terminale active (non-bloquant)."""
+    session_id = request.path_params.get("session_id", "")
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session:
+        return JSONResponse(
+            {"status": "error", "error_code": "not_found", "error": "Terminal session not found"},
+            status_code=404,
+        )
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+    except Exception:
+        body = {}
+
+    actor = str(body.get("actor") or "agent").strip().lower()
+    clean_cmd = str(body.get("command") or "").strip()
+    try:
+        raw_timeout = body.get("timeout", 60)
+        timeout_sec = max(1, min(int(raw_timeout if raw_timeout is not None else 60), 900))
+    except (TypeError, ValueError):
+        timeout_sec = 60
+
+    if not clean_cmd:
+        return JSONResponse(
+            {"status": "error", "error_code": "invalid_arguments", "error": "Paramètre 'command' requis."},
+            status_code=400,
+        )
+
+    if actor != "user" and session.agent_locked:
+        return JSONResponse(
+            {
+                "status": "error",
+                "error_code": "terminal_locked",
+                "session_id": session.id,
+                "name": session.name,
+                "agent_locked": True,
+                "error": "Session terminale verrouillée en lecture seule.",
+            },
+            status_code=423,
+        )
+
+    if not session.is_alive():
+        return JSONResponse(
+            {
+                "status": "error",
+                "error_code": "terminal_closed",
+                "session_id": session.id,
+                "error": "Session terminale terminée.",
+            },
+            status_code=409,
+        )
+
+    with session.lock:
+        if session.exec_in_progress:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "error_code": "terminal_busy",
+                    "session_id": session.id,
+                    "error": "Une commande est déjà en cours d'exécution dans ce terminal.",
+                },
+                status_code=409,
+            )
+        session.exec_in_progress = True
+        prev_cursor = session.cursor
+
+    try:
+        token = uuid.uuid4().hex[:8]
+        if os.name == "nt" and not session.is_pty and session.mode == "local":
+            wrapped_input = f"{clean_cmd}\r\ncall echo __ECHO_DONE_{token}_%ERRORLEVEL%__\r\n"
+        else:
+            wrapped_input = (
+                f"{{\n{clean_cmd}\n}}; __echo_rc=$?; "
+                f"printf '\\033]777;echo_done;{token};%d\\007' $__echo_rc\n"
+            )
+
+        marker_re = re.compile(rf"(?:\x1b\]777;echo_done;{token};(-?\d+)\x07|__ECHO_DONE_{token}_(-?\d+)__)")
+        session.write_input(wrapped_input)
+        deadline = time.monotonic() + float(timeout_sec)
+
+        while True:
+            with session.lock:
+                buffered = bytes(session.buffer)
+                curr_cursor = session.cursor
+                session.last_activity_at = time.time()
+
+            delta = curr_cursor - prev_cursor
+            truncated_slice = delta > len(buffered)
+            raw_bytes = buffered[-delta:] if delta > 0 else b""
+            raw_text = raw_bytes.decode("utf-8", errors="replace")
+
+            m = marker_re.search(raw_text)
+            if m is not None:
+                rc_str = m.group(1) if m.group(1) is not None else m.group(2)
+                exit_code = int(rc_str)
+                cleaned_out = _clean_terminal_exec_output(raw_text, m.start(), clean_cmd, token)
+                if len(cleaned_out) > 65536:
+                    cleaned_out = cleaned_out[-65536:]
+                    truncated_slice = True
+                resp_payload = {
+                    "status": "success" if exit_code == 0 else "error",
+                    "exit_code": exit_code,
+                    "output": cleaned_out,
+                    "session": session.to_dict(),
+                    "cursor": curr_cursor,
+                    "truncated": truncated_slice,
+                }
+                if exit_code != 0:
+                    resp_payload["error_code"] = "execution_failed"
+                    resp_payload["error"] = f"Commande terminée avec le code {exit_code}."
+                return JSONResponse(resp_payload, status_code=200)
+
+            if not session.is_alive():
+                await asyncio.sleep(0.05)
+                with session.lock:
+                    buffered = bytes(session.buffer)
+                    curr_cursor = session.cursor
+                delta = curr_cursor - prev_cursor
+                truncated_slice = delta > len(buffered)
+                raw_bytes = buffered[-delta:] if delta > 0 else b""
+                raw_text = raw_bytes.decode("utf-8", errors="replace")
+                m = marker_re.search(raw_text)
+                if m is not None:
+                    rc_str = m.group(1) if m.group(1) is not None else m.group(2)
+                    exit_code = int(rc_str)
+                    cleaned_out = _clean_terminal_exec_output(raw_text, m.start(), clean_cmd, token)
+                else:
+                    exit_code = session.proc.poll() if session.proc and session.proc.poll() is not None else 0
+                    cleaned_out = _clean_terminal_exec_output(raw_text, len(raw_text), clean_cmd, token)
+                if len(cleaned_out) > 65536:
+                    cleaned_out = cleaned_out[-65536:]
+                    truncated_slice = True
+                resp_payload = {
+                    "status": "success" if exit_code == 0 else "error",
+                    "exit_code": exit_code,
+                    "output": cleaned_out,
+                    "session": session.to_dict(),
+                    "cursor": curr_cursor,
+                    "truncated": truncated_slice,
+                }
+                if exit_code != 0:
+                    resp_payload["error_code"] = "execution_failed"
+                    resp_payload["error"] = f"Commande terminée avec le code {exit_code}."
+                return JSONResponse(resp_payload, status_code=200)
+
+            if time.monotonic() >= deadline:
+                if session.is_alive():
+                    session.write_input("\x03")
+                    await asyncio.sleep(0.15)
+                with session.lock:
+                    buffered = bytes(session.buffer)
+                    curr_cursor = session.cursor
+                delta = curr_cursor - prev_cursor
+                truncated_slice = delta > len(buffered)
+                raw_bytes = buffered[-delta:] if delta > 0 else b""
+                raw_text = raw_bytes.decode("utf-8", errors="replace")
+                partial_out = _clean_terminal_exec_output(raw_text, len(raw_text), clean_cmd, token)
+                if len(partial_out) > 65536:
+                    partial_out = partial_out[-65536:]
+                    truncated_slice = True
+                return JSONResponse(
+                    {
+                        "status": "error",
+                        "error_code": "execution_timeout",
+                        "exit_code": -1,
+                        "error": f"Délai d'exécution dépassé ({timeout_sec}s). Signal SIGINT (Ctrl+C) envoyé au terminal.",
+                        "output": partial_out,
+                        "session": session.to_dict(),
+                        "cursor": curr_cursor,
+                        "truncated": truncated_slice,
+                    },
+                    status_code=200,
+                )
+
+            await asyncio.sleep(0.03)
+    finally:
+        with session.lock:
+            session.exec_in_progress = False
+
+
 asgi_app = Starlette(
     routes=[
         WebSocketRoute("/api/terminals/{session_id}", ws_terminal_endpoint),
+        Route("/api/terminals/{session_id}/exec", api_exec_terminal_endpoint, methods=["POST"]),
         WebSocketRoute("/ws/app/{run_id}", ws_app_proxy_endpoint),
         WebSocketRoute("/ws/app/{run_id}/{path:path}", ws_app_proxy_endpoint),
         Route(

@@ -4,11 +4,12 @@
 """
 title: ECHO Terminals
 author: Wilfried BARNAVON
-version: 6.25.1.1
+version: 6.25.3.1
 description: Bibliothèque partagée d'initialisation de session, validation Vault SSH, client Worker terminal/SSH et synchronisation du registre echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.3.1: Suppression des exécutions hors-PTY (oneshot), ajout de worker_exec_in_terminal (POST /api/terminals/{id}/exec) et propagation HTTP 429 terminal_quota_exceeded.
 # 6.25.1.1: Ajout de worker_exec_local_oneshot, nommage par défaut "Terminal" (découplé de Sandbox), _classify_ssh_vault_error et normalisation PAS des error_code.
 # 6.24.6.1: Création du module partagé echo_terminals.py (ensure_echo_session_environment, validation Vault SSH, client HTTP Worker et réconciliation echo_resources).
 
@@ -23,9 +24,7 @@ from echo_codex_git import CodexRepo
 from echo_constants import (
     ECHO_CODEX_WORKSPACES,
     ECHO_CODING_WORKER_BASE_URL,
-    ECHO_CODING_WORKER_URL,
     ECHO_GLOBAL_DOMAINS,
-    ECHO_MAX_CODE_EXECUTION_TIMEOUT,
     ECHO_SESSION_DOMAINS,
     RESOURCE_TYPES,
     TERMINAL_DEFAULT_READ_LINES,
@@ -467,222 +466,98 @@ async def reconcile_chat_terminals_registry(user_id: str, chat_id: str) -> List[
     return live_sessions
 
 
-async def worker_exec_local_oneshot(
+async def worker_exec_in_terminal(
     user_id: str,
     chat_id: str,
+    session_id: str,
     command: str,
     timeout_sec: int = 60,
-    workdir_subpath: str = "",
 ) -> Dict[str, Any]:
-    """Exécute une commande bash one-shot isolée en sandbox locale via POST /execute."""
-    clean_sub = (workdir_subpath or "").strip().strip("/")
-    target = f"local:/sandbox/{clean_sub}".rstrip("/") if clean_sub else "local:/sandbox"
-    if not user_id or not chat_id:
-        return {
-            "status": "error",
-            "error_code": "missing_context",
-            "mode": "local",
-            "target": target,
-            "exit_code": -1,
-            "output": "",
-            "error": "❌ Contexte de session manquant (user_id / chat_id).",
-        }
-
+    """Exécute une commande shell dans une session terminale PTY existante via POST /api/terminals/{sid}/exec."""
+    clean_sid = (session_id or "").strip()
     clean_cmd = (command or "").strip()
-    if not clean_cmd:
+    if not clean_sid or not clean_cmd:
         return {
             "status": "error",
             "error_code": "invalid_arguments",
-            "mode": "local",
-            "target": target,
-            "exit_code": -1,
-            "output": "",
-            "error": "❌ Le paramètre 'command' est obligatoire.",
+            "session_id": clean_sid,
+            "error": "❌ Les paramètres 'session_id' et 'command' sont obligatoires.",
         }
 
-    if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
+    try:
+        safe_timeout = int(timeout_sec)
+    except (TypeError, ValueError):
         return {
             "status": "error",
             "error_code": "invalid_arguments",
-            "mode": "local",
-            "target": target,
-            "exit_code": -1,
-            "output": "",
-            "error": (
-                f"❌ timeout_sec ({timeout_sec}s) doit être compris "
-                f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
-            ),
+            "session_id": clean_sid,
+            "error": "❌ timeout_sec doit être un entier compris entre 1 et 900s.",
         }
 
-    await asyncio.to_thread(ensure_echo_session_environment, user_id, chat_id)
+    if not (1 <= safe_timeout <= 900):
+        return {
+            "status": "error",
+            "error_code": "invalid_arguments",
+            "session_id": clean_sid,
+            "error": f"❌ timeout_sec ({safe_timeout}s) doit être compris entre 1 et 900s.",
+        }
 
     try:
         client = await _get_global_client()
         response = await client.post(
-            ECHO_CODING_WORKER_URL,
-            json={
-                "command": clean_cmd,
-                "timeout": timeout_sec,
-                "user_id": user_id,
-                "chat_id": chat_id,
-                "background": False,
-                "sub_sid": clean_sub,
-            },
+            f"{ECHO_CODING_WORKER_BASE_URL}/api/terminals/{clean_sid}/exec",
+            json={"command": clean_cmd, "timeout": safe_timeout, "actor": "agent"},
             headers=_worker_headers(user_id, chat_id),
-            timeout=float(timeout_sec) + 10.0,
+            timeout=float(safe_timeout) + 10.0,
         )
+        if response.status_code == 423:
+            return _build_locked_error_dict(response, clean_sid)
+        if response.status_code == 404:
+            return {
+                "status": "error",
+                "error_code": "not_found",
+                "session_id": clean_sid,
+                "error": f"❌ Session terminale '{clean_sid}' introuvable.",
+            }
+        if response.status_code == 409:
+            err_code = "terminal_closed"
+            try:
+                payload = response.json()
+                if isinstance(payload, dict) and payload.get("error_code") in ("terminal_closed", "terminal_busy"):
+                    err_code = str(payload["error_code"])
+            except Exception:
+                pass
+            return {
+                "status": "error",
+                "error_code": err_code,
+                "session_id": clean_sid,
+                "error": _extract_error_detail(response),
+            }
         if response.status_code != 200:
             return {
                 "status": "error",
                 "error_code": "worker_error",
-                "mode": "local",
-                "target": target,
-                "exit_code": -1,
-                "output": "",
-                "error": f"Erreur Worker Sandbox (HTTP {response.status_code}) : {_extract_error_detail(response)}",
+                "session_id": clean_sid,
+                "error": f"Erreur exécution terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
 
         res_data = response.json()
-        raw_exit = res_data.get("exit_code")
-        is_ok = (res_data.get("status") == "success") and (raw_exit in (0, None))
-        exit_code = 0 if (is_ok and raw_exit is None) else (-1 if raw_exit is None else raw_exit)
-        out: Dict[str, Any] = {
-            "status": "success" if is_ok else "error",
-            "mode": "local",
-            "target": target,
-            "exit_code": exit_code,
-            "output": res_data.get("output") or "",
-            "error": res_data.get("error") or "",
-        }
-        if not is_ok:
-            is_timeout = res_data.get("state") == "timeout" or res_data.get("status") == "timeout"
-            out["error_code"] = "execution_timeout" if is_timeout else "execution_failed"
-        return out
+        if isinstance(res_data.get("session"), dict):
+            await asyncio.to_thread(sync_terminal_resource_sync, user_id, chat_id, res_data["session"])
+        return res_data
     except httpx.RequestError as exc:
         return {
             "status": "error",
             "error_code": "worker_unreachable",
-            "mode": "local",
-            "target": target,
-            "exit_code": -1,
-            "output": "",
+            "session_id": clean_sid,
             "error": f"Service Coding Worker injoignable : {exc}",
         }
     except Exception as exc:
         return {
             "status": "error",
             "error_code": "worker_error",
-            "mode": "local",
-            "target": target,
-            "exit_code": -1,
-            "output": "",
-            "error": f"Erreur Client Sandbox : {exc}",
-        }
-
-
-async def worker_exec_ssh_oneshot(
-    user_id: str,
-    chat_id: str,
-    account_id: str,
-    command: str,
-    timeout_sec: int = 60,
-) -> Dict[str, Any]:
-    """Exécute une commande SSH one-shot via POST /ssh après validation Vault."""
-    clean_acc = (account_id or "").strip()
-    clean_cmd = (command or "").strip()
-    if not clean_acc or not clean_cmd:
-        return {
-            "status": "error",
-            "error_code": "invalid_arguments",
-            "account_id": clean_acc,
-            "exit_code": -1,
-            "error": "❌ Les paramètres 'account_id' et 'command' sont obligatoires.",
-        }
-
-    if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
-        return {
-            "status": "error",
-            "error_code": "invalid_arguments",
-            "account_id": clean_acc,
-            "exit_code": -1,
-            "error": (
-                f"❌ timeout_sec ({timeout_sec}s) doit être compris "
-                f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
-            ),
-        }
-
-    creds, err_msg = await asyncio.to_thread(load_and_validate_ssh_vault_account, user_id, clean_acc)
-    if err_msg or not creds:
-        final_err = err_msg or f"❌ Identifiants SSH introuvables pour '{clean_acc}'."
-        return {
-            "status": "error",
-            "error_code": _classify_ssh_vault_error(final_err),
-            "account_id": clean_acc,
-            "exit_code": -1,
-            "error": final_err,
-        }
-
-    target = f"{creds['user']}@{creds['host']}:{creds['port']}"
-    try:
-        client = await _get_global_client()
-        response = await client.post(
-            f"{ECHO_CODING_WORKER_BASE_URL}/ssh",
-            json={
-                "user_id": user_id,
-                "chat_id": chat_id,
-                "host": creds["host"],
-                "port": creds["port"],
-                "user": creds["user"],
-                "password": creds["password"],
-                "private_key": creds["private_key"],
-                "certificate": creds["certificate"],
-                "command": clean_cmd,
-                "timeout": timeout_sec,
-            },
-            headers=_worker_headers(user_id, chat_id),
-            timeout=float(timeout_sec) + 10.0,
-        )
-        if response.status_code != 200:
-            return {
-                "status": "error",
-                "error_code": "worker_error",
-                "account_id": clean_acc,
-                "target": target,
-                "exit_code": -1,
-                "error": f"Erreur Worker SSH (HTTP {response.status_code}) : {_extract_error_detail(response)}",
-            }
-
-        res_data = response.json()
-        is_ok = res_data.get("status") == "success"
-        out: Dict[str, Any] = {
-            "status": "success" if is_ok else "error",
-            "account_id": clean_acc,
-            "target": target,
-            "exit_code": res_data.get("exit_code", -1),
-            "output": res_data.get("output") or "",
-            "error": res_data.get("error") or "",
-        }
-        if not is_ok:
-            is_timeout = res_data.get("state") == "timeout" or res_data.get("status") == "timeout"
-            out["error_code"] = "execution_timeout" if is_timeout else "execution_failed"
-        return out
-    except httpx.RequestError as exc:
-        return {
-            "status": "error",
-            "error_code": "worker_unreachable",
-            "account_id": clean_acc,
-            "target": target,
-            "exit_code": -1,
-            "error": f"Service Coding Worker injoignable : {exc}",
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "error_code": "worker_error",
-            "account_id": clean_acc,
-            "target": target,
-            "exit_code": -1,
-            "error": f"Erreur Client SSH : {exc}",
+            "session_id": clean_sid,
+            "error": f"Erreur exécution terminal : {exc}",
         }
 
 
@@ -757,6 +632,12 @@ async def worker_open_terminal(
             headers=_worker_headers(user_id, chat_id),
             timeout=20.0,
         )
+        if response.status_code == 429:
+            return {
+                "status": "error",
+                "error_code": "terminal_quota_exceeded",
+                "error": f"❌ {_extract_error_detail(response)}",
+            }
         if response.status_code != 200:
             return {
                 "status": "error",

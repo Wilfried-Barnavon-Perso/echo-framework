@@ -3,11 +3,12 @@
 """
 title: ECHO V6 Terminals Router
 author: Wilfried BARNAVON
-version: 6.24.6.1
+version: 6.25.3.1
 description: Routeur FastAPI souverain pour la gestion des sessions terminales PTY et cibles SSH (/echo/v1/terminals).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.3.1: Propagation de l'erreur terminal_quota_exceeded en HTTP 429 Too Many Requests dans _raise_worker_http_error.
 # 6.24.6.1: Création du routeur souverain /echo/v1/terminals (SSH targets, liste, ouverture, verrouillage agent_locked exclusif et fermeture).
 
 from __future__ import annotations
@@ -100,6 +101,8 @@ def _raise_worker_http_error(res: dict[str, Any], default_msg: str) -> None:
     err_msg = str(res.get("error") or default_msg)
     if err_code == "not_found":
         raise HTTPException(status_code=404, detail=err_msg)
+    if err_code == "terminal_quota_exceeded":
+        raise HTTPException(status_code=429, detail=err_msg)
     status_code = 502 if "injoignable" in err_msg.lower() else 400
     raise HTTPException(status_code=status_code, detail=err_msg)
 

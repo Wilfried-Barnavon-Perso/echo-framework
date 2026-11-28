@@ -1,7 +1,7 @@
 ---
 domain_id: identity_and_api_mcp
-version: 6.24.6.1
-updated_at: 2026-11-27
+version: 6.25.3.1
+updated_at: 2026-11-28
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés (AES-256-GCM) (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function, upload_file_to_drive]
@@ -37,7 +37,7 @@ L'Identity Vault centralise les identifiants d'API, secrets d'orchestration N8N 
     - Clés requises : `"command"` (`"uvx"` ou `"npx"`), `"args"` (tableau JSON de paramètres, ex: `'["-y", "@modelcontextprotocol/server-postgres"]'`), `"description"`.
   - **Serveurs SSH Distants (`orchestration`, `service="ssh"`)** :
     - Clés : `"host"`, `"user"`, `"description"` (et `"port"` optionnel, défaut `"22"`).
-    - Conformément au MPSI, `"password"`, `"private_key"` et le champ optionnel `"certificate"` (certificat public OpenSSH `*-cert.pub`, nécessitant `"private_key"`) DOIVENT être saisis par L'Utilisateur dans l'onglet **Coffre & Identité**, puis utilisés par Le Modèle via `manage_terminal(action="exec", account_id=..., command=...)` ou `manage_terminal(action="open", mode="ssh", account_id=...)`.
+    - Conformément au MPSI, `"password"`, `"private_key"` et le champ optionnel `"certificate"` (certificat public OpenSSH `*-cert.pub`, nécessitant `"private_key"`) DOIVENT être saisis par L'Utilisateur dans l'onglet **Coffre & Identité**, puis utilisés par Le Modèle via `manage_terminal(action="open"|"exec", mode="ssh", account_id=...)` — qui ouvre toujours la session SSH visible dans l'interface en **`🔒 Lecture seule`** par défaut avant toute écriture ou exécution autorisée par L'Utilisateur.
   - **Instructions Spécifiques** : Si `list_identities_services` retourne des `user_required_instructions` pour le service visé, Le Modèle **DOIT** suivre scrupuleusement ces instructions (et guider L'Utilisateur vers l'onglet **Coffre & Identité** pour tout secret sensible).
 
 ---

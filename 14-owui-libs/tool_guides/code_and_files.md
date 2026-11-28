@@ -1,6 +1,6 @@
 ---
 domain_id: code_and_files
-version: 6.25.1.1
+version: 6.25.3.1
 updated_at: 2026-11-28
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et pilotage des terminaux interactifs Local/SSH (manage_terminal).
@@ -105,14 +105,18 @@ Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l
 #### Cycle de Vie & Arrêt Propre de la Vue Interactive :
 - Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_main")` retourne `True`, `wait_until_closed()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
 
-### 3.4 Pilotage Terminal Interactif & Exécution Ponctuelle (`manage_terminal`)
+### 3.4 Pilotage Terminal Interactif & Exécution en Session PTY (`manage_terminal`)
 - **Signature** : `manage_terminal(action, mode=None, account_id=None, session_id=None, name=None, command=None, signal_key=None, append_newline=True, tail_lines=100, wait_ms=400, timeout_sec=60)` avec `action` $\in$ `{"exec", "open", "list", "read", "write", "close"}`.
-1. **Exécution shell ponctuelle isolée (`action="exec"`)** :
-   - **Mode `local` vs `ssh`** : `mode` est déduit automatiquement en `"ssh"` si `account_id` est fourni, sinon `"local"` par défaut.
-   - **`mode="local"`** : Exécute `command` en bash one-shot dans l'environnement sandbox isolé de la session (`/sandbox` ou `/sandbox/<sub_sid>` sous Sous-Agent) sans créer de session terminale persistante ; `account_id` est **interdit**.
-   - **`mode="ssh"`** : Le Modèle DOIT préalablement appeler `list_identities(service="ssh")` pour identifier l'`account_id` cible, puis invoquer `manage_terminal(action="exec", mode="ssh", account_id="...", command="...", timeout_sec=60)` (`timeout_sec` borné côté Worker à `5..900s`). Les secrets du Coffre (`password`, `private_key` et `certificate` OpenSSH `*-cert.pub` optionnel) sont injectés côté Worker dans `bwrap` sans exposition au Modèle (`/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated`, `/files` et `/browserviews` en lecture seule).
-2. **Ouverture de session terminale interactive (`action="open"`)** :
-   - **Garde Headless** : **ABSOLUMENT INTERDIT** en contexte d'automatisation planifiée (`headless_forbidden`).
+- **Règle d'Architecture PTY Visible** : Toute exécution `manage_terminal` s'opère exclusivement dans une **session PTY persistante et visible dans les onglets Terminal de l'interface** (aucune exécution cachée hors-PTY ; la session reste ouverte et interactive après `exec`).
+- **Garde Headless** : `action="open"` et `action="exec"` sont **ABSOLUMENT INTERDITS** en contexte d'automatisation planifiée/CRON (`headless_forbidden`).
+- **Quotas SSOT** : Au plus **`2` terminaux locaux** et **`8` terminaux SSH** simultanés par conversation (`64` sessions terminales actives au maximum globalement sur le Worker ; erreur `terminal_quota_exceeded` en cas de dépassement).
+1. **Exécution de commande dans un terminal visible (`action="exec"`)** :
+   - `timeout_sec` est borné à `1..900s` (défaut `60s`).
+   - **Ciblage ou auto-ouverture** :
+     - Si `session_id` est fourni, la commande s'exécute dans la session active désignée (et réactive son onglet UI).
+     - Si `session_id` est omis, `mode` est déduit en `"ssh"` si `account_id` est fourni, sinon `"local"`. Le Système réutilise en priorité une session active déverrouillée correspondante (même `mode` et même `account_id`), ou à défaut ouvre automatiquement un nouvel onglet Terminal dans l'interface (`opened_automatically=True`).
+   - **Cas `mode="ssh"`** : Le Modèle DOIT préalablement appeler `list_identities(service="ssh")` pour identifier `account_id`. En cas d'auto-ouverture SSH, la session s'ouvre en **`🔒 Lecture seule` (`agent_locked=True`)** et `action="exec"` retourne immédiatement `terminal_locked` sans exécuter la commande tant que L'Utilisateur n'a pas déverrouillé l'onglet.
+2. **Ouverture manuelle de session terminale interactive (`action="open"`)** :
    - **Mode `local` vs `ssh`** : `mode` déduit automatiquement en `"ssh"` si `account_id` est fourni, sinon `"local"`. En mode `"local"`, `account_id` est interdit et la session s'ouvre **déverrouillée par défaut (`agent_locked=False`)**. En mode `"ssh"`, `account_id` est obligatoire et la session s'ouvre **verrouillée en lecture seule par défaut (`agent_locked=True`)**.
    - Ouvre automatiquement l'onglet Terminal dans l'interface utilisateur et enregistre la session dans `query_registry(resource_type="terminal")`.
 3. **Liste, Lecture, Écriture & Fermeture (`list` | `read` | `write` | `close`)** :
@@ -121,5 +125,5 @@ Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l
    - `action="write"` : Exige `session_id` et (`command` non vide ou `signal_key` $\in$ `{"ctrl_c", "ctrl_d", "ctrl_z", "enter"}`), avec `append_newline=True` et `wait_ms` (`0..5000ms`, défaut `400ms`).
    - `action="close"` : Exige `session_id` et ferme la session interactive.
 4. **Protocole Strict sous Verrou (`terminal_locked`) & MPSI** :
-   - Sur `action="write"` ou `action="close"`, si la session est verrouillée (`error_code == "terminal_locked"`), Le Modèle **NE DOIT PAS** tenter de contournement : Le Modèle **DOIT** informer L'Utilisateur de déverrouiller la session nommée dans l'interface pour autoriser l'interaction.
+   - Sur `action="exec"`, `action="write"` ou `action="close"`, si la session est verrouillée (`error_code == "terminal_locked"`), Le Modèle **NE DOIT PAS** tenter de contournement : Le Modèle **DOIT** informer L'Utilisateur de déverrouiller la session nommée dans l'interface pour autoriser l'interaction.
    - **Interdiction absolue (MPSI)** : Il est **ABSOLUMENT INTERDIT** de demander à L'Utilisateur un mot de passe, une clé privée ou un certificat SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir directement dans l'onglet **Coffre & Identité** (également accessible depuis le menu **`+`** des onglets Terminal via **`Nouveau terminal SSH…`** ou **`Configurer un hôte SSH…`**).

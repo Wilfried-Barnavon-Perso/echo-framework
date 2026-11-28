@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.25.1.1
+version: 6.25.3.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & Terminaux Local/SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.3.1: Refonte de manage_terminal(action="exec") en macro factorisée sur session PTY visible (_open_and_broadcast_terminal + worker_exec_in_terminal + garde agent_locked).
 # 6.25.1.1: Support symétrique mode="local"|"ssh" sur manage_terminal(action="exec") via worker_exec_local_oneshot et normalisation PAS des error_code.
 # 6.24.6.1: Consolidation de l'exécution SSH one-shot et des sessions terminales interactives (Local/SSH) dans manage_terminal via echo_terminals.
 # 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
 # 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
-# 6.19.0.1: Isolation paresseuse des exécutions sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -45,14 +45,58 @@ from echo_paths import get_echo_session_path, sanitize_echo_id, scope_subagent_s
 from echo_terminals import (  # noqa: E402
     format_terminal_locked_message,
     worker_close_terminal,
-    worker_exec_local_oneshot,
-    worker_exec_ssh_oneshot,
+    worker_exec_in_terminal,
     worker_list_terminals,
     worker_open_terminal,
     worker_read_terminal,
     worker_write_terminal,
 )
 from echo_window_manager import get_window_manager  # noqa: E402
+
+
+async def _ensure_terminal_tab_open(uid: str, cid: str, sess: dict[str, Any]) -> None:
+    """Ouvre ou réactive de façon idempotente l'onglet Terminal dans l'interface utilisateur."""
+    wm = get_window_manager()
+    await wm.open_tab(
+        uid,
+        cid,
+        "terminal",
+        {
+            "sessionId": sess["id"],
+            "name": sess["name"],
+            "mode": sess["mode"],
+            "accountId": sess.get("account_id") or "",
+            "target": sess.get("target") or "",
+            "agentLocked": bool(sess.get("agent_locked")),
+            "auto": True,
+        },
+    )
+
+
+async def _open_and_broadcast_terminal(
+    uid: str,
+    cid: str,
+    mode: str,
+    account_id: Optional[str],
+    name: Optional[str],
+    msg_id: Optional[str],
+) -> dict[str, Any]:
+    """Ouvre une session terminale PTY via le Worker et diffuse son onglet UI."""
+    res = await worker_open_terminal(
+        uid,
+        cid,
+        mode=mode,
+        account_id=account_id,
+        name=name,
+        message_id=msg_id,
+    )
+    if res.get("status") != "success":
+        return res
+    sess = res["session"]
+    await _ensure_terminal_tab_open(uid, cid, sess)
+    wm = get_window_manager()
+    await wm.broadcast_terminal_state(uid, cid, sess, "opened")
+    return {"status": "success", "session": sess}
 
 
 def _resolve_sandbox_identity(__user__: Optional[dict], __metadata__: Optional[dict]) -> tuple[str, str, str]:
@@ -535,8 +579,8 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
-        """Exécute une commande shell ponctuelle (locale ou SSH) ou pilote les sessions terminales interactives (locales et SSH distantes)."""
-        uid, cid, sub_sid = _resolve_sandbox_identity(__user__, __metadata__)
+        """Pilote les sessions terminales interactives visibles dans l'interface (locales et SSH distantes) et y exécute des commandes."""
+        uid, cid, _ = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
             return wrap_tool_output(
                 text="❌ Contexte de session manquant (chat_id).",
@@ -548,115 +592,223 @@ class Tools:
         clean_sid = (session_id or "").strip()
         clean_name = (name or "").strip() or None
 
+        if action in ("open", "exec") and is_automation_context(__metadata__):
+            return wrap_tool_output(
+                text="❌ Action refusée : l'ouverture ou l'utilisation d'un terminal interactif visible est interdite en contexte headless/automatisé.",
+                status={"status": "error", "error_code": "headless_forbidden"},
+            )
+
         if action == "exec":
-            eff_mode = (mode or ("ssh" if clean_acc else "local")).strip().lower()
-            if eff_mode not in ("local", "ssh"):
-                return wrap_tool_output(
-                    text=f"❌ Mode terminal invalide : '{mode}' (attendu 'local' ou 'ssh').",
-                    status={"status": "error", "error_code": "invalid_arguments"},
-                )
             clean_cmd = (command or "").strip()
             if not clean_cmd:
                 return wrap_tool_output(
                     text="❌ Le paramètre 'command' est obligatoire pour action='exec'.",
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
-            if eff_mode == "local" and clean_acc:
+            if not (1 <= timeout_sec <= 900):
                 return wrap_tool_output(
-                    text="❌ Le paramètre 'account_id' est interdit lorsque mode='local'.",
-                    status={"status": "error", "error_code": "invalid_arguments"},
-                )
-            if eff_mode == "ssh" and not clean_acc:
-                return wrap_tool_output(
-                    text=(
-                        "❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'. "
-                        "Le Modèle DOIT appeler list_identities(service='ssh') pour identifier une cible configurée."
-                    ),
-                    status={"status": "error", "error_code": "invalid_arguments"},
-                )
-            if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
-                return wrap_tool_output(
-                    text=(
-                        f"❌ timeout_sec ({timeout_sec}s) doit être compris "
-                        f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
-                    ),
+                    text=f"❌ timeout_sec ({timeout_sec}s) doit être compris entre 1 et 900s.",
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
 
-            if eff_mode == "local":
-                await events.status("🐚 Exécution locale en sandbox...")
-                res = await worker_exec_local_oneshot(
-                    uid,
-                    cid,
-                    clean_cmd,
-                    timeout_sec=timeout_sec,
-                    workdir_subpath=sub_sid,
+            if clean_sid:
+                list_res = await worker_list_terminals(uid, cid)
+                if list_res.get("status") != "success":
+                    err_msg = list_res.get("error") or "Erreur liste terminaux."
+                    list_err: dict[str, Any] = {"status": "error", "error": err_msg}
+                    if list_res.get("error_code"):
+                        list_err["error_code"] = list_res["error_code"]
+                    return wrap_tool_output(text=err_msg, status=list_err)
+
+                sess = next(
+                    (
+                        s for s in (list_res.get("items") or [])
+                        if s.get("id") == clean_sid and s.get("alive", True)
+                    ),
+                    None,
                 )
-                text_out = res.get("output") or ""
-                if res.get("error"):
-                    text_out = f"{text_out}\n\n⚠️ Erreur Sandbox :\n{res['error']}".strip()
-                if not text_out and res.get("status") != "success":
-                    text_out = res.get("error") or "❌ Erreur lors de l'exécution locale."
-                exit_code = res.get("exit_code", -1)
-                if res.get("status") == "success":
-                    await events.status(f"Exécution locale terminée (code {exit_code}).", done=True)
+                if sess is None:
+                    return wrap_tool_output(
+                        text=f"❌ Session terminale '{clean_sid}' introuvable ou terminée dans cette conversation.",
+                        status={"status": "error", "error_code": "not_found", "session_id": clean_sid},
+                    )
+                if mode is not None and mode.strip().lower() != sess.get("mode"):
+                    return wrap_tool_output(
+                        text=(
+                            f"❌ Le paramètre mode='{mode}' contredit le mode "
+                            f"'{sess.get('mode')}' de la session '{clean_sid}'."
+                        ),
+                        status={"status": "error", "error_code": "invalid_arguments"},
+                    )
+                if clean_acc and clean_acc != (sess.get("account_id") or ""):
+                    return wrap_tool_output(
+                        text=f"❌ Le paramètre account_id='{clean_acc}' ne correspond pas à la session '{clean_sid}'.",
+                        status={"status": "error", "error_code": "invalid_arguments"},
+                    )
+                await _ensure_terminal_tab_open(uid, cid, sess)
+                opened_auto = False
+            else:
+                eff_mode = (mode or ("ssh" if clean_acc else "local")).strip().lower()
+                if eff_mode not in ("local", "ssh"):
+                    return wrap_tool_output(
+                        text=f"❌ Mode terminal invalide : '{mode}' (attendu 'local' ou 'ssh').",
+                        status={"status": "error", "error_code": "invalid_arguments"},
+                    )
+                if eff_mode == "local" and clean_acc:
+                    return wrap_tool_output(
+                        text="❌ Le paramètre 'account_id' est interdit lorsque mode='local'.",
+                        status={"status": "error", "error_code": "invalid_arguments"},
+                    )
+                if eff_mode == "ssh" and not clean_acc:
+                    return wrap_tool_output(
+                        text=(
+                            "❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'. "
+                            "Le Modèle DOIT appeler list_identities(service='ssh') pour identifier une cible configurée."
+                        ),
+                        status={"status": "error", "error_code": "invalid_arguments"},
+                    )
+
+                list_res = await worker_list_terminals(uid, cid)
+                if list_res.get("status") != "success":
+                    err_msg = list_res.get("error") or "Erreur liste terminaux."
+                    list_err = {"status": "error", "error": err_msg}
+                    if list_res.get("error_code"):
+                        list_err["error_code"] = list_res["error_code"]
+                    return wrap_tool_output(text=err_msg, status=list_err)
+
+                live_items = [s for s in (list_res.get("items") or []) if s.get("alive", True)]
+                if eff_mode == "local":
+                    matched = next(
+                        (s for s in live_items if s.get("mode") == "local" and not s.get("agent_locked")),
+                        None,
+                    ) or next((s for s in live_items if s.get("mode") == "local"), None)
                 else:
-                    await events.status(res.get("error") or f"Échec exécution locale (code {exit_code}).", done=True)
-                local_status: dict[str, Any] = {
-                    "status": res.get("status", "error"),
-                    "mode": "local",
-                    "target": res.get("target", "local:/sandbox"),
-                    "exit_code": exit_code,
-                }
-                if res.get("error_code"):
-                    local_status["error_code"] = res["error_code"]
-                if res.get("error"):
-                    local_status["error"] = res["error"]
-                return wrap_tool_output(text=text_out, status=local_status)
+                    matched = next(
+                        (
+                            s for s in live_items
+                            if s.get("mode") == "ssh" and s.get("account_id") == clean_acc and not s.get("agent_locked")
+                        ),
+                        None,
+                    ) or next(
+                        (s for s in live_items if s.get("mode") == "ssh" and s.get("account_id") == clean_acc),
+                        None,
+                    )
 
-            await events.status(f"🔐 Exécution SSH sur '{clean_acc}'...")
-            res = await worker_exec_ssh_oneshot(uid, cid, clean_acc, clean_cmd, timeout_sec=timeout_sec)
-            if res.get("status") != "success" and res.get("exit_code", -1) == -1:
-                err_msg = res.get("error") or "Erreur SSH."
-                await events.status(err_msg, done=True)
-                err_status: dict[str, Any] = {
-                    "status": "error",
-                    "mode": "ssh",
-                    "account_id": clean_acc,
-                    "exit_code": -1,
-                    "error": err_msg,
-                }
-                if res.get("target"):
-                    err_status["target"] = res["target"]
-                if res.get("error_code"):
-                    err_status["error_code"] = res["error_code"]
-                return wrap_tool_output(text=res.get("output") or err_msg, status=err_status)
+                if matched is not None:
+                    sess = matched
+                    opened_auto = False
+                    await _ensure_terminal_tab_open(uid, cid, sess)
+                else:
+                    opened_auto = True
+                    msg_id = str((__metadata__ or {}).get("message_id") or "").strip() or None
+                    await events.status(f"🖥️ Ouverture automatique du terminal {eff_mode}...")
+                    open_res = await _open_and_broadcast_terminal(
+                        uid,
+                        cid,
+                        eff_mode,
+                        clean_acc or None,
+                        clean_name,
+                        msg_id,
+                    )
+                    if open_res.get("status") != "success":
+                        err_msg = open_res.get("error") or "Erreur ouverture terminal."
+                        await events.status(err_msg, done=True)
+                        open_err: dict[str, Any] = {"status": "error", "error": err_msg}
+                        if open_res.get("error_code"):
+                            open_err["error_code"] = open_res["error_code"]
+                        return wrap_tool_output(text=err_msg, status=open_err)
+                    sess = open_res["session"]
 
-            text_out = res.get("output") or ""
-            if res.get("error"):
-                text_out = f"{text_out}\n\n⚠️ Erreur SSH :\n{res['error']}".strip()
-            exit_code = res.get("exit_code", -1)
-            await events.status(f"Exécution SSH terminée (code {exit_code}).", done=True)
-            ssh_status: dict[str, Any] = {
-                "status": res.get("status", "error"),
-                "mode": "ssh",
-                "account_id": clean_acc,
-                "target": res.get("target", ""),
-                "exit_code": exit_code,
-            }
-            if res.get("error_code"):
-                ssh_status["error_code"] = res["error_code"]
-            if res.get("error"):
-                ssh_status["error"] = res["error"]
-            return wrap_tool_output(text=text_out, status=ssh_status)
+            if sess.get("agent_locked"):
+                lock_msg = format_terminal_locked_message(sess.get("name") or sess["id"], sess["id"])
+                out_msg = (
+                    f"🖥️ Session terminale SSH '{sess['name']}' (`{sess['id']}`) ouverte dans l'interface "
+                    f"sur `{sess.get('target') or ''}`.\n{lock_msg}"
+                    if opened_auto
+                    else lock_msg
+                )
+                await events.status("Terminal verrouillé en lecture seule.", done=True)
+                return wrap_tool_output(
+                    text=out_msg,
+                    status={
+                        "status": "error",
+                        "error_code": "terminal_locked",
+                        "session_id": sess["id"],
+                        "name": sess["name"],
+                        "mode": sess["mode"],
+                        "target": sess.get("target") or "",
+                        "agent_locked": True,
+                        "opened_automatically": opened_auto,
+                        "error": lock_msg,
+                    },
+                )
+
+            await events.status(f"🖥️ Exécution dans '{sess['name']}' (`{sess['id']}`)...")
+            exec_res = await worker_exec_in_terminal(uid, cid, sess["id"], clean_cmd, timeout_sec=timeout_sec)
+            if exec_res.get("error_code") == "terminal_locked":
+                lock_msg = format_terminal_locked_message(sess.get("name") or sess["id"], sess["id"])
+                await events.status("Terminal verrouillé en lecture seule.", done=True)
+                return wrap_tool_output(
+                    text=lock_msg,
+                    status={
+                        "status": "error",
+                        "error_code": "terminal_locked",
+                        "session_id": sess["id"],
+                        "name": sess["name"],
+                        "mode": sess["mode"],
+                        "target": sess.get("target") or "",
+                        "agent_locked": True,
+                        "opened_automatically": opened_auto,
+                        "error": lock_msg,
+                    },
+                )
+
+            exit_code = exec_res.get("exit_code", -1)
+            out_text = exec_res.get("output") or ""
+            err_text = exec_res.get("error") or ""
+            if exec_res.get("status") != "success":
+                full_text = (
+                    f"{out_text}\n\n⚠️ {err_text}".strip()
+                    if (out_text and err_text)
+                    else (out_text or err_text or f"❌ Échec d'exécution (code {exit_code}).")
+                )
+                await events.status(f"Échec dans '{sess['name']}' (code {exit_code}).", done=True)
+                return wrap_tool_output(
+                    text=full_text,
+                    status={
+                        "status": "error",
+                        "error_code": exec_res.get("error_code") or "execution_failed",
+                        "session_id": sess["id"],
+                        "name": sess["name"],
+                        "mode": sess["mode"],
+                        "target": sess.get("target") or "",
+                        "exit_code": exit_code,
+                        "opened_automatically": opened_auto,
+                        "error": err_text or f"Exit code {exit_code}",
+                    },
+                )
+
+            await events.status(f"Exécution terminée dans '{sess['name']}' (code 0).", done=True)
+            return wrap_tool_output(
+                text=out_text if out_text else "(Commande exécutée avec succès, aucune sortie)",
+                status={
+                    "status": "success",
+                    "session_id": sess["id"],
+                    "name": sess["name"],
+                    "mode": sess["mode"],
+                    "target": sess.get("target") or "",
+                    "exit_code": 0,
+                    "opened_automatically": opened_auto,
+                },
+            )
 
         if action == "open":
-            if is_automation_context(__metadata__):
+            eff_mode = (mode or ("ssh" if clean_acc else "local")).strip().lower()
+            if eff_mode not in ("local", "ssh"):
                 return wrap_tool_output(
-                    text="❌ Action refusée : l'ouverture d'un terminal interactif est interdite en contexte headless/automatisé.",
-                    status={"status": "error", "error_code": "headless_forbidden"},
+                    text=f"❌ Mode terminal invalide : '{mode}' (attendu 'local' ou 'ssh').",
+                    status={"status": "error", "error_code": "invalid_arguments"},
                 )
-            eff_mode = mode or ("ssh" if clean_acc else "local")
             if eff_mode == "local" and clean_acc:
                 return wrap_tool_output(
                     text="❌ Le paramètre 'account_id' est interdit lorsque mode='local'.",
@@ -673,40 +825,23 @@ class Tools:
 
             msg_id = str((__metadata__ or {}).get("message_id") or "").strip() or None
             await events.status(f"🖥️ Ouverture d'un terminal {eff_mode}...")
-            res = await worker_open_terminal(
+            open_res = await _open_and_broadcast_terminal(
                 uid,
                 cid,
-                mode=eff_mode,
-                account_id=clean_acc or None,
-                name=clean_name,
-                message_id=msg_id,
+                eff_mode,
+                clean_acc or None,
+                clean_name,
+                msg_id,
             )
-            if res.get("status") != "success":
-                err_msg = res.get("error") or "Erreur ouverture terminal."
+            if open_res.get("status") != "success":
+                err_msg = open_res.get("error") or "Erreur ouverture terminal."
                 await events.status(err_msg, done=True)
-                open_err: dict[str, Any] = {"status": "error", "error": err_msg}
-                if res.get("error_code"):
-                    open_err["error_code"] = res["error_code"]
+                open_err = {"status": "error", "error": err_msg}
+                if open_res.get("error_code"):
+                    open_err["error_code"] = open_res["error_code"]
                 return wrap_tool_output(text=err_msg, status=open_err)
 
-            sess = res["session"]
-            wm = get_window_manager()
-            await wm.open_tab(
-                uid,
-                cid,
-                "terminal",
-                {
-                    "sessionId": sess["id"],
-                    "name": sess["name"],
-                    "mode": sess["mode"],
-                    "accountId": sess.get("account_id") or "",
-                    "target": sess.get("target") or "",
-                    "agentLocked": bool(sess.get("agent_locked")),
-                    "auto": True,
-                },
-            )
-            await wm.broadcast_terminal_state(uid, cid, sess, "opened")
-
+            sess = open_res["session"]
             if sess.get("mode") == "ssh":
                 msg_text = (
                     f"🖥️ Session terminale SSH '{sess['name']}' (`{sess['id']}`) ouverte sur `{sess.get('target') or ''}`.\n"

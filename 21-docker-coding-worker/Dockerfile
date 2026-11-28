@@ -29,7 +29,7 @@ ENV TZ=Europe/Paris
 ENV PYTHONUNBUFFERED=1
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="6.25.1.1"
+LABEL version="6.25.3.1"
 LABEL description="ECHO Python Worker (Data Science & Logic)"
 
 EXPOSE 5000

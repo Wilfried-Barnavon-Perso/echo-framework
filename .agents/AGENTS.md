@@ -14,5 +14,6 @@
 1. **Inspection Externe** : Le dossier `.tmp_audit/` permet de télécharger et d'inspecter, en lecture seule, du code tiers ou de la documentation (API, manuels développeur, etc.) lorsque c'est utile.
 2. **Open WebUI** : Le code source d'Open WebUI est disponible dans `.tmp_audit/` en lecture seule.
 3. **Scripts de Tâches** : Tout script créé pour exécuter une tâche ponctuelle (audit, diagnostic, extraction) DOIT être placé dans `.tmp_audit/`.
-4. **Hygiène & Veille `ECHO-UI` (`.hygiene-owui/`)** : L'outillage pérenne d'hygiène et de veille d'`ECHO-UI` réside dans `.hygiene-owui/` (`HYGIENE_POLICY.json`, `check-echo-hygiene.ps1`, `check-owui-news.ps1`, rapports ignorés dans `.hygiene-owui/reports/`).
+4. **Suites de Tests Hors-Prod (`.tmp_audit/tests/`)** : Toute suite de tests locale hors-production (tests unitaires, intégration, non-régression `.venv`) DOIT impérativement résider dans `.tmp_audit/tests/` (et jamais dans un répertoire `tests/` à la racine du dépôt).
+5. **Hygiène & Veille `ECHO-UI` (`.hygiene-owui/`)** : L'outillage pérenne d'hygiène et de veille d'`ECHO-UI` réside dans `.hygiene-owui/` (`HYGIENE_POLICY.json`, `check-echo-hygiene.ps1`, `check-owui-news.ps1`, rapports ignorés dans `.hygiene-owui/reports/`).
 </RULE[Sources Externes (.tmp_audit)]>
