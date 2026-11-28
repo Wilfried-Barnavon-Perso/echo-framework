@@ -3,7 +3,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.25.3.1
+VERSION : 6.26.0.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-28
 
@@ -11,30 +11,58 @@ DATE MAJ : 2026-11-28
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.0.1: Consommation directe SSOT echo_constants (/app/echo_libs), résilience PTY EAGAIN/EINTR/EIO, streaming WS multi-lecteurs par curseur sur Condition, maintien d'activité WS et garde exec_in_progress sur TTL.
 # 6.25.3.1: Purge de POST /ssh et de l'exécution inline hors-PTY, quotas de sessions (2 locaux/chat, 8 SSH/chat, 64 global -> HTTP 429) et route ASGI non-bloquante POST /api/terminals/{id}/exec (sentinelle OSC 777 + exit_code).
 # 6.25.1.1: Exécution Bash inline sans fichier Codex dans POST /execute (_start_sandbox_job) et auto-nommage par défaut "Terminal" (découplé de Sandbox).
 # 6.24.6.1: Unification PTY Local/SSH (mode='ssh', CertificateFile, _prepare_ssh_bwrap_auth), verrou serveur agent_locked (HTTP 423) et routes /api/terminals*.
 # 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
-# 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
 
 import asyncio
+import errno
 import json
 import logging
 import logging.config
 import orjson
 import os
-import queue
 import re
 import shutil
 import signal
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 import uuid
+
+for _echo_libs_candidate in ("/app/echo_libs", str(Path(__file__).resolve().parent.parent / "14-owui-libs")):
+    if os.path.isdir(_echo_libs_candidate) and _echo_libs_candidate not in sys.path:
+        sys.path.insert(0, _echo_libs_candidate)
+
+from echo_constants import (  # noqa: E402
+    ECHO_CANVAS_IDLE_TTL_SEC,
+    ECHO_CANVAS_MAX_LIFETIME_SEC,
+    SANDBOX_FINISHED_JOBS_MAX_PER_CHAT,
+    SANDBOX_FINISHED_JOBS_TTL_SEC,
+    SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL,
+    SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT,
+    TERMINAL_DEAD_RETENTION_SEC,
+    TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC,
+    TERMINAL_DEFAULT_READ_LINES,
+    TERMINAL_DEFAULT_WAIT_MS,
+    TERMINAL_LOCAL_IDLE_TTL_SEC as _SSOT_TERMINAL_LOCAL_IDLE_TTL_SEC,
+    TERMINAL_MAX_BUFFER_BYTES,
+    TERMINAL_MAX_EXEC_TIMEOUT_SEC,
+    TERMINAL_MAX_GLOBAL as _SSOT_TERMINAL_MAX_GLOBAL,
+    TERMINAL_MAX_LOCAL_PER_CHAT as _SSOT_TERMINAL_MAX_LOCAL_PER_CHAT,
+    TERMINAL_MAX_READ_LINES as _SSOT_TERMINAL_MAX_READ_LINES,
+    TERMINAL_MAX_SSH_PER_CHAT as _SSOT_TERMINAL_MAX_SSH_PER_CHAT,
+    TERMINAL_MAX_WAIT_MS,
+    TERMINAL_SSH_IDLE_TTL_SEC as _SSOT_TERMINAL_SSH_IDLE_TTL_SEC,
+)
 
 from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
 import httpx
@@ -86,18 +114,18 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 
-MAX_CONCURRENT_JOBS_PER_CHAT = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT", 4))
-MAX_CONCURRENT_JOBS_GLOBAL = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL", 8))
-FINISHED_JOBS_MAX_PER_CHAT = 20
-FINISHED_JOBS_TTL_SEC = 900
-DEFAULT_BG_IDLE_TTL_SEC = float(os.environ.get("SANDBOX_BG_IDLE_TTL_SEC", 1800.0))
-DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC", 14400.0))
-TERMINAL_LOCAL_IDLE_TTL_SEC = 7200.0
-TERMINAL_SSH_IDLE_TTL_SEC = 1800.0
-TERMINAL_MAX_READ_LINES = 500
-TERMINAL_MAX_LOCAL_PER_CHAT = int(os.environ.get("TERMINAL_MAX_LOCAL_PER_CHAT", 2))
-TERMINAL_MAX_SSH_PER_CHAT = int(os.environ.get("TERMINAL_MAX_SSH_PER_CHAT", 8))
-TERMINAL_MAX_GLOBAL = int(os.environ.get("TERMINAL_MAX_GLOBAL", 64))
+MAX_CONCURRENT_JOBS_PER_CHAT = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT", SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT))
+MAX_CONCURRENT_JOBS_GLOBAL = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL", SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL))
+FINISHED_JOBS_MAX_PER_CHAT = SANDBOX_FINISHED_JOBS_MAX_PER_CHAT
+FINISHED_JOBS_TTL_SEC = SANDBOX_FINISHED_JOBS_TTL_SEC
+DEFAULT_BG_IDLE_TTL_SEC = float(os.environ.get("SANDBOX_BG_IDLE_TTL_SEC", ECHO_CANVAS_IDLE_TTL_SEC))
+DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC", ECHO_CANVAS_MAX_LIFETIME_SEC))
+TERMINAL_LOCAL_IDLE_TTL_SEC = _SSOT_TERMINAL_LOCAL_IDLE_TTL_SEC
+TERMINAL_SSH_IDLE_TTL_SEC = _SSOT_TERMINAL_SSH_IDLE_TTL_SEC
+TERMINAL_MAX_READ_LINES = _SSOT_TERMINAL_MAX_READ_LINES
+TERMINAL_MAX_LOCAL_PER_CHAT = int(os.environ.get("TERMINAL_MAX_LOCAL_PER_CHAT", _SSOT_TERMINAL_MAX_LOCAL_PER_CHAT))
+TERMINAL_MAX_SSH_PER_CHAT = int(os.environ.get("TERMINAL_MAX_SSH_PER_CHAT", _SSOT_TERMINAL_MAX_SSH_PER_CHAT))
+TERMINAL_MAX_GLOBAL = int(os.environ.get("TERMINAL_MAX_GLOBAL", _SSOT_TERMINAL_MAX_GLOBAL))
 ECHO_WEBUI_INTERNAL_URL = os.environ.get("ECHO_WEBUI_INTERNAL_URL", "http://echo-webui:8080").rstrip("/")
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
@@ -1145,12 +1173,12 @@ class TerminalSession:
         self.last_activity_at = self.created_at
         self._ssh_tmp_dir: str | None = None
         self.cursor = 0
-        self.max_buffer = 65536
+        self.max_buffer = TERMINAL_MAX_BUFFER_BYTES
         self.buffer = bytearray()
         self.truncated = False
         self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
         self.exec_in_progress = False
-        self.out_queue = queue.Queue()
         self.alive = True
         self.is_pty = False
         self.master_fd = None
@@ -1319,17 +1347,26 @@ class TerminalSession:
                             if not chunk:
                                 break
                             self._handle_output(chunk)
-                        except OSError:
+                        except OSError as e:
+                            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                                continue
+                            if e.errno == errno.EIO and self.proc is not None and self.proc.poll() is None:
+                                time.sleep(0.02)
+                                continue
                             break
                     if self.proc.poll() is not None:
-                        try:
-                            while True:
+                        while True:
+                            try:
                                 chunk = os.read(self.master_fd, 4096)
                                 if not chunk:
                                     break
                                 self._handle_output(chunk)
-                        except OSError:
-                            pass
+                            except OSError as e:
+                                if e.errno == errno.EINTR:
+                                    continue
+                                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EIO):
+                                    break
+                                break
                         break
             else:
                 while self.alive:
@@ -1340,18 +1377,19 @@ class TerminalSession:
         except Exception as e:
             logger.debug(f"Terminal reader loop ended: {e}")
         finally:
-            self.alive = False
-            self.out_queue.put(b"")
+            with self.cond:
+                self.alive = False
+                self.cond.notify_all()
 
     def _handle_output(self, chunk: bytes):
-        with self.lock:
+        with self.cond:
             self.cursor += len(chunk)
             self.buffer.extend(chunk)
             if len(self.buffer) > self.max_buffer:
                 self.buffer = self.buffer[-self.max_buffer:]
                 self.truncated = True
             self.last_activity_at = time.time()
-        self.out_queue.put(chunk)
+            self.cond.notify_all()
 
     def write_input(self, data: bytes | str):
         if not self.is_alive():
@@ -1387,9 +1425,9 @@ class TerminalSession:
         self.agent_locked = bool(locked)
         self.last_activity_at = time.time()
 
-    def read_clean_text(self, tail_lines: int = 100, since_cursor: int = 0) -> dict:
+    def read_clean_text(self, tail_lines: int = TERMINAL_DEFAULT_READ_LINES, since_cursor: int = 0) -> dict:
         """Retourne le texte nettoyé (sans ANSI/CR) depuis since_cursor, borné à tail_lines."""
-        tail_limit = max(1, min(int(tail_lines or 100), TERMINAL_MAX_READ_LINES))
+        tail_limit = max(1, min(int(tail_lines or TERMINAL_DEFAULT_READ_LINES), TERMINAL_MAX_READ_LINES))
         cursor_from = max(0, int(since_cursor or 0))
         with self.lock:
             buffered = bytes(self.buffer)
@@ -1442,7 +1480,9 @@ class TerminalSession:
         }
 
     def terminate(self):
-        self.alive = False
+        with self.cond:
+            self.alive = False
+            self.cond.notify_all()
         if self.proc:
             _kill_process_group(self.proc)
         if self.master_fd is not None:
@@ -1454,7 +1494,6 @@ class TerminalSession:
         if self._ssh_tmp_dir:
             shutil.rmtree(self._ssh_tmp_dir, ignore_errors=True)
             self._ssh_tmp_dir = None
-        self.out_queue.put(b"")
 
 
 class TerminalQuotaExceededError(Exception):
@@ -1598,12 +1637,14 @@ class TerminalSessionManager:
             logger.info(f"🛑 Terminal session TERMINATED | ID: {session_id}")
 
     def _prune_sessions(self) -> list[TerminalSession]:
-        """Élagage des sessions mortes (>300s) ou inactives au-delà du TTL local/SSH (appelé sous lock)."""
+        """Élagage des sessions mortes (>TERMINAL_DEAD_RETENTION_SEC) ou inactives au-delà du TTL local/SSH (appelé sous lock)."""
         now = time.time()
         to_del: list[str] = []
         for sid, s in self._sessions.items():
+            if s.exec_in_progress:
+                continue
             ttl = TERMINAL_SSH_IDLE_TTL_SEC if s.mode == "ssh" else TERMINAL_LOCAL_IDLE_TTL_SEC
-            if not s.is_alive() and (now - s.created_at > 300):
+            if not s.is_alive() and (now - s.created_at > TERMINAL_DEAD_RETENTION_SEC):
                 to_del.append(sid)
             elif (now - s.last_activity_at) > ttl:
                 to_del.append(sid)
@@ -2025,9 +2066,9 @@ def get_terminal_buffer(session_id):
     if not session:
         return jsonify({"error": "Terminal session not found"}), 404
     try:
-        tail_lines = int(request.args.get("tail_lines", 100))
+        tail_lines = int(request.args.get("tail_lines", TERMINAL_DEFAULT_READ_LINES))
     except (TypeError, ValueError):
-        tail_lines = 100
+        tail_lines = TERMINAL_DEFAULT_READ_LINES
     tail_lines = max(1, min(tail_lines, TERMINAL_MAX_READ_LINES))
     try:
         since_cursor = max(0, int(request.args.get("since_cursor", 0)))
@@ -2062,9 +2103,9 @@ def post_terminal_input(session_id):
     raw_input = req_json.get("input")
     append_newline = bool(req_json.get("append_newline", True))
     try:
-        wait_ms = max(0, min(int(req_json.get("wait_ms", 400)), 5000))
+        wait_ms = max(0, min(int(req_json.get("wait_ms", TERMINAL_DEFAULT_WAIT_MS)), TERMINAL_MAX_WAIT_MS))
     except (TypeError, ValueError):
-        wait_ms = 400
+        wait_ms = TERMINAL_DEFAULT_WAIT_MS
 
     if sig_name is not None:
         sig_key = str(sig_name).strip().lower()
@@ -2086,7 +2127,7 @@ def post_terminal_input(session_id):
     if wait_ms > 0:
         time.sleep(wait_ms / 1000.0)
 
-    buf_data = session.read_clean_text(tail_lines=100, since_cursor=prev_cursor)
+    buf_data = session.read_clean_text(tail_lines=TERMINAL_DEFAULT_READ_LINES, since_cursor=prev_cursor)
     return jsonify({
         "status": "success",
         "session": session.to_dict(),
@@ -2132,7 +2173,7 @@ async def ws_terminal_endpoint(websocket: WebSocket):
     session_id = websocket.path_params.get("session_id", "")
     session = TERMINAL_MANAGER.get_session(session_id)
     if not session or not session.is_alive():
-        await websocket.close(code=4404)
+        await websocket.close(code=4004)
         return
 
     init_data = {}
@@ -2149,16 +2190,12 @@ async def ws_terminal_endpoint(websocket: WebSocket):
     # Confirmer la liaison au chat
     await websocket.send_text(json.dumps({"type": "chat", "chat_id": session.chat_id}))
 
-    # Envoyer le buffer accumulé si présent (sans doublon avec out_queue)
+    # Envoyer le buffer accumulé si présent et initialiser le curseur propre à cette connexion WS
     with session.lock:
         buffered = bytes(session.buffer)
         curr_cursor = session.cursor
         is_trunc = session.truncated
-        while not session.out_queue.empty():
-            try:
-                session.out_queue.get_nowait()
-            except queue.Empty:
-                break
+    sent_cursor = curr_cursor
 
     try:
         client_cursor = int(init_data.get("cursor") or 0) if init_data.get("resume") else 0
@@ -2182,28 +2219,39 @@ async def ws_terminal_endpoint(websocket: WebSocket):
     stop_event = asyncio.Event()
 
     async def _reader():
+        nonlocal sent_cursor
         loop = asyncio.get_running_loop()
+
+        def read_next_chunk(cur: int):
+            with session.cond:
+                while session.cursor <= cur and session.alive and not stop_event.is_set():
+                    if not session.cond.wait(timeout=0.25):
+                        break
+                curr_cur = session.cursor
+                is_alive_now = session.is_alive()
+                if curr_cur > cur:
+                    delta = curr_cur - cur
+                    buf_len = len(session.buffer)
+                    trunc = delta > buf_len
+                    chunk_bytes = bytes(session.buffer[-delta:])
+                    return chunk_bytes, curr_cur, trunc, is_alive_now
+                return b"", curr_cur, False, is_alive_now
+
         while not stop_event.is_set():
-            def get_chunk():
+            chunk_bytes, curr_cur, trunc, is_alive_now = await loop.run_in_executor(
+                None, read_next_chunk, sent_cursor
+            )
+            if chunk_bytes and not stop_event.is_set():
                 try:
-                    return session.out_queue.get(timeout=0.1)
-                except queue.Empty:
-                    return None
-            chunk = await loop.run_in_executor(None, get_chunk)
-            if chunk == b"":
-                break
-            if chunk is None:
-                if not session.is_alive() and session.out_queue.empty():
-                    break
-                continue
-            if chunk and not stop_event.is_set():
-                try:
+                    sent_cursor = curr_cur
                     await websocket.send_text(
-                        json.dumps({"type": "output", "end": session.cursor, "truncated": False})
+                        json.dumps({"type": "output", "end": curr_cur, "truncated": trunc})
                     )
-                    await websocket.send_bytes(chunk)
+                    await websocket.send_bytes(chunk_bytes)
                 except Exception:
                     break
+            if not is_alive_now and curr_cur <= sent_cursor:
+                break
 
     async def _writer():
         try:
@@ -2219,6 +2267,7 @@ async def ws_terminal_endpoint(websocket: WebSocket):
                         p_type = payload.get("type")
                         if p_type == "resize":
                             session.resize(int(payload.get("cols", 80)), int(payload.get("rows", 24)))
+                            session.last_activity_at = time.time()
                         elif p_type == "ping":
                             await websocket.send_text(json.dumps({"type": "pong"}))
                         elif p_type == "chat":
@@ -2226,7 +2275,9 @@ async def ws_terminal_endpoint(websocket: WebSocket):
                             if c_id:
                                 session.chat_id = c_id
                             await websocket.send_text(json.dumps({"type": "chat", "chat_id": session.chat_id}))
-                        elif p_type in ("ack", "activity", "auth"):
+                        elif p_type == "activity":
+                            session.last_activity_at = time.time()
+                        elif p_type in ("ack", "auth"):
                             pass
                     except Exception as e:
                         logger.debug(f"Terminal WS JSON error: {e}")
@@ -2234,6 +2285,8 @@ async def ws_terminal_endpoint(websocket: WebSocket):
             pass
         finally:
             stop_event.set()
+            with session.cond:
+                session.cond.notify_all()
 
     tasks = [asyncio.create_task(_reader()), asyncio.create_task(_writer())]
     try:
@@ -2242,6 +2295,8 @@ async def ws_terminal_endpoint(websocket: WebSocket):
         pass
     finally:
         stop_event.set()
+        with session.cond:
+            session.cond.notify_all()
         for t in tasks:
             t.cancel()
         for t in tasks:
@@ -2629,10 +2684,16 @@ async def api_exec_terminal_endpoint(request):
     actor = str(body.get("actor") or "agent").strip().lower()
     clean_cmd = str(body.get("command") or "").strip()
     try:
-        raw_timeout = body.get("timeout", 60)
-        timeout_sec = max(1, min(int(raw_timeout if raw_timeout is not None else 60), 900))
+        raw_timeout = body.get("timeout", TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC)
+        timeout_sec = max(
+            1,
+            min(
+                int(raw_timeout if raw_timeout is not None else TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC),
+                TERMINAL_MAX_EXEC_TIMEOUT_SEC,
+            ),
+        )
     except (TypeError, ValueError):
-        timeout_sec = 60
+        timeout_sec = TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC
 
     if not clean_cmd:
         return JSONResponse(
@@ -2708,8 +2769,8 @@ async def api_exec_terminal_endpoint(request):
                 rc_str = m.group(1) if m.group(1) is not None else m.group(2)
                 exit_code = int(rc_str)
                 cleaned_out = _clean_terminal_exec_output(raw_text, m.start(), clean_cmd, token)
-                if len(cleaned_out) > 65536:
-                    cleaned_out = cleaned_out[-65536:]
+                if len(cleaned_out) > TERMINAL_MAX_BUFFER_BYTES:
+                    cleaned_out = cleaned_out[-TERMINAL_MAX_BUFFER_BYTES:]
                     truncated_slice = True
                 resp_payload = {
                     "status": "success" if exit_code == 0 else "error",
@@ -2741,8 +2802,8 @@ async def api_exec_terminal_endpoint(request):
                 else:
                     exit_code = session.proc.poll() if session.proc and session.proc.poll() is not None else 0
                     cleaned_out = _clean_terminal_exec_output(raw_text, len(raw_text), clean_cmd, token)
-                if len(cleaned_out) > 65536:
-                    cleaned_out = cleaned_out[-65536:]
+                if len(cleaned_out) > TERMINAL_MAX_BUFFER_BYTES:
+                    cleaned_out = cleaned_out[-TERMINAL_MAX_BUFFER_BYTES:]
                     truncated_slice = True
                 resp_payload = {
                     "status": "success" if exit_code == 0 else "error",
@@ -2769,8 +2830,8 @@ async def api_exec_terminal_endpoint(request):
                 raw_bytes = buffered[-delta:] if delta > 0 else b""
                 raw_text = raw_bytes.decode("utf-8", errors="replace")
                 partial_out = _clean_terminal_exec_output(raw_text, len(raw_text), clean_cmd, token)
-                if len(partial_out) > 65536:
-                    partial_out = partial_out[-65536:]
+                if len(partial_out) > TERMINAL_MAX_BUFFER_BYTES:
+                    partial_out = partial_out[-TERMINAL_MAX_BUFFER_BYTES:]
                     truncated_slice = True
                 return JSONResponse(
                     {
@@ -2790,6 +2851,7 @@ async def api_exec_terminal_endpoint(request):
     finally:
         with session.lock:
             session.exec_in_progress = False
+            session.last_activity_at = time.time()
 
 
 asgi_app = Starlette(

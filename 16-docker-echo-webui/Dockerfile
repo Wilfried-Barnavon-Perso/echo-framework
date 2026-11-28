@@ -203,7 +203,7 @@ ENV WEBUI_BUILD_HASH=${BUILD_HASH}
 ENV DOCKER=true
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="6.25.3.1"
+LABEL version="6.26.0.1"
 LABEL description="ECHO-UI (Open WebUI v0.13.2 Fork)"
 
 CMD [ "bash", "start.sh"]

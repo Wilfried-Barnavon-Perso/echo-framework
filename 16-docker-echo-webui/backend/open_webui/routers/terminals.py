@@ -670,6 +670,7 @@ async def _proxy_terminal_websocket(
             upstream_url,
             headers=upstream_headers,
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            heartbeat=30.0,
         ) as upstream:
             import json as _json
 
@@ -772,6 +773,6 @@ async def _proxy_terminal_websocket(
                 data={'server_id': server_id},
             )
         try:
-            await ws.close()
+            await ws.close(code=1011)
         except Exception:
             pass

@@ -637,4 +637,8 @@ class RelayClient:
 def get_terminal_client(url, user_id=None, **kwargs):
     if str(url).startswith('tether://'):
         return RelayClient(user_id, service='open_terminal', timeout=kwargs.get('timeout'))
+    kwargs.setdefault(
+        'timeout',
+        aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=None),
+    )
     return aiohttp.ClientSession(**kwargs)

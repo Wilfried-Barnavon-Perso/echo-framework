@@ -1,6 +1,6 @@
 ---
 domain_id: code_and_files
-version: 6.25.3.1
+version: 6.26.0.1
 updated_at: 2026-11-28
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et pilotage des terminaux interactifs Local/SSH (manage_terminal).
@@ -106,12 +106,12 @@ Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l
 - Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_main")` retourne `True`, `wait_until_closed()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
 
 ### 3.4 Pilotage Terminal Interactif & Exécution en Session PTY (`manage_terminal`)
-- **Signature** : `manage_terminal(action, mode=None, account_id=None, session_id=None, name=None, command=None, signal_key=None, append_newline=True, tail_lines=100, wait_ms=400, timeout_sec=60)` avec `action` $\in$ `{"exec", "open", "list", "read", "write", "close"}`.
+- **Signature** : `manage_terminal(action, mode=None, account_id=None, session_id=None, name=None, command=None, signal_key=None, append_newline=True, tail_lines=100, wait_ms=400, timeout_sec=900)` avec `action` $\in$ `{"exec", "open", "list", "read", "write", "close"}`.
 - **Règle d'Architecture PTY Visible** : Toute exécution `manage_terminal` s'opère exclusivement dans une **session PTY persistante et visible dans les onglets Terminal de l'interface** (aucune exécution cachée hors-PTY ; la session reste ouverte et interactive après `exec`).
 - **Garde Headless** : `action="open"` et `action="exec"` sont **ABSOLUMENT INTERDITS** en contexte d'automatisation planifiée/CRON (`headless_forbidden`).
 - **Quotas SSOT** : Au plus **`2` terminaux locaux** et **`8` terminaux SSH** simultanés par conversation (`64` sessions terminales actives au maximum globalement sur le Worker ; erreur `terminal_quota_exceeded` en cas de dépassement).
 1. **Exécution de commande dans un terminal visible (`action="exec"`)** :
-   - `timeout_sec` est borné à `1..900s` (défaut `60s`).
+   - `timeout_sec` est borné à `1..3600s` (défaut `900s`).
    - **Ciblage ou auto-ouverture** :
      - Si `session_id` est fourni, la commande s'exécute dans la session active désignée (et réactive son onglet UI).
      - Si `session_id` est omis, `mode` est déduit en `"ssh"` si `account_id` est fourni, sinon `"local"`. Le Système réutilise en priorité une session active déverrouillée correspondante (même `mode` et même `account_id`), ou à défaut ouvre automatiquement un nouvel onglet Terminal dans l'interface (`opened_automatically=True`).

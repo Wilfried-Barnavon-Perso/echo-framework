@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.25.3.1
+version: 6.26.0.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & Terminaux Local/SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.0.1: Consommation SSOT de TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC (900s), TERMINAL_MAX_EXEC_TIMEOUT_SEC (3600s), TERMINAL_DEFAULT_READ_LINES (100) et TERMINAL_DEFAULT_WAIT_MS (400ms) dans manage_terminal.
 # 6.25.3.1: Refonte de manage_terminal(action="exec") en macro factorisée sur session PTY visible (_open_and_broadcast_terminal + worker_exec_in_terminal + garde agent_locked).
 # 6.25.1.1: Support symétrique mode="local"|"ssh" sur manage_terminal(action="exec") via worker_exec_local_oneshot et normalisation PAS des error_code.
 # 6.24.6.1: Consolidation de l'exécution SSH one-shot et des sessions terminales interactives (Local/SSH) dans manage_terminal via echo_terminals.
 # 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
-# 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -37,6 +37,10 @@ from echo_constants import (  # noqa: E402
     ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS,
     ECHO_SUBAGENT_CONTEXT,
     SANDBOX_LISTEN_MAX_WAIT_SEC,
+    TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC,
+    TERMINAL_DEFAULT_READ_LINES,
+    TERMINAL_DEFAULT_WAIT_MS,
+    TERMINAL_MAX_EXEC_TIMEOUT_SEC,
     is_automation_context,
 )
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
@@ -571,9 +575,9 @@ class Tools:
         command: Optional[str] = None,
         signal_key: Optional[Literal["ctrl_c", "ctrl_d", "ctrl_z", "enter"]] = None,
         append_newline: bool = True,
-        tail_lines: int = 100,
-        wait_ms: int = 400,
-        timeout_sec: int = 60,
+        tail_lines: int = TERMINAL_DEFAULT_READ_LINES,
+        wait_ms: int = TERMINAL_DEFAULT_WAIT_MS,
+        timeout_sec: int = TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC,
         __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
@@ -605,9 +609,9 @@ class Tools:
                     text="❌ Le paramètre 'command' est obligatoire pour action='exec'.",
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
-            if not (1 <= timeout_sec <= 900):
+            if not (1 <= timeout_sec <= TERMINAL_MAX_EXEC_TIMEOUT_SEC):
                 return wrap_tool_output(
-                    text=f"❌ timeout_sec ({timeout_sec}s) doit être compris entre 1 et 900s.",
+                    text=f"❌ timeout_sec ({timeout_sec}s) doit être compris entre 1 et {TERMINAL_MAX_EXEC_TIMEOUT_SEC}s.",
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
 

@@ -4,11 +4,12 @@
 """
 title: ECHO Terminals
 author: Wilfried BARNAVON
-version: 6.25.3.1
+version: 6.26.0.1
 description: Bibliothèque partagée d'initialisation de session, validation Vault SSH, client Worker terminal/SSH et synchronisation du registre echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.0.1: Consommation stricte des constantes SSOT TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC (900s), TERMINAL_MAX_EXEC_TIMEOUT_SEC (3600s) et TERMINAL_DEFAULT_WAIT_MS (400ms).
 # 6.25.3.1: Suppression des exécutions hors-PTY (oneshot), ajout de worker_exec_in_terminal (POST /api/terminals/{id}/exec) et propagation HTTP 429 terminal_quota_exceeded.
 # 6.25.1.1: Ajout de worker_exec_local_oneshot, nommage par défaut "Terminal" (découplé de Sandbox), _classify_ssh_vault_error et normalisation PAS des error_code.
 # 6.24.6.1: Création du module partagé echo_terminals.py (ensure_echo_session_environment, validation Vault SSH, client HTTP Worker et réconciliation echo_resources).
@@ -27,7 +28,10 @@ from echo_constants import (
     ECHO_GLOBAL_DOMAINS,
     ECHO_SESSION_DOMAINS,
     RESOURCE_TYPES,
+    TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC,
     TERMINAL_DEFAULT_READ_LINES,
+    TERMINAL_DEFAULT_WAIT_MS,
+    TERMINAL_MAX_EXEC_TIMEOUT_SEC,
     TERMINAL_MAX_READ_LINES,
     TERMINAL_MAX_WAIT_MS,
     TERMINAL_SESSION_STATUS,
@@ -471,7 +475,7 @@ async def worker_exec_in_terminal(
     chat_id: str,
     session_id: str,
     command: str,
-    timeout_sec: int = 60,
+    timeout_sec: int = TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC,
 ) -> Dict[str, Any]:
     """Exécute une commande shell dans une session terminale PTY existante via POST /api/terminals/{sid}/exec."""
     clean_sid = (session_id or "").strip()
@@ -491,15 +495,15 @@ async def worker_exec_in_terminal(
             "status": "error",
             "error_code": "invalid_arguments",
             "session_id": clean_sid,
-            "error": "❌ timeout_sec doit être un entier compris entre 1 et 900s.",
+            "error": f"❌ timeout_sec doit être un entier compris entre 1 et {TERMINAL_MAX_EXEC_TIMEOUT_SEC}s.",
         }
 
-    if not (1 <= safe_timeout <= 900):
+    if not (1 <= safe_timeout <= TERMINAL_MAX_EXEC_TIMEOUT_SEC):
         return {
             "status": "error",
             "error_code": "invalid_arguments",
             "session_id": clean_sid,
-            "error": f"❌ timeout_sec ({safe_timeout}s) doit être compris entre 1 et 900s.",
+            "error": f"❌ timeout_sec ({safe_timeout}s) doit être compris entre 1 et {TERMINAL_MAX_EXEC_TIMEOUT_SEC}s.",
         }
 
     try:
@@ -734,14 +738,14 @@ async def worker_write_terminal(
     actor: str = "agent",
     append_newline: bool = True,
     signal: Optional[str] = None,
-    wait_ms: int = 400,
+    wait_ms: int = TERMINAL_DEFAULT_WAIT_MS,
 ) -> Dict[str, Any]:
     """Envoie une entrée ou un signal à un terminal (traduit HTTP 423 en terminal_locked PAS)."""
     clean_sid = (session_id or "").strip()
     if not clean_sid:
         return {"status": "error", "error_code": "invalid_arguments", "error": "❌ Le paramètre 'session_id' est obligatoire."}
 
-    safe_wait = max(0, min(int(wait_ms if wait_ms is not None else 400), TERMINAL_MAX_WAIT_MS))
+    safe_wait = max(0, min(int(wait_ms if wait_ms is not None else TERMINAL_DEFAULT_WAIT_MS), TERMINAL_MAX_WAIT_MS))
     payload: Dict[str, Any] = {
         "actor": (actor or "agent").strip().lower(),
         "input": input_text,

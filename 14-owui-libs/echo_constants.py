@@ -3,16 +3,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.25.3.1
+version: 6.26.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.26.1.1: Relèvement de TERMINAL_MAX_BUFFER_BYTES à 256 Ko (262144 octets) pour le ring-buffer PTY et la capture exec.
+# 6.26.0.1: Factorisation complète des constantes SSOT TERMINAL_* (timeouts exec 900s/3600s, wait_ms 400ms, buffer 64Ko, rétention post-mortem 300s).
 # 6.25.3.1: Ajout des constantes SSOT de quotas terminaux (TERMINAL_MAX_LOCAL_PER_CHAT = 2, TERMINAL_MAX_SSH_PER_CHAT = 8, TERMINAL_MAX_GLOBAL = 64).
 # 6.24.6.1: Ajout du type ressource 'terminal' (RESOURCE_TYPES/RESOURCE_STATUS_MAP), TERMINAL_SESSION_STATUS et constantes TTL/lecture terminal.
 # 6.24.0.1: Ajout de RESOURCE_TYPES/RESOURCE_STATUS_MAP['generated'], mise à jour n8n_grapher (manage_n8n_workflow/template, n8n_hub) et DELEGATE_AGENT_BLACKLIST (manage_ui_tasks).
-# 6.23.10.1: Ajout de ECHO_CODEX_ASSISTED_EDIT_MAX_CHARS (131072) et ECHO_CODEX_INLINE_BLOB_MIN_CHARS (1024).
-# 6.23.1.1: Ajout des plafonds SSOT d'identifiants sous-agents (ECHO_MAX_SUBAGENT_SID_LEN = 96, ECHO_COUNCIL_ID_MAX_LEN = 36, ECHO_COUNCIL_INSTANCE_ID_MAX_LEN = 42, ECHO_PHALANX_ID_MAX_LEN = 48).
 
 import os
 import json
@@ -1356,9 +1356,14 @@ SANDBOX_LISTEN_MAX_WAIT_SEC = 60
 ECHO_CANVAS_READY_TIMEOUT_SEC = 8.0
 ECHO_CANVAS_IDLE_TTL_SEC = 1800.0
 ECHO_CANVAS_MAX_LIFETIME_SEC = 14400.0
+TERMINAL_DEFAULT_EXEC_TIMEOUT_SEC = 900
+TERMINAL_MAX_EXEC_TIMEOUT_SEC = 3600
 TERMINAL_DEFAULT_READ_LINES = 100
 TERMINAL_MAX_READ_LINES = 500
+TERMINAL_DEFAULT_WAIT_MS = 400
 TERMINAL_MAX_WAIT_MS = 5000
+TERMINAL_MAX_BUFFER_BYTES = 262144
+TERMINAL_DEAD_RETENTION_SEC = 300.0
 TERMINAL_SSH_IDLE_TTL_SEC = 1800.0
 TERMINAL_LOCAL_IDLE_TTL_SEC = 7200.0
 TERMINAL_MAX_LOCAL_PER_CHAT = 2

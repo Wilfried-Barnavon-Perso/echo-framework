@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.22.1.1
+# VERSION : 6.26.0.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -413,6 +413,7 @@ services:
     volumes:
       - /opt/ECHO/docker-coding-worker/worker_api.py:/app/app.py:ro
       - /opt/ECHO/docker-coding-worker/echo_libs_sandbox:/app/echo_libs_sandbox:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
       - /opt/ECHO/docker-coding-worker/sandbox-agent-readme.md:/app/sandbox-agent-readme.md:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-webui-data:/app/backend/data:rw
