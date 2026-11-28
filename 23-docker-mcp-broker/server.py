@@ -3,18 +3,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 6.24.6.1
+VERSION : 6.25.2.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-27
+DATE MAJ : 2026-11-28
 ===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.2.1: Positionnement de 'description' (Rôle du serveur) en tête des champs de SERVICE_SCHEMAS['ssh'].
 # 6.24.6.1: Enrichissement du schéma 'ssh' avec le champ 'certificate' (textarea), 'private_key' en 'textarea_secret' et instructions PAS pour manage_terminal.
 # 6.11.0.1: Ajout route streaming POST /upload_drive, factorisation _build_broker_exception_response et précision Google People API [Contacts].
 # 6.6.21.1: Ajout du schéma 'ssh' dans SERVICE_SCHEMAS pour l'Identity Vault et ssh_executor.
 # 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
-# 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
 import base64
 import json
 import logging
@@ -337,11 +337,19 @@ SERVICE_SCHEMAS = {
             "L'Utilisateur DOIT saisir ses identifiants de manière sécurisée dans l'onglet "
             "'Coffre' (Identity Vault) sous le service 'Serveurs SSH Distants' ('ssh'), "
             "avec un alias de compte explicite (ex: 'vps-prod', 'nas-local'). "
-            "Renseigner 'host', 'user', 'description', ainsi que 'password' (ou passphrase) "
+            "Renseigner 'description', 'host', 'user', ainsi que 'password' (ou passphrase) "
             "et/ou 'private_key' (et 'certificate' OpenSSH optionnel). "
             "Ne jamais transmettre de secrets en clair dans le chat (MPSI)."
         ),
         "fields": [
+            {
+                "id": "description",
+                "label": "Rôle du serveur",
+                "type": "text",
+                "required": True,
+                "placeholder": "ex: VPS Production, NAS Sauvegarde, Nœud Docker",
+                "help": "Description visible par l'agent via list_identities('ssh').",
+            },
             {
                 "id": "host",
                 "label": "Hôte (IP ou Domaine)",
@@ -381,13 +389,6 @@ SERVICE_SCHEMAS = {
                 "type": "textarea",
                 "placeholder": "ssh-ed25519-cert-v01@openssh.com AAAA...",
                 "help": "Optionnel : coller le certificat public signé (*-cert.pub) associé à la clé privée.",
-            },
-            {
-                "id": "description",
-                "label": "Rôle du serveur",
-                "type": "text",
-                "required": True,
-                "help": "Description visible par l'agent via list_identities('ssh').",
             },
         ],
     },

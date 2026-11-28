@@ -434,7 +434,7 @@
 					</details>
 				{/if}
 
-				<div class="space-y-3">
+				<form class="space-y-3" autocomplete="off" on:submit|preventDefault={handleAddSecret}>
 					{#if !selectedSchemaKey}
 						<div>
 							<label for="vault-service-input" class="block text-gray-600 dark:text-gray-400 mb-1 font-semibold">
@@ -443,6 +443,10 @@
 							<input
 								id="vault-service-input"
 								type="text"
+								autocomplete="off"
+								spellcheck="false"
+								data-lpignore="true"
+								data-1p-ignore
 								class={VAULT_FIELD_CLASS}
 								placeholder="ex: github, aws, notion"
 								bind:value={newService}
@@ -457,8 +461,16 @@
 						<input
 							id="vault-account-input"
 							type="text"
+							autocomplete="off"
+							spellcheck="false"
+							data-lpignore="true"
+							data-1p-ignore
 							class={VAULT_FIELD_CLASS}
-							placeholder={selectedSchemaKey ? 'ex: default, pro, perso' : 'ex: user@domain.com ou principal'}
+							placeholder={selectedSchemaKey === 'ssh'
+								? 'ex: vps-prod, nas-local'
+								: selectedSchemaKey
+									? 'ex: default, pro, perso'
+									: 'ex: user@domain.com ou principal'}
 							bind:value={newAccountId}
 						/>
 					</div>
@@ -483,6 +495,10 @@
 										<textarea
 											id={`vault-field-${field.id}`}
 											rows="4"
+											autocomplete="off"
+											spellcheck="false"
+											data-lpignore="true"
+											data-1p-ignore
 											class="{VAULT_FIELD_CLASS} text-xs {revealedFields[field.id] ? '' : '[-webkit-text-security:disc]'}"
 											placeholder={field.placeholder || '-----BEGIN OPENSSH PRIVATE KEY-----'}
 											bind:value={dynamicValues[field.id]}
@@ -492,6 +508,10 @@
 									<textarea
 										id={`vault-field-${field.id}`}
 										rows="3"
+										autocomplete="off"
+										spellcheck="false"
+										data-lpignore="true"
+										data-1p-ignore
 										class="{VAULT_FIELD_CLASS} text-xs"
 										placeholder={field.placeholder || ''}
 										bind:value={dynamicValues[field.id]}
@@ -500,6 +520,9 @@
 									<input
 										id={`vault-field-${field.id}`}
 										type="password"
+										autocomplete="new-password"
+										data-lpignore="true"
+										data-1p-ignore
 										class={VAULT_FIELD_CLASS}
 										placeholder={field.placeholder || '••••••••••••••••'}
 										bind:value={dynamicValues[field.id]}
@@ -508,6 +531,10 @@
 									<input
 										id={`vault-field-${field.id}`}
 										type="text"
+										autocomplete="off"
+										spellcheck="false"
+										data-lpignore="true"
+										data-1p-ignore
 										class={VAULT_FIELD_CLASS}
 										placeholder={field.placeholder || ''}
 										bind:value={dynamicValues[field.id]}
@@ -526,13 +553,16 @@
 							<input
 								id="vault-secret-input"
 								type="password"
+								autocomplete="new-password"
+								data-lpignore="true"
+								data-1p-ignore
 								class={VAULT_FIELD_CLASS}
 								placeholder="••••••••••••••••"
 								bind:value={newSecret}
 							/>
 						</div>
 					{/if}
-				</div>
+				</form>
 
 				<div class="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
 					<button

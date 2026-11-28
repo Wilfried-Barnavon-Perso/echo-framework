@@ -635,6 +635,7 @@ class TestBrokerSshSchema(unittest.TestCase):
 
         fields = ssh_schema["fields"]
         field_ids = [f["id"] for f in fields]
+        self.assertEqual(field_ids[0], "description")
         self.assertIn("private_key", field_ids)
         self.assertIn("certificate", field_ids)
 
