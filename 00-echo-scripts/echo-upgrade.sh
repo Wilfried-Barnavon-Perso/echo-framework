@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-upgrade.sh
-# VERSION : 6.22.1.1
+# VERSION : 6.25.0.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.0.1: Arrêt gracieux complet de la stack active avant echo-sync.sh et install-stack.sh lors d'un echo-upgrade.
 # 6.22.1.1: Purge effective des secrets .secrets/.env lors d'un echo-rebuild en conservant ECHO_DOMAIN et TZ.
 # 6.21.0.1: Export de CONFIRMED_YET avant auto-relance pour éviter la double confirmation interactive.
 # 6.18.16.1: Suppression des variables Compose inutilisées (DOCKER_COMPOSE_CMD, COMPOSE_FILE).
 # 6.8.1.1: Propagation du code d'échec de install-stack.sh (|| exit 1) afin de ne pas afficher 'UPGRADE TERMINÉ' en cas d'erreur.
-# 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
 ECHO_ROOT="/opt/ECHO"
@@ -94,8 +94,9 @@ if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:spa
 
 echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
-echo "    1. Synchroniser le code et écraser les modifications locales"
-echo "    2. Lancer le redéploiement complet de la stack (pull, build, up)"
+echo "    1. Arrêter proprement toute la stack active (scellement BDD & libération RAM)"
+echo "    2. Synchroniser le code et écraser les modifications locales"
+echo "    3. Reconstruire les images et redémarrer toute la stack à froid"
 echo "    Branche cible : $TARGET_BRANCH"
 echo ""
 [ -v CONFIRMED_YET ] || { 
@@ -103,6 +104,17 @@ echo ""
         [ "$CONFIRM" != "CONFIRMER" ] && exit 1
         export CONFIRMED_YET="yes"
 }
+
+# --- 0. ARRÊT PROPRE DE LA STACK AVANT SYNC & BUILD ---
+init_echo_compose_cmd
+build_echo_compose_args
+if [ -n "$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" 2>/dev/null)" ] || [ -n "$(docker ps -q --filter "name=^echo-" 2>/dev/null)" ]; then
+    echo "🛑 [UPGRADE] Arrêt propre de la stack active avant mise à niveau..."
+    echo_compose "${ECHO_COMPOSE_ARGS[@]}" stop || true
+    REMAINING_ECHO=$(docker ps -q --filter "name=^echo-" 2>/dev/null || true)
+    [ -n "$REMAINING_ECHO" ] && docker stop $REMAINING_ECHO >/dev/null 2>&1 || true
+    echo "   ✅ Stack arrêtée (bases scellées, ressources libérées pour le build)."
+fi
 
 # --- 1. SYNC & DEPLOY (Centralisé) ---
 if [ -f "$SYNC_SCRIPT" ]; then

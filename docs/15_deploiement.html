@@ -255,7 +255,7 @@ sudo disable-bunkerweb</code></pre>
         </li>
       </ul>
 
-      <h3>2. Cycle de Déploiement Compose (<code>00-echo-scripts/install-stack.sh</code> v6.18.15.1 &amp;
+      <h3>2. Cycle de Déploiement Compose (<code>00-echo-scripts/install-stack.sh</code> v6.25.0.1 &amp;
         <code>echo-globals.sh</code> v6.23.0.2)
       </h3>
       <ul>
@@ -301,8 +301,8 @@ sudo disable-bunkerweb</code></pre>
         <tbody>
           <tr>
             <td><code>install-stack.sh</code></td>
-            <td><code>v6.18.15.1</code></td>
-            <td>Déploiement complet Compose, création IPAM, pré-build isolé <code>echo-webui</code>, swap et cron.</td>
+            <td><code>v6.25.0.1</code></td>
+            <td>Déploiement complet Compose à froid, création IPAM, pré-build isolé <code>echo-webui</code>, swap et cron.</td>
           </tr>
           <tr>
             <td><code>echo-globals.sh</code></td>
@@ -344,8 +344,8 @@ sudo disable-bunkerweb</code></pre>
           </tr>
           <tr>
             <td><code>echo-upgrade.sh</code></td>
-            <td><code>v6.22.1.1</code></td>
-            <td>Mise à niveau applicative majeure enchaînant <code>install-stack.sh</code> ; alias
+            <td><code>v6.25.0.1</code></td>
+            <td>Arrêt gracieux de la stack active puis mise à niveau applicative majeure enchaînant <code>echo-sync.sh</code> et <code>install-stack.sh</code> ; alias
               <code>echo-rebuild</code> protégé par double confirmation et purgeant <code>.secrets/.env</code>.
             </td>
           </tr>
@@ -403,7 +403,7 @@ sudo disable-bunkerweb</code></pre>
       <a href="16_infrastructure_globale.html">16. Périphériques &amp; Infra &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.25.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.25.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

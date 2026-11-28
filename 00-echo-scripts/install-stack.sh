@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.18.15.1
+# VERSION : 6.25.0.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.0.1: Suppression du bloc Hot Reload post-déploiement (réservé exclusivement à echo-update.sh).
 # 6.18.15.1: Alignement helpers echo-globals.sh, attente Docker post-restart, garde /etc/cron.daily, exemption /swapfile WSL2 + chattr +C Btrfs.
 # 6.8.0.1: Arrêt gracieux temporaire de echo-watchtower (trap EXIT) avant build/up et purge des conteneurs temporaires Compose en état Created.
 # 6.6.12.1: Factorisation COMPOSE_ARGS et pré-construction isolée de echo-webui (protection RAM V8 6 Go).
 # 6.5.3.1: Renommage de l'image et du conteneur echo-open-webui vers echo-webui.
-# 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -341,21 +341,6 @@ if [ $? -eq 0 ]; then
 else
     echo "❌ Erreur lors du lancement Docker Compose."
     exit 1
-fi
-
-
-# --- HOT RELOAD ---
-# Rechargement des services dont le code est monté en bind mount (source de vérité : stack-echo.yml)
-echo "⚡ Hot Reload des services Python..."
-CONTAINERS_TO_RELOAD=$(docker ps \
-    --filter "label=echo.hot-reload=true" \
-    --format "{{.Names}}")
-if [ -n "$CONTAINERS_TO_RELOAD" ]; then
-    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 2 docker restart >/dev/null 2>&1
-    FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
-    echo "   ✅ Services rechargés : $FORMATTED_LIST"
-else
-    echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi
 
 echo "🧠 Provisioning déclaratif ECHO V6 assuré nativement par le lifespan de echo-webui."
