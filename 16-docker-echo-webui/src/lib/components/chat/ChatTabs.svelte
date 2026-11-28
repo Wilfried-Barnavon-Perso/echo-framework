@@ -109,6 +109,7 @@
 		echoOpenSecondaryTabsCount,
 		echoTabOpenRequest,
 		echoTerminalStates,
+		echoVaultTarget,
 		refreshEchoSshTargets,
 		removeEchoCanvasFrames
 	} from '$lib/stores/echo';
@@ -614,8 +615,13 @@
 							id: uuidv4(),
 							kind: 'terminal',
 							label:
-								req.payload?.name ||
-								(mode === 'ssh' ? req.payload?.accountId || 'SSH' : 'Sandbox'),
+								req.payload?.name && req.payload.name !== 'Sandbox'
+									? req.payload.name
+									: mode === 'ssh'
+										? req.payload?.accountId || 'SSH'
+										: terminalNumber === 1
+											? 'Terminal'
+											: `Terminal ${terminalNumber}`,
 							terminalNumber,
 							sessionId: targetSessionId,
 							terminalMode: mode,
@@ -653,6 +659,9 @@
 			}
 			if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
 				echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
+			}
+			if (req.kind === 'echo-vault' && req.payload?.openSchema) {
+				echoVaultTarget.set({ openSchema: req.payload.openSchema, ts: Date.now() });
 			}
 			if (req.kind === 'echo-canvas') {
 				dismissedAutoTabs.delete('echo-canvas');
@@ -877,8 +886,8 @@
 			mode === 'ssh'
 				? cleanOpts.name || cleanOpts.accountId || 'SSH'
 				: terminalNumber === 1
-					? 'Sandbox'
-					: `Sandbox ${terminalNumber}`;
+					? 'Terminal'
+					: `Terminal ${terminalNumber}`;
 		openPanel({
 			id,
 			kind: 'terminal',
@@ -892,6 +901,10 @@
 			agentLocked: mode === 'ssh'
 		});
 		if (viewEntry && viewReady) startSession(viewEntry, tabs.tabs.find((tab) => tab.id === id)!);
+	};
+	const openSshVaultConfig = () => {
+		echoVaultTarget.set({ openSchema: 'ssh', ts: Date.now() });
+		openFeature('echo-vault');
 	};
 	const openDesktop = () => {
 		if (!desktopEnabled || !selectedConnection) return;
@@ -2056,7 +2069,12 @@
 					</div>
 					<div class="flex w-full flex-wrap items-center justify-center gap-2">
 						{#if terminalMenuVisible && terminalMenuClickable}
-							<EchoTerminalCreateMenu variant="pill" clickable={true} onCreate={newTerminal} />
+							<EchoTerminalCreateMenu
+								variant="pill"
+								clickable={true}
+								onCreate={newTerminal}
+								onConfigureSsh={openSshVaultConfig}
+							/>
 						{/if}
 						{#each newTabViews as view (view.kind)}
 							<button
@@ -2200,6 +2218,7 @@
 										? "Démarrez d'abord une conversation pour ouvrir un terminal"
 										: $i18n.t('Terminal connection unavailable')}
 									onCreate={newTerminal}
+									onConfigureSsh={openSshVaultConfig}
 								/>
 							{/if}
 							{#if desktopEnabled}<button on:click={openDesktop}

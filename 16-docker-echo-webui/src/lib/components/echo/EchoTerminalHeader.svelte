@@ -5,7 +5,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	export let sessionId = '';
-	export let terminalName = 'Sandbox';
+	export let terminalName = 'Terminal';
 	export let terminalMode: 'local' | 'ssh' = 'local';
 	export let terminalTarget = '';
 	export let agentLocked = false;
@@ -77,17 +77,17 @@
 				</span>
 			{/if}
 		{:else}
-			<Tooltip content="Sandbox locale non identifiée" className="inline-flex shrink-0">
+			<Tooltip content="Environnement local isolé de la session" className="inline-flex shrink-0">
 				<span
 					class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
 				>
-					Sandbox
+					Local
 				</span>
 			</Tooltip>
 		{/if}
 
 		<span class="font-medium text-gray-700 dark:text-gray-200 truncate">
-			{terminalName || (terminalMode === 'ssh' ? 'SSH' : 'Sandbox')}
+			{terminalName || (terminalMode === 'ssh' ? 'SSH' : 'Terminal')}
 		</span>
 
 		{#if sessionId}

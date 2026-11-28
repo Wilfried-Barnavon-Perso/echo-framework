@@ -1,7 +1,7 @@
 ---
 domain_id: echo_ui_guide
-version: 6.24.6.1
-updated_at: 2026-11-27
+version: 6.25.1.1
+updated_at: 2026-11-28
 name: Guide de l'Interface Utilisateur ECHO-UI (Navigation, Onglets, Commandes & Réglages)
 description: Cartographie opérationnelle des écrans, panneaux latéraux, onglets de session, commandes slash, Vannes (routage cognitif AUTO/MANUAL et cascade), mode vocal, import de fichiers et réglages manipulables directement par L'Utilisateur dans ECHO-UI.
 tools: []
@@ -59,7 +59,7 @@ Lorsque le panneau est vide, une grille d'accès rapide affiche les vues disponi
 - **Navigateur Web** : Suivi en temps réel (`🔴 EN DIRECT`) avec affichage du curseur d'action, navigation temporelle DVR (`⏸️ DIFFÉRÉ`) avec bouton **`🔴 Retour au temps réel`**, bascule **`🎬 Clips`**, lecture et téléchargement des clips vidéo d'action (**`🎬 Voir l'action`**, **`🖼️ Image HD`**, **`⬇️ MP4`**, lecture continue), bouton d'épinglage **`📌 Conserver`** / **`📌 Conservée`** (protège la capture et son clip de la purge automatique), zoom/déplacement, recadrage par 8 poignées (**`✂️ Recadrer`**), copie (**`📋 Copier`**) et export **`PNG`** (**`💾 Exporter PNG`**).
 - **Coffre & Identité** : Consultation du statut/quotas actifs (bouton **`Actualiser`**) et ajout, modification ou suppression sécurisée des identifiants (clés API, SSH avec champs multi-lignes masquables pour clé privée et certificat OpenSSH `*-cert.pub`, Google Workspace, Microsoft 365, N8N, serveurs MCP) via **`+ Secret personnalisé`**, **`Configurer`** / **`+ Ajouter un compte`**, avec directives de configuration dépliables par connecteur.
 - **Applications** : Affichage et interaction avec les vues HTML statiques et les applications web client-serveur temps réel isolées, avec pastille d'état (**`Actif`** / **`Arrêté`**), bouton **`Arrêter`** (pour stopper un serveur actif), bouton **Recharger** et fermeture par `×`.
-- **Terminal (`+` → `Nouveau terminal`)** : Permet d'ouvrir un terminal interactif **Sandbox** (shell local, déverrouillé par défaut pour l'agent) ou **SSH distant** (sélection d'un compte SSH du Coffre, verrouillé en lecture seule par défaut) dès que la conversation est enregistrée. La barre d'en-tête affiche le badge **`Sandbox`** / **`SSH`**, le nom de la session, son `#ID` court copiable au clic, et le bouton bascule **Verrou (`🔒 Lecture seule` / `🔓 Agent autorisé`)** permettant à L'Utilisateur d'autoriser ou de bloquer l'écriture et la fermeture par l'agent.
+- **Terminal (`+` → `Nouveau terminal local` / `Terminal SSH`)** : Permet d'ouvrir un **Terminal local** (shell local de la session, déverrouillé par défaut pour l'agent) ou un **Terminal SSH** distant (sélection d'un compte SSH du Coffre via `Terminal SSH · <compte>`, ou accès direct à la configuration SSH dans **Coffre & Identité** via **`Nouveau terminal SSH…`** / **`Configurer un hôte SSH…`**, verrouillé en lecture seule par défaut) dès que la conversation est enregistrée. La barre d'en-tête affiche le badge **`Local`** / **`SSH`**, le nom de la session (`Terminal` par défaut en mode local), son `#ID` court copiable au clic, et le bouton bascule **Verrou (`🔒 Lecture seule` / `🔓 Agent autorisé`)** permettant à L'Utilisateur d'autoriser ou de bloquer l'écriture et la fermeture par l'agent.
 
 ---
 

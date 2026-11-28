@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.24.6.1
+version: 6.25.1.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & Terminaux Local/SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.1.1: Support symétrique mode="local"|"ssh" sur manage_terminal(action="exec") via worker_exec_local_oneshot et normalisation PAS des error_code.
 # 6.24.6.1: Consolidation de l'exécution SSH one-shot et des sessions terminales interactives (Local/SSH) dans manage_terminal via echo_terminals.
 # 6.24.0.1: Consolidation de l'arrêt Sandbox dans control_sandbox_execution(action="kill").
 # 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
 # 6.19.0.1: Isolation paresseuse des exécutions sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
-# 6.17.4.1: Propagation du jeton HMAC sandbox_callback_token lors de l'exécution et alignement Option B (sans Pacemaker WS/BidiRouter).
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -45,6 +45,7 @@ from echo_paths import get_echo_session_path, sanitize_echo_id, scope_subagent_s
 from echo_terminals import (  # noqa: E402
     format_terminal_locked_message,
     worker_close_terminal,
+    worker_exec_local_oneshot,
     worker_exec_ssh_oneshot,
     worker_list_terminals,
     worker_open_terminal,
@@ -534,10 +535,13 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
-        """Exécute une commande SSH isolée ou pilote les sessions terminales interactives (Sandbox locale et SSH distant)."""
-        uid, cid, _ = _resolve_sandbox_identity(__user__, __metadata__)
+        """Exécute une commande shell ponctuelle (locale ou SSH) ou pilote les sessions terminales interactives (locales et SSH distantes)."""
+        uid, cid, sub_sid = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
-            return "❌ Contexte de session manquant (chat_id)."
+            return wrap_tool_output(
+                text="❌ Contexte de session manquant (chat_id).",
+                status={"status": "error", "error_code": "missing_context"},
+            )
 
         events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
         clean_acc = (account_id or "").strip()
@@ -545,10 +549,29 @@ class Tools:
         clean_name = (name or "").strip() or None
 
         if action == "exec":
-            clean_cmd = (command or "").strip()
-            if not clean_acc or not clean_cmd:
+            eff_mode = (mode or ("ssh" if clean_acc else "local")).strip().lower()
+            if eff_mode not in ("local", "ssh"):
                 return wrap_tool_output(
-                    text="❌ Les paramètres 'account_id' et 'command' sont obligatoires pour action='exec'.",
+                    text=f"❌ Mode terminal invalide : '{mode}' (attendu 'local' ou 'ssh').",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            clean_cmd = (command or "").strip()
+            if not clean_cmd:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'command' est obligatoire pour action='exec'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            if eff_mode == "local" and clean_acc:
+                return wrap_tool_output(
+                    text="❌ Le paramètre 'account_id' est interdit lorsque mode='local'.",
+                    status={"status": "error", "error_code": "invalid_arguments"},
+                )
+            if eff_mode == "ssh" and not clean_acc:
+                return wrap_tool_output(
+                    text=(
+                        "❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'. "
+                        "Le Modèle DOIT appeler list_identities(service='ssh') pour identifier une cible configurée."
+                    ),
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
             if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
@@ -560,30 +583,72 @@ class Tools:
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
 
+            if eff_mode == "local":
+                await events.status("🐚 Exécution locale en sandbox...")
+                res = await worker_exec_local_oneshot(
+                    uid,
+                    cid,
+                    clean_cmd,
+                    timeout_sec=timeout_sec,
+                    workdir_subpath=sub_sid,
+                )
+                text_out = res.get("output") or ""
+                if res.get("error"):
+                    text_out = f"{text_out}\n\n⚠️ Erreur Sandbox :\n{res['error']}".strip()
+                if not text_out and res.get("status") != "success":
+                    text_out = res.get("error") or "❌ Erreur lors de l'exécution locale."
+                exit_code = res.get("exit_code", -1)
+                if res.get("status") == "success":
+                    await events.status(f"Exécution locale terminée (code {exit_code}).", done=True)
+                else:
+                    await events.status(res.get("error") or f"Échec exécution locale (code {exit_code}).", done=True)
+                local_status: dict[str, Any] = {
+                    "status": res.get("status", "error"),
+                    "mode": "local",
+                    "target": res.get("target", "local:/sandbox"),
+                    "exit_code": exit_code,
+                }
+                if res.get("error_code"):
+                    local_status["error_code"] = res["error_code"]
+                if res.get("error"):
+                    local_status["error"] = res["error"]
+                return wrap_tool_output(text=text_out, status=local_status)
+
             await events.status(f"🔐 Exécution SSH sur '{clean_acc}'...")
             res = await worker_exec_ssh_oneshot(uid, cid, clean_acc, clean_cmd, timeout_sec=timeout_sec)
             if res.get("status") != "success" and res.get("exit_code", -1) == -1:
                 err_msg = res.get("error") or "Erreur SSH."
                 await events.status(err_msg, done=True)
-                return wrap_tool_output(
-                    text=res.get("output") or err_msg,
-                    status={"status": "error", "account_id": clean_acc, "exit_code": -1, "error": err_msg},
-                )
+                err_status: dict[str, Any] = {
+                    "status": "error",
+                    "mode": "ssh",
+                    "account_id": clean_acc,
+                    "exit_code": -1,
+                    "error": err_msg,
+                }
+                if res.get("target"):
+                    err_status["target"] = res["target"]
+                if res.get("error_code"):
+                    err_status["error_code"] = res["error_code"]
+                return wrap_tool_output(text=res.get("output") or err_msg, status=err_status)
 
             text_out = res.get("output") or ""
             if res.get("error"):
                 text_out = f"{text_out}\n\n⚠️ Erreur SSH :\n{res['error']}".strip()
             exit_code = res.get("exit_code", -1)
             await events.status(f"Exécution SSH terminée (code {exit_code}).", done=True)
-            return wrap_tool_output(
-                text=text_out,
-                status={
-                    "status": res.get("status", "error"),
-                    "account_id": clean_acc,
-                    "target": res.get("target", ""),
-                    "exit_code": exit_code,
-                },
-            )
+            ssh_status: dict[str, Any] = {
+                "status": res.get("status", "error"),
+                "mode": "ssh",
+                "account_id": clean_acc,
+                "target": res.get("target", ""),
+                "exit_code": exit_code,
+            }
+            if res.get("error_code"):
+                ssh_status["error_code"] = res["error_code"]
+            if res.get("error"):
+                ssh_status["error"] = res["error"]
+            return wrap_tool_output(text=text_out, status=ssh_status)
 
         if action == "open":
             if is_automation_context(__metadata__):
@@ -599,7 +664,10 @@ class Tools:
                 )
             if eff_mode == "ssh" and not clean_acc:
                 return wrap_tool_output(
-                    text="❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'.",
+                    text=(
+                        "❌ Le paramètre 'account_id' est obligatoire lorsque mode='ssh'. "
+                        "Le Modèle DOIT appeler list_identities(service='ssh') pour identifier une cible configurée."
+                    ),
                     status={"status": "error", "error_code": "invalid_arguments"},
                 )
 
@@ -616,7 +684,10 @@ class Tools:
             if res.get("status") != "success":
                 err_msg = res.get("error") or "Erreur ouverture terminal."
                 await events.status(err_msg, done=True)
-                return wrap_tool_output(text=err_msg, status={"status": "error", "error": err_msg})
+                open_err: dict[str, Any] = {"status": "error", "error": err_msg}
+                if res.get("error_code"):
+                    open_err["error_code"] = res["error_code"]
+                return wrap_tool_output(text=err_msg, status=open_err)
 
             sess = res["session"]
             wm = get_window_manager()
@@ -654,7 +725,10 @@ class Tools:
             res = await worker_list_terminals(uid, cid)
             if res.get("status") != "success":
                 err_msg = res.get("error") or "Erreur liste terminaux."
-                return wrap_tool_output(text=err_msg, status={"status": "error", "error": err_msg, "items": [], "count": 0})
+                list_err: dict[str, Any] = {"status": "error", "error": err_msg, "items": [], "count": 0}
+                if res.get("error_code"):
+                    list_err["error_code"] = res["error_code"]
+                return wrap_tool_output(text=err_msg, status=list_err)
             items = res.get("items") or []
             if not items:
                 text_out = "Aucune session terminale active dans cette conversation."

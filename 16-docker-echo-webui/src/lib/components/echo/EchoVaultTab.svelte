@@ -11,6 +11,7 @@
 		deleteEchoVaultSecret,
 		type EchoVaultServiceSchema
 	} from '$lib/apis/echo';
+	import { echoVaultTarget } from '$lib/stores/echo';
 
 	let loading = true;
 	let vaultStatus: any = null;
@@ -80,8 +81,23 @@
 			toast.error('Erreur chargement du coffre : ' + (e.message || ''));
 		} finally {
 			loading = false;
+			if ($echoVaultTarget) {
+				consumeVaultTarget($echoVaultTarget);
+			}
 		}
 	};
+
+	const consumeVaultTarget = (target: { openSchema?: string; ts?: number } | null) => {
+		if (!target || loading) return;
+		echoVaultTarget.set(null);
+		if (target.openSchema && (target.openSchema === 'ssh' || target.openSchema in schemas)) {
+			openSchemaModal(target.openSchema);
+		}
+	};
+
+	$: if (!loading && $echoVaultTarget) {
+		consumeVaultTarget($echoVaultTarget);
+	}
 
 	const openSchemaModal = (serviceKey: string) => {
 		selectedSchemaKey = serviceKey;

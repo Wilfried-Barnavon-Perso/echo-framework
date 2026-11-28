@@ -300,7 +300,7 @@ class TestWebuiTerminalsRouter(unittest.IsolatedAsyncioTestCase):
         local_session = {
             "id": "term_local",
             "mode": "local",
-            "name": "Sandbox",
+            "name": "Terminal",
             "agent_locked": False,
             "alive": True,
         }
@@ -344,6 +344,7 @@ class TestWebuiTerminalsRouter(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 r_local = await client.post("/echo/v1/terminals/chat-1/open", json={"mode": "local"})
                 self.assertEqual(r_local.status_code, 200)
+                self.assertEqual(r_local.json()["name"], "Terminal")
                 self.assertFalse(r_local.json()["agent_locked"])
 
                 r_ssh = await client.post(

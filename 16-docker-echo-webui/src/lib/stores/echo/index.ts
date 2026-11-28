@@ -282,6 +282,7 @@ export interface EchoTabOpenRequest {
 		name?: string;
 		target?: string;
 		agentLocked?: boolean;
+		openSchema?: string;
 		[key: string]: any;
 	};
 }
@@ -324,6 +325,7 @@ export const echoBrowserTarget = writable<{
 	frameId?: string;
 	frameIndex?: number;
 } | null>(null);
+export const echoVaultTarget = writable<{ openSchema?: string; ts?: number } | null>(null);
 export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
 export const echoCanvasActiveFrame = writable<Record<string, string>>({});

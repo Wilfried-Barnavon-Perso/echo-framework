@@ -127,6 +127,7 @@ def _load_module_from_path(name: str, file_path: Path, force_reload: bool = Fals
 _ensure_open_webui_stubs()
 
 import echo_constants  # noqa: E402
+import echo_core  # noqa: E402
 import echo_crypto  # noqa: E402
 import echo_db_schema  # noqa: E402
 import echo_paths  # noqa: E402
@@ -864,6 +865,7 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                 def __init__(self) -> None:
                     self.sessions: dict[str, dict] = {}
                     self.ssh_exec_calls: list[dict] = []
+                    self.local_exec_calls: list[dict] = []
                     self._seq = 0
 
                 async def get(self, url: str, params=None, headers=None, timeout=None):
@@ -887,6 +889,24 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
 
                 async def post(self, url: str, json=None, headers=None, timeout=None):
                     data = json or {}
+                    if url.endswith("/execute"):
+                        self.local_exec_calls.append(data)
+                        cmd = data.get("command") or ""
+                        if "SLEEP_TIMEOUT" in cmd:
+                            return _FakeResponse(200, {
+                                "status": "error",
+                                "state": "timeout",
+                                "exit_code": None,
+                                "output": "",
+                                "error": "Timeout (5s) dépassé.",
+                            })
+                        return _FakeResponse(200, {
+                            "status": "success",
+                            "state": "completed",
+                            "exit_code": 0,
+                            "output": f"local:{cmd}",
+                            "error": "",
+                        })
                     if url.endswith("/ssh"):
                         self.ssh_exec_calls.append(data)
                         return _FakeResponse(200, {"status": "success", "exit_code": 0, "output": "ok-cert", "error": ""})
@@ -905,7 +925,7 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                             "id": sid,
                             "chat_id": data.get("chat_id") or "",
                             "user_id": data.get("user_id") or "",
-                            "name": data.get("name") or ("Sandbox" if mode == "local" else acc),
+                            "name": data.get("name") or ("Terminal" if mode == "local" else acc),
                             "mode": mode,
                             "account_id": acc,
                             "target": target,
@@ -994,7 +1014,7 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                         }),
                     )
 
-                    # 1. exec SSH avec certificat
+                    # 1. exec SSH avec certificat + exec local (défaut & sous-agent) + gardes d'arguments
                     res_exec = await exec_tools.manage_terminal(
                         action="exec",
                         account_id="vps-prod",
@@ -1003,9 +1023,85 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                         __metadata__={"chat_id": cid},
                     )
                     self.assertEqual(res_exec["status"]["status"], "success")
+                    self.assertEqual(res_exec["status"]["mode"], "ssh")
                     self.assertEqual(res_exec["status"]["exit_code"], 0)
                     self.assertEqual(len(fake_worker.ssh_exec_calls), 1)
                     self.assertIn("CERTDATA", fake_worker.ssh_exec_calls[0]["certificate"])
+
+                    res_exec_local = await exec_tools.manage_terminal(
+                        action="exec",
+                        command="pwd",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_exec_local["status"]["status"], "success")
+                    self.assertEqual(res_exec_local["status"]["mode"], "local")
+                    self.assertEqual(res_exec_local["status"]["target"], "local:/sandbox")
+                    self.assertEqual(res_exec_local["status"]["exit_code"], 0)
+                    self.assertIn("local:pwd", res_exec_local["text"])
+                    self.assertEqual(fake_worker.local_exec_calls[-1]["sub_sid"], "")
+
+                    tok_sub = ECHO_SUBAGENT_CONTEXT.set({"is_subagent": True, "sub_sid": "dlg_sub_1"})
+                    try:
+                        res_exec_sub = await exec_tools.manage_terminal(
+                            action="exec",
+                            mode="local",
+                            command="ls",
+                            __user__={"id": uid},
+                            __metadata__={"chat_id": cid},
+                        )
+                    finally:
+                        ECHO_SUBAGENT_CONTEXT.reset(tok_sub)
+                    self.assertEqual(res_exec_sub["status"]["status"], "success")
+                    self.assertEqual(res_exec_sub["status"]["target"], "local:/sandbox/dlg_sub_1")
+                    self.assertEqual(fake_worker.local_exec_calls[-1]["sub_sid"], "dlg_sub_1")
+
+                    res_exec_timeout = await exec_tools.manage_terminal(
+                        action="exec",
+                        mode="local",
+                        command="SLEEP_TIMEOUT",
+                        timeout_sec=5,
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_exec_timeout["status"]["status"], "error")
+                    self.assertEqual(res_exec_timeout["status"]["error_code"], "execution_timeout")
+                    self.assertIn("Timeout", res_exec_timeout["error"])
+
+                    res_bad_local_acc = await exec_tools.manage_terminal(
+                        action="exec",
+                        mode="local",
+                        account_id="vps-prod",
+                        command="id",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_bad_local_acc["status"]["status"], "error")
+                    self.assertEqual(res_bad_local_acc["status"]["error_code"], "invalid_arguments")
+                    self.assertIn("interdit", res_bad_local_acc["error"])
+
+                    res_bad_ssh_no_acc = await exec_tools.manage_terminal(
+                        action="exec",
+                        mode="ssh",
+                        command="id",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_bad_ssh_no_acc["status"]["status"], "error")
+                    self.assertEqual(res_bad_ssh_no_acc["status"]["error_code"], "invalid_arguments")
+                    self.assertIn("list_identities(service='ssh')", res_bad_ssh_no_acc["text"])
+
+                    res_missing_vault = await exec_tools.manage_terminal(
+                        action="exec",
+                        mode="ssh",
+                        account_id="absent-vps",
+                        command="id",
+                        __user__={"id": uid},
+                        __metadata__={"chat_id": cid},
+                    )
+                    self.assertEqual(res_missing_vault["status"]["status"], "error")
+                    self.assertEqual(res_missing_vault["status"]["error_code"], "vault_account_not_found")
+                    self.assertIn("Coffre & Identité", res_missing_vault["text"])
 
                     # 2. Garde headless_forbidden sur action="open" en automatisation
                     tok_auto = ECHO_AUTOMATION_CONTEXT.set({"is_automation": True, "automation_id": "auto-1"})
@@ -1017,7 +1113,7 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                         ECHO_AUTOMATION_CONTEXT.reset(tok_auto)
                     self.assertEqual(res_headless["status"]["error_code"], "headless_forbidden")
 
-                    # 3. open local déverrouillé + diffusion WM
+                    # 3. open local déverrouillé + diffusion WM (nom par défaut 'Terminal')
                     res_open_local = await exec_tools.manage_terminal(
                         action="open",
                         mode="local",
@@ -1026,6 +1122,7 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                     )
                     self.assertEqual(res_open_local["status"]["status"], "success")
                     local_sess = res_open_local["status"]["session"]
+                    self.assertEqual(local_sess["name"], "Terminal")
                     self.assertFalse(local_sess["agent_locked"])
                     self.assertEqual(fake_wm.opened_tabs[-1][2], "terminal")
                     self.assertFalse(fake_wm.opened_tabs[-1][3]["agentLocked"])
@@ -1135,6 +1232,61 @@ class TestConsolidatedGeneralistAndSandboxTools(unittest.IsolatedAsyncioTestCase
                         self.assertEqual(after_cnt, 0)
                 finally:
                     echo_crypto._SCOPED_KEY_CACHE.clear()
+
+    async def test_wrap_tool_output_error_root_and_unbox_dedup(self) -> None:
+        out_err = echo_core.wrap_tool_output(
+            text="Paramètre invalide",
+            status={"status": "error", "error_code": "invalid_arguments"},
+        )
+        self.assertEqual(out_err["error"], "Paramètre invalide")
+
+        out_failed = echo_core.wrap_tool_output(
+            text="Ignored",
+            status={"status": "failed", "error": "Échec critique"},
+        )
+        self.assertEqual(out_failed["error"], "Échec critique")
+
+        out_ok = echo_core.wrap_tool_output(text="OK", status={"status": "success"})
+        self.assertNotIn("error", out_ok)
+
+        finalized = echo_core._finalize_tool_result({"text": "Brut failed", "status": {"status": "failed"}})
+        self.assertEqual(finalized["error"], "Brut failed")
+
+        # unbox_tool_output sans 'text' ne doit pas ré-sérialiser 'error' dans result
+        unboxed_no_text = echo_core.unbox_tool_output(
+            "dummy_tool",
+            {"text": "", "status": {"status": "error"}, "error": "Dup", "extra": 42},
+            "MODEL_APOLLO",
+        )
+        resp_no_text = unboxed_no_text[0]["functionResponse"]["response"]
+        self.assertEqual(json.loads(resp_no_text["result"]), {"extra": 42})
+
+        # unbox_tool_output avec 'text' ne duplique pas la clé racine 'error'
+        unboxed_with_text = echo_core.unbox_tool_output("dummy_tool", out_err, "MODEL_APOLLO")
+        resp_with_text = unboxed_with_text[0]["functionResponse"]["response"]
+        self.assertEqual(resp_with_text["result"], "Paramètre invalide")
+        self.assertNotIn("error", resp_with_text)
+
+        # StandardToolDispatcher._invoke_single_tool détecte l'erreur puis supprime le doublon racine 'error'
+        async def _err_tool(**kwargs):
+            return echo_core.wrap_tool_output(
+                text="Boom tool",
+                status={"status": "error", "error_code": "invalid_arguments"},
+            )
+
+        dispatcher = echo_subagent_hub.StandardToolDispatcher(
+            sid="dlg_test",
+            chat_id="c_test",
+            user_id="u_test",
+            state=None,
+            sub_tools={"dummy_err_tool": {"callable": _err_tool}},
+            body_tools_specs=None,
+            events=None,
+        )
+        fr_part, is_err, _ = await dispatcher._invoke_single_tool("dummy_err_tool", {}, "call-1")
+        self.assertTrue(is_err)
+        self.assertNotIn("error", fr_part["functionResponse"]["response"])
+        self.assertEqual(fr_part["functionResponse"]["response"]["text"], "Boom tool")
 
 
 class TestN8NOrchestratorE2E(unittest.IsolatedAsyncioTestCase):

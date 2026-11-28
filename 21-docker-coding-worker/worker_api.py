@@ -3,19 +3,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.24.6.1
+VERSION : 6.25.1.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-27
+DATE MAJ : 2026-11-28
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.1.1: Exécution Bash inline sans fichier Codex dans POST /execute (_start_sandbox_job) et auto-nommage par défaut "Terminal" (découplé de Sandbox).
 # 6.24.6.1: Unification PTY Local/SSH (mode='ssh', CertificateFile, _prepare_ssh_bwrap_auth), verrou serveur agent_locked (HTTP 423) et routes /api/terminals*.
 # 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
 # 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
 # 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
-# 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
 
 import asyncio
 import json
@@ -795,6 +795,7 @@ def _start_sandbox_job(
     max_lifetime_sec: float = DEFAULT_BG_MAX_LIFETIME_SEC,
     callback_token: str = "",
     sub_sid: str = "",
+    command: str = "",
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
@@ -810,25 +811,36 @@ def _start_sandbox_job(
         os.makedirs(deps_dir, exist_ok=True)
         os.chmod(deps_dir, 0o777)
 
-    abs_file_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
-    if not abs_file_path.startswith(os.path.abspath(sandbox_dir) + os.sep):
-        return None, {"status": "error", "error": "Accès refusé : Le fichier cible est hors du workspace."}
+    clean_command = str(command or "").strip()
+    is_inline_bash = bool(clean_command and not str(file_path or "").strip())
 
-    if not os.path.isfile(abs_file_path):
-        return None, {"status": "error", "error": f"Fichier cible introuvable : {file_path}"}
-
-    is_python = file_path.endswith(".py")
-    is_node = file_path.endswith(".js")
-    is_shell = file_path.endswith(".sh")
-    if not (is_python or is_node or is_shell):
-        return None, {"status": "error", "error": "Extension non supportée. Seuls .py, .js et .sh sont acceptés."}
-
-    if is_python:
-        lint_cmd = ["python", "-m", "py_compile", abs_file_path]
-    elif is_node:
-        lint_cmd = ["node", "-c", abs_file_path]
+    is_python = False
+    is_node = False
+    if is_inline_bash:
+        effective_job_file = "<inline-bash>"
+        lint_cmd = ["/bin/bash", "-n", "-c", clean_command]
     else:
-        lint_cmd = ["/bin/bash", "-n", abs_file_path]
+        effective_job_file = file_path
+        abs_file_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
+        if not abs_file_path.startswith(os.path.abspath(sandbox_dir) + os.sep):
+            return None, {"status": "error", "error": "Accès refusé : Le fichier cible est hors du workspace."}
+
+        if not os.path.isfile(abs_file_path):
+            return None, {"status": "error", "error": f"Fichier cible introuvable : {file_path}"}
+
+        is_python = file_path.endswith(".py")
+        is_node = file_path.endswith(".js")
+        is_shell = file_path.endswith(".sh")
+        if not (is_python or is_node or is_shell):
+            return None, {"status": "error", "error": "Extension non supportée. Seuls .py, .js et .sh sont acceptés."}
+
+        if is_python:
+            lint_cmd = ["python", "-m", "py_compile", abs_file_path]
+        elif is_node:
+            lint_cmd = ["node", "-c", abs_file_path]
+        else:
+            lint_cmd = ["/bin/bash", "-n", abs_file_path]
+
     try:
         lint_proc = subprocess.run(lint_cmd, capture_output=True, text=True, timeout=10)
         if lint_proc.returncode != 0:
@@ -837,7 +849,7 @@ def _start_sandbox_job(
     except subprocess.TimeoutExpired:
         return None, {"status": "error", "error": "Timeout lors de la vérification syntaxique."}
 
-    if dependencies and deps_dir:
+    if not is_inline_bash and dependencies and deps_dir:
         with _get_session_deps_lock(safe_uid, safe_cid):
             if is_python:
                 python_deps_dir = os.path.join(deps_dir, "python")
@@ -896,7 +908,9 @@ def _start_sandbox_job(
         "--setenv", "ECHO_APP_PORT", str(hub.allocated_port),
     ])
 
-    if is_python:
+    if is_inline_bash:
+        bwrap_cmd.extend(["--setenv", "HOME", "/sandbox", "/bin/bash", "-c", clean_command])
+    elif is_python:
         python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
         bwrap_cmd.extend(["--setenv", "PYTHONPATH", ":".join(python_paths), "python", f"/sandbox/{file_path}"])
     elif is_node:
@@ -954,7 +968,7 @@ def _start_sandbox_job(
             "run_id": run_id,
             "user_id": safe_uid,
             "chat_id": safe_cid,
-            "file_path": file_path,
+            "file_path": effective_job_file,
             "pid": proc.pid,
             "proc": proc,
             "state": "running",
@@ -1120,7 +1134,7 @@ class TerminalSession:
         chat_id: str,
         sandbox_dir: str,
         mode: str = "local",
-        name: str = "Sandbox",
+        name: str = "Terminal",
         account_id: str = "",
         agent_locked: bool | None = None,
         ssh_config: dict | None = None,
@@ -1132,7 +1146,7 @@ class TerminalSession:
         self.mode = "ssh" if mode == "ssh" else "local"
         self.account_id = str(account_id or "").strip() if self.mode == "ssh" else ""
         self.name = str(name or "").strip() or (
-            "Sandbox" if self.mode == "local" else (self.account_id or "SSH")
+            "Terminal" if self.mode == "local" else (self.account_id or "SSH")
         )
         self.ssh_config = dict(ssh_config or {}) if self.mode == "ssh" else {}
         if self.mode == "ssh":
@@ -1484,7 +1498,7 @@ class TerminalSessionManager:
         if mode == "ssh":
             base_name = str(account_id or "").strip() or str((ssh_config or {}).get("host") or "").strip() or "SSH"
         else:
-            base_name = "Sandbox"
+            base_name = "Terminal"
         existing_names = {
             s.name for s in self._sessions.values()
             if s.user_id == safe_uid and s.chat_id == safe_cid
@@ -1628,6 +1642,7 @@ def _lookup_job(safe_uid: str, safe_cid: str, run_id: str = "", prune: bool = Fa
 def execute_code():
     data = request.json or {}
     file_path = data.get('file_path', '')
+    command = str(data.get('command') or '').strip()
     dependencies = data.get('dependencies') or []
     callback_token = str(data.get("callback_token") or "").strip()
     timeout = int(data.get('timeout', 30))
@@ -1644,11 +1659,12 @@ def execute_code():
     run_id = _sanitize_id(data.get('run_id') or f"run_{uuid.uuid4().hex[:8]}")
     safe_uid = _sanitize_id(data.get('user_id', 'system'))
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
-    safe_sub_sid = _sanitize_id(data.get("sub_sid"), default="") if data.get("sub_sid") else ""
+    raw_sub_sid = data.get("sub_sid") or data.get("workdir_subpath")
+    safe_sub_sid = _sanitize_id(raw_sub_sid, default="") if raw_sub_sid else ""
 
     logger.info(
         f"🚀 Execution START | User: {safe_uid} | Chat: {safe_cid} | "
-        f"Run: {run_id} | File: {file_path} | Bg: {background} | Timeout: {timeout}s"
+        f"Run: {run_id} | File: {file_path or ('<inline-bash>' if command else '')} | Bg: {background} | Timeout: {timeout}s"
     )
 
     sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
@@ -1667,6 +1683,7 @@ def execute_code():
         max_lifetime_sec=max_lifetime_sec,
         callback_token=callback_token,
         sub_sid=safe_sub_sid,
+        command=command,
     )
     if err is not None:
         err["run_id"] = run_id

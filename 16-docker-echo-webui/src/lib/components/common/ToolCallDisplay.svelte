@@ -127,7 +127,14 @@
 			return true;
 		}
 
-		const status = typeof result.status === 'string' ? result.status.trim().toLowerCase() : '';
+		const statusObj =
+			typeof result.status === 'object' && result.status !== null
+				? (result.status as Record<string, unknown>)
+				: null;
+		const status =
+			typeof result.status === 'string'
+				? result.status.trim().toLowerCase()
+				: String(statusObj?.status ?? '').trim().toLowerCase();
 		if (status === 'error' || status === 'failed') return true;
 
 		const message = result.message;
@@ -171,6 +178,19 @@
 
 	$: parsedArgs = parseArguments(args);
 	$: parsedResult = parseJSONString(result);
+	$: isEchoEnvelope =
+		typeof parsedResult === 'object' &&
+		parsedResult !== null &&
+		typeof parsedResult.text === 'string' &&
+		('echo_tool_multiparts' in parsedResult || 'aec_events' in parsedResult);
+	$: echoErrorCode =
+		isEchoEnvelope &&
+		isError &&
+		typeof parsedResult.status === 'object' &&
+		parsedResult.status !== null &&
+		parsedResult.status.error_code
+			? String(parsedResult.status.error_code)
+			: '';
 
 	const toggleOpen = () => {
 		open = !open;
@@ -359,7 +379,7 @@
 								{$i18n.t('Output')}
 							</div>
 							<div class="w-full max-w-none!">
-								{#if typeof parsedResult === 'object' && parsedResult !== null}
+								{#if typeof parsedResult === 'object' && parsedResult !== null && !isEchoEnvelope}
 									<pre
 										class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-2 overflow-x-auto">{JSON.stringify(
 											parsedResult,
@@ -367,8 +387,17 @@
 											2
 										)}</pre>
 								{:else}
-									{@const resultStr = String(parsedResult)}
+									{@const resultStr = isEchoEnvelope ? parsedResult.text : String(parsedResult)}
 									{@const isTruncated = resultStr.length > RESULT_PREVIEW_LIMIT && !expandedResult}
+									{#if echoErrorCode}
+										<div class="mb-1.5">
+											<span
+												class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+											>
+												{echoErrorCode}
+											</span>
+										</div>
+									{/if}
 									<pre
 										class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono">{isTruncated
 											? resultStr.slice(0, RESULT_PREVIEW_LIMIT)

@@ -4,11 +4,12 @@
 """
 title: ECHO Terminals
 author: Wilfried BARNAVON
-version: 6.24.6.1
+version: 6.25.1.1
 description: Bibliothèque partagée d'initialisation de session, validation Vault SSH, client Worker terminal/SSH et synchronisation du registre echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.1.1: Ajout de worker_exec_local_oneshot, nommage par défaut "Terminal" (découplé de Sandbox), _classify_ssh_vault_error et normalisation PAS des error_code.
 # 6.24.6.1: Création du module partagé echo_terminals.py (ensure_echo_session_environment, validation Vault SSH, client HTTP Worker et réconciliation echo_resources).
 
 import asyncio
@@ -22,6 +23,7 @@ from echo_codex_git import CodexRepo
 from echo_constants import (
     ECHO_CODEX_WORKSPACES,
     ECHO_CODING_WORKER_BASE_URL,
+    ECHO_CODING_WORKER_URL,
     ECHO_GLOBAL_DOMAINS,
     ECHO_MAX_CODE_EXECUTION_TIMEOUT,
     ECHO_SESSION_DOMAINS,
@@ -122,6 +124,16 @@ def _parse_ssh_port(raw_port: Any) -> Optional[int]:
     return port if 1 <= port <= 65535 else None
 
 
+def _classify_ssh_vault_error(err_msg: str) -> str:
+    """Classifie une erreur de validation Vault SSH en error_code structuré."""
+    low = (err_msg or "").lower()
+    if "obligatoire" in low:
+        return "invalid_arguments"
+    if "introuvable" in low:
+        return "vault_account_not_found"
+    return "vault_config_invalid"
+
+
 def load_and_validate_ssh_vault_account(
     user_id: str,
     account_id: str,
@@ -136,7 +148,8 @@ def load_and_validate_ssh_vault_account(
         return (
             None,
             f"❌ Identifiants SSH introuvables pour '{clean_acc}'. "
-            "Vérifier les comptes disponibles dans l'Identity Vault (service='ssh').",
+            "Le Modèle DOIT appeler list_identities(service='ssh') pour vérifier les comptes disponibles ; "
+            "si aucun compte ne correspond, L'Utilisateur DOIT le configurer dans l'onglet 'Coffre & Identité'.",
         )
 
     try:
@@ -164,7 +177,7 @@ def load_and_validate_ssh_vault_account(
     if not private_key.strip() and not password:
         return (
             None,
-            f"❌ Configuration SSH incomplète pour '{clean_acc}' : fournir 'private_key' ou 'password'.",
+            f"❌ Configuration SSH incomplète pour '{clean_acc}' : 'private_key' ou 'password' requis.",
         )
 
     if certificate.strip() and not private_key.strip():
@@ -224,7 +237,7 @@ def _build_terminal_resource_fields(session_data: Dict[str, Any]) -> Dict[str, A
         mode = "local"
     account_id = str(session_data.get("account_id") or "").strip()
     target = str(session_data.get("target") or ("local:/sandbox" if mode == "local" else "")).strip()
-    name = str(session_data.get("name") or account_id or "Sandbox").strip()
+    name = str(session_data.get("name") or account_id or "Terminal").strip()
     alive = bool(session_data.get("alive", True))
     agent_locked = bool(session_data.get("agent_locked", False))
 
@@ -454,6 +467,119 @@ async def reconcile_chat_terminals_registry(user_id: str, chat_id: str) -> List[
     return live_sessions
 
 
+async def worker_exec_local_oneshot(
+    user_id: str,
+    chat_id: str,
+    command: str,
+    timeout_sec: int = 60,
+    workdir_subpath: str = "",
+) -> Dict[str, Any]:
+    """Exécute une commande bash one-shot isolée en sandbox locale via POST /execute."""
+    clean_sub = (workdir_subpath or "").strip().strip("/")
+    target = f"local:/sandbox/{clean_sub}".rstrip("/") if clean_sub else "local:/sandbox"
+    if not user_id or not chat_id:
+        return {
+            "status": "error",
+            "error_code": "missing_context",
+            "mode": "local",
+            "target": target,
+            "exit_code": -1,
+            "output": "",
+            "error": "❌ Contexte de session manquant (user_id / chat_id).",
+        }
+
+    clean_cmd = (command or "").strip()
+    if not clean_cmd:
+        return {
+            "status": "error",
+            "error_code": "invalid_arguments",
+            "mode": "local",
+            "target": target,
+            "exit_code": -1,
+            "output": "",
+            "error": "❌ Le paramètre 'command' est obligatoire.",
+        }
+
+    if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
+        return {
+            "status": "error",
+            "error_code": "invalid_arguments",
+            "mode": "local",
+            "target": target,
+            "exit_code": -1,
+            "output": "",
+            "error": (
+                f"❌ timeout_sec ({timeout_sec}s) doit être compris "
+                f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
+            ),
+        }
+
+    await asyncio.to_thread(ensure_echo_session_environment, user_id, chat_id)
+
+    try:
+        client = await _get_global_client()
+        response = await client.post(
+            ECHO_CODING_WORKER_URL,
+            json={
+                "command": clean_cmd,
+                "timeout": timeout_sec,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "background": False,
+                "sub_sid": clean_sub,
+            },
+            headers=_worker_headers(user_id, chat_id),
+            timeout=float(timeout_sec) + 10.0,
+        )
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "error_code": "worker_error",
+                "mode": "local",
+                "target": target,
+                "exit_code": -1,
+                "output": "",
+                "error": f"Erreur Worker Sandbox (HTTP {response.status_code}) : {_extract_error_detail(response)}",
+            }
+
+        res_data = response.json()
+        raw_exit = res_data.get("exit_code")
+        is_ok = (res_data.get("status") == "success") and (raw_exit in (0, None))
+        exit_code = 0 if (is_ok and raw_exit is None) else (-1 if raw_exit is None else raw_exit)
+        out: Dict[str, Any] = {
+            "status": "success" if is_ok else "error",
+            "mode": "local",
+            "target": target,
+            "exit_code": exit_code,
+            "output": res_data.get("output") or "",
+            "error": res_data.get("error") or "",
+        }
+        if not is_ok:
+            is_timeout = res_data.get("state") == "timeout" or res_data.get("status") == "timeout"
+            out["error_code"] = "execution_timeout" if is_timeout else "execution_failed"
+        return out
+    except httpx.RequestError as exc:
+        return {
+            "status": "error",
+            "error_code": "worker_unreachable",
+            "mode": "local",
+            "target": target,
+            "exit_code": -1,
+            "output": "",
+            "error": f"Service Coding Worker injoignable : {exc}",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_code": "worker_error",
+            "mode": "local",
+            "target": target,
+            "exit_code": -1,
+            "output": "",
+            "error": f"Erreur Client Sandbox : {exc}",
+        }
+
+
 async def worker_exec_ssh_oneshot(
     user_id: str,
     chat_id: str,
@@ -467,6 +593,7 @@ async def worker_exec_ssh_oneshot(
     if not clean_acc or not clean_cmd:
         return {
             "status": "error",
+            "error_code": "invalid_arguments",
             "account_id": clean_acc,
             "exit_code": -1,
             "error": "❌ Les paramètres 'account_id' et 'command' sont obligatoires.",
@@ -475,6 +602,7 @@ async def worker_exec_ssh_oneshot(
     if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
         return {
             "status": "error",
+            "error_code": "invalid_arguments",
             "account_id": clean_acc,
             "exit_code": -1,
             "error": (
@@ -485,11 +613,13 @@ async def worker_exec_ssh_oneshot(
 
     creds, err_msg = await asyncio.to_thread(load_and_validate_ssh_vault_account, user_id, clean_acc)
     if err_msg or not creds:
+        final_err = err_msg or f"❌ Identifiants SSH introuvables pour '{clean_acc}'."
         return {
             "status": "error",
+            "error_code": _classify_ssh_vault_error(final_err),
             "account_id": clean_acc,
             "exit_code": -1,
-            "error": err_msg or f"❌ Identifiants SSH introuvables pour '{clean_acc}'.",
+            "error": final_err,
         }
 
     target = f"{creds['user']}@{creds['host']}:{creds['port']}"
@@ -515,6 +645,7 @@ async def worker_exec_ssh_oneshot(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "account_id": clean_acc,
                 "target": target,
                 "exit_code": -1,
@@ -522,17 +653,23 @@ async def worker_exec_ssh_oneshot(
             }
 
         res_data = response.json()
-        return {
-            "status": "success" if res_data.get("status") == "success" else "error",
+        is_ok = res_data.get("status") == "success"
+        out: Dict[str, Any] = {
+            "status": "success" if is_ok else "error",
             "account_id": clean_acc,
             "target": target,
             "exit_code": res_data.get("exit_code", -1),
             "output": res_data.get("output") or "",
             "error": res_data.get("error") or "",
         }
+        if not is_ok:
+            is_timeout = res_data.get("state") == "timeout" or res_data.get("status") == "timeout"
+            out["error_code"] = "execution_timeout" if is_timeout else "execution_failed"
+        return out
     except httpx.RequestError as exc:
         return {
             "status": "error",
+            "error_code": "worker_unreachable",
             "account_id": clean_acc,
             "target": target,
             "exit_code": -1,
@@ -541,6 +678,7 @@ async def worker_exec_ssh_oneshot(
     except Exception as exc:
         return {
             "status": "error",
+            "error_code": "worker_error",
             "account_id": clean_acc,
             "target": target,
             "exit_code": -1,
@@ -560,9 +698,17 @@ async def worker_open_terminal(
     """Ouvre une session terminale PTY (locale ou SSH) et la synchronise dans echo_resources."""
     clean_mode = (mode or "local").strip().lower()
     if clean_mode not in ("local", "ssh"):
-        return {"status": "error", "error": f"❌ Mode terminal invalide : {mode} (attendu 'local' ou 'ssh')."}
+        return {
+            "status": "error",
+            "error_code": "invalid_arguments",
+            "error": f"❌ Mode terminal invalide : {mode} (attendu 'local' ou 'ssh').",
+        }
     if not user_id or not chat_id:
-        return {"status": "error", "error": "❌ Contexte de session manquant (user_id / chat_id)."}
+        return {
+            "status": "error",
+            "error_code": "missing_context",
+            "error": "❌ Contexte de session manquant (user_id / chat_id).",
+        }
 
     await asyncio.to_thread(ensure_echo_session_environment, user_id, chat_id)
 
@@ -571,7 +717,12 @@ async def worker_open_terminal(
     if clean_mode == "ssh":
         creds, err_msg = await asyncio.to_thread(load_and_validate_ssh_vault_account, user_id, clean_acc)
         if err_msg or not creds:
-            return {"status": "error", "error": err_msg or "❌ Identifiants SSH invalides."}
+            final_err = err_msg or "❌ Identifiants SSH invalides."
+            return {
+                "status": "error",
+                "error_code": _classify_ssh_vault_error(final_err),
+                "error": final_err,
+            }
         clean_acc = creds["account_id"]
         ssh_config = {
             "host": creds["host"],
@@ -584,7 +735,7 @@ async def worker_open_terminal(
         effective_name = (name or "").strip() or clean_acc
         effective_locked = True
     else:
-        effective_name = (name or "").strip() or "Sandbox"
+        effective_name = (name or "").strip() or "Terminal"
         effective_locked = bool(agent_locked) if agent_locked is not None else False
 
     payload: Dict[str, Any] = {
@@ -609,6 +760,7 @@ async def worker_open_terminal(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "error": f"Erreur création terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
 
@@ -616,15 +768,21 @@ async def worker_open_terminal(
         await asyncio.to_thread(sync_terminal_resource_sync, user_id, chat_id, session_data, message_id)
         return {"status": "success", "session": session_data}
     except httpx.RequestError as exc:
-        return {"status": "error", "error": f"Service Coding Worker injoignable : {exc}"}
+        return {"status": "error", "error_code": "worker_unreachable", "error": f"Service Coding Worker injoignable : {exc}"}
     except Exception as exc:
-        return {"status": "error", "error": f"Erreur ouverture terminal : {exc}"}
+        return {"status": "error", "error_code": "worker_error", "error": f"Erreur ouverture terminal : {exc}"}
 
 
 async def worker_list_terminals(user_id: str, chat_id: str) -> Dict[str, Any]:
     """Liste les terminaux actifs d'une session et réconcilie le registre echo_resources."""
     if not user_id or not chat_id:
-        return {"status": "error", "items": [], "count": 0, "error": "❌ Contexte de session manquant."}
+        return {
+            "status": "error",
+            "error_code": "missing_context",
+            "items": [],
+            "count": 0,
+            "error": "❌ Contexte de session manquant.",
+        }
 
     live_sessions, worker_reachable, err_msg = await _fetch_worker_terminals(user_id, chat_id)
     await asyncio.to_thread(
@@ -635,11 +793,14 @@ async def worker_list_terminals(user_id: str, chat_id: str) -> Dict[str, Any]:
         worker_reachable,
     )
     if not worker_reachable:
+        final_err = err_msg or "Service Coding Worker injoignable."
+        err_code = "worker_unreachable" if "injoignable" in final_err.lower() else "worker_error"
         return {
             "status": "error",
+            "error_code": err_code,
             "items": [],
             "count": 0,
-            "error": err_msg or "Service Coding Worker injoignable.",
+            "error": final_err,
         }
     return {"status": "success", "items": live_sessions, "count": len(live_sessions)}
 
@@ -652,7 +813,7 @@ async def worker_read_terminal(
     """Lit la sortie nettoyée (sans ANSI) d'une session terminale interactive."""
     clean_sid = (session_id or "").strip()
     if not clean_sid:
-        return {"status": "error", "error": "❌ Le paramètre 'session_id' est obligatoire."}
+        return {"status": "error", "error_code": "invalid_arguments", "error": "❌ Le paramètre 'session_id' est obligatoire."}
 
     safe_tail = max(1, min(int(tail_lines or TERMINAL_DEFAULT_READ_LINES), TERMINAL_MAX_READ_LINES))
     safe_cursor = max(0, int(since_cursor or 0))
@@ -674,15 +835,16 @@ async def worker_read_terminal(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "session_id": clean_sid,
                 "error": f"Erreur lecture terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
         data = response.json()
         return {"status": "success", **data}
     except httpx.RequestError as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
+        return {"status": "error", "error_code": "worker_unreachable", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
     except Exception as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Erreur lecture terminal : {exc}"}
+        return {"status": "error", "error_code": "worker_error", "session_id": clean_sid, "error": f"Erreur lecture terminal : {exc}"}
 
 
 async def worker_write_terminal(
@@ -696,7 +858,7 @@ async def worker_write_terminal(
     """Envoie une entrée ou un signal à un terminal (traduit HTTP 423 en terminal_locked PAS)."""
     clean_sid = (session_id or "").strip()
     if not clean_sid:
-        return {"status": "error", "error": "❌ Le paramètre 'session_id' est obligatoire."}
+        return {"status": "error", "error_code": "invalid_arguments", "error": "❌ Le paramètre 'session_id' est obligatoire."}
 
     safe_wait = max(0, min(int(wait_ms if wait_ms is not None else 400), TERMINAL_MAX_WAIT_MS))
     payload: Dict[str, Any] = {
@@ -733,14 +895,15 @@ async def worker_write_terminal(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "session_id": clean_sid,
                 "error": f"Erreur écriture terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
         return response.json()
     except httpx.RequestError as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
+        return {"status": "error", "error_code": "worker_unreachable", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
     except Exception as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Erreur écriture terminal : {exc}"}
+        return {"status": "error", "error_code": "worker_error", "session_id": clean_sid, "error": f"Erreur écriture terminal : {exc}"}
 
 
 async def worker_set_terminal_lock(
@@ -752,7 +915,7 @@ async def worker_set_terminal_lock(
     """Met à jour le verrou agent_locked sur le Worker et synchronise echo_resources."""
     clean_sid = (session_id or "").strip()
     if not clean_sid:
-        return {"status": "error", "error": "❌ Le paramètre 'session_id' est obligatoire."}
+        return {"status": "error", "error_code": "invalid_arguments", "error": "❌ Le paramètre 'session_id' est obligatoire."}
 
     try:
         client = await _get_global_client()
@@ -772,6 +935,7 @@ async def worker_set_terminal_lock(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "session_id": clean_sid,
                 "error": f"Erreur verrou terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
@@ -779,9 +943,9 @@ async def worker_set_terminal_lock(
         await asyncio.to_thread(sync_terminal_resource_sync, user_id, chat_id, session_data)
         return {"status": "success", "session": session_data}
     except httpx.RequestError as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
+        return {"status": "error", "error_code": "worker_unreachable", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
     except Exception as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Erreur verrou terminal : {exc}"}
+        return {"status": "error", "error_code": "worker_error", "session_id": clean_sid, "error": f"Erreur verrou terminal : {exc}"}
 
 
 async def worker_close_terminal(
@@ -793,7 +957,7 @@ async def worker_close_terminal(
     """Termine une session terminale (gère 423 si actor='agent') et marque closed dans echo_resources."""
     clean_sid = (session_id or "").strip()
     if not clean_sid:
-        return {"status": "error", "error": "❌ Le paramètre 'session_id' est obligatoire."}
+        return {"status": "error", "error_code": "invalid_arguments", "error": "❌ Le paramètre 'session_id' est obligatoire."}
 
     clean_actor = (actor or "agent").strip().lower()
     try:
@@ -816,6 +980,7 @@ async def worker_close_terminal(
         if response.status_code != 200:
             return {
                 "status": "error",
+                "error_code": "worker_error",
                 "session_id": clean_sid,
                 "error": f"Erreur fermeture terminal (HTTP {response.status_code}) : {_extract_error_detail(response)}",
             }
@@ -828,6 +993,6 @@ async def worker_close_terminal(
             "already_closed": False,
         }
     except httpx.RequestError as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
+        return {"status": "error", "error_code": "worker_unreachable", "session_id": clean_sid, "error": f"Service Coding Worker injoignable : {exc}"}
     except Exception as exc:
-        return {"status": "error", "session_id": clean_sid, "error": f"Erreur fermeture terminal : {exc}"}
+        return {"status": "error", "error_code": "worker_error", "session_id": clean_sid, "error": f"Erreur fermeture terminal : {exc}"}

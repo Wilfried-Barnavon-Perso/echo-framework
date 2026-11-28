@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextvars
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -355,6 +356,78 @@ class TestPostSshEndpoint(unittest.TestCase):
         self.assertEqual(resp.get_json()["status"], "error")
 
 
+class TestExecuteInlineBashEndpoint(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.worker_api = _load_worker_api()
+
+    def setUp(self):
+        self.sandbox_root = tempfile.mkdtemp(prefix="echo_test_inline_exec_")
+        self.addCleanup(lambda: shutil.rmtree(self.sandbox_root, ignore_errors=True))
+        self.client = self.worker_api.app.test_client()
+
+    def test_execute_inline_bash_with_sub_sid_and_syntax_check(self):
+        lint_ok = mock.MagicMock(returncode=0, stdout="", stderr="")
+
+        class _MockProc:
+            def __init__(self, *args, **kwargs):
+                self.pid = 42424
+                self.stdout = io.StringIO("ok_inline\n")
+                self.stderr = io.StringIO("")
+                self._rc = 0
+
+            def wait(self, timeout=None):
+                return self._rc
+
+            def poll(self):
+                return self._rc
+
+        with mock.patch.object(self.worker_api, "_get_sandbox_dir", return_value=self.sandbox_root), \
+             mock.patch.object(self.worker_api.subprocess, "run", return_value=lint_ok) as run_mock, \
+             mock.patch.object(self.worker_api.subprocess, "Popen", side_effect=_MockProc) as popen_mock:
+            resp = self.client.post("/execute", json={
+                "user_id": "u_inline",
+                "chat_id": "c_inline",
+                "command": "echo ok_inline",
+                "workdir_subpath": "dlg_worker_1",
+                "timeout": 15,
+                "background": False,
+            })
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(payload["exit_code"], 0)
+        self.assertIn("ok_inline", payload["output"])
+        self.assertEqual(run_mock.call_args[0][0], ["/bin/bash", "-n", "-c", "echo ok_inline"])
+
+        bwrap_cmd = popen_mock.call_args[0][0]
+        self.assertIn("--chdir", bwrap_cmd)
+        self.assertEqual(bwrap_cmd[bwrap_cmd.index("--chdir") + 1], "/sandbox/dlg_worker_1")
+        self.assertEqual(bwrap_cmd[-3:], ["/bin/bash", "-c", "echo ok_inline"])
+        # Aucun fichier parasite créé dans sandbox_root hors sous-dossier et .tmp
+        entries = set(os.listdir(self.sandbox_root))
+        self.assertEqual(entries, {".tmp", "dlg_worker_1"})
+
+    def test_execute_inline_bash_rejects_syntax_error(self):
+        lint_bad = mock.MagicMock(returncode=2, stdout="", stderr="unexpected end of file")
+        with mock.patch.object(self.worker_api, "_get_sandbox_dir", return_value=self.sandbox_root), \
+             mock.patch.object(self.worker_api.subprocess, "run", return_value=lint_bad), \
+             mock.patch.object(self.worker_api.subprocess, "Popen") as popen_mock:
+            resp = self.client.post("/execute", json={
+                "user_id": "u_inline",
+                "chat_id": "c_inline",
+                "command": "if true; then",
+                "background": False,
+            })
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("Erreur de syntaxe", payload["error"])
+        popen_mock.assert_not_called()
+
+
 class TestUnifiedTerminalsLifecycle(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -394,14 +467,14 @@ class TestUnifiedTerminalsLifecycle(unittest.TestCase):
             self.assertEqual(s1["mode"], "local")
             self.assertEqual(s1["account_id"], "")
             self.assertEqual(s1["target"], "local:/sandbox")
-            self.assertEqual(s1["name"], "Sandbox")
+            self.assertEqual(s1["name"], "Terminal")
             self.assertFalse(s1["agent_locked"])
 
             r2 = self.client.post("/api/terminals", json={"user_id": "u1", "chat_id": "c1"})
             self.assertEqual(r2.status_code, 200)
             s2 = r2.get_json()
             self._created_ids.append(s2["id"])
-            self.assertEqual(s2["name"], "Sandbox #2")
+            self.assertEqual(s2["name"], "Terminal #2")
 
             # Listing filtré
             lst = self.client.get("/api/terminals?user_id=u1&chat_id=c1")

@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.23.10.1
+version: 6.25.1.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.1.1: Injection factorisée de la clé racine "error" sur statut error/failed dans wrap_tool_output et _finalize_tool_result (qualification native Open WebUI) et exclusion dans unbox_tool_output.
 # 6.23.10.1: Troncature intra-ligne UTF-8 dans paginate_lines_window (truncated_lines) et factorisation de extract_llm_response_text, dehydrate_inline_base64_blobs et rehydrate_inline_base64_blobs.
 # 6.21.12.1: Checkpoints de compaction v2 multi-bornes (normalize_checkpoint_payload, prune_checkpoint_payload, get_session_checkpoints sans création de DB fantôme), diffusion WS echo_context_checkpoint et marquage has_earlier_messages dans EchoCompactionEngine.
 # 6.10.0.1: Propagation de ECHO_AUTOMATION_CONTEXT avec reset finally dans @echo_tool (async et sync).
 # 6.7.20.1: Chargeur XML sous cache st_mtime_ns (load_echo_commands_registry, load_assembled_system_prompt) et extraction normalisée extract_leading_slash_commands.
-# 6.7.11.1: Factorisation de apply_tool_spillover et paginate_lines_window.
 import os
 import re
 import hashlib
@@ -818,6 +818,8 @@ def wrap_tool_output(
         "status": s,
         "echo_tool_multiparts": echo_tool_multiparts or []
     }
+    if isinstance(s, dict) and str(s.get("status") or "").strip().lower() in ("error", "failed"):
+        out["error"] = str(s.get("error") or text or "Tool error")
     if user_id and chat_id and metadata is not None:
         out["_aec_drained"] = True
     if skip_truncation:
@@ -933,6 +935,12 @@ def _finalize_tool_result(
                 else:
                     res["aec_events"] = aec_events
         res.pop("_aec_drained", False)
+        if (
+            isinstance(res.get("status"), dict)
+            and str(res["status"].get("status") or "").strip().lower() in ("error", "failed")
+            and not res.get("error")
+        ):
+            res["error"] = str(res["status"].get("error") or res.get("text") or "Tool error")
         return _apply_final_spillover(res, uid, cid, is_nested, tool_name)
 
     if isinstance(res, str):
@@ -1143,7 +1151,7 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
     else:
         # Si aucun 'text' explicite n'existe, on s'assure que le Modèle reçoive le payload brut (ex: "id" de l'automation)
         import json
-        payload = {k: v for k, v in content.items() if k not in ["text", "status", "echo_tool_multiparts", "aec_events"]}
+        payload = {k: v for k, v in content.items() if k not in ["text", "status", "echo_tool_multiparts", "aec_events", "error"]}
         if payload:
             response_dict["result"] = json.dumps(payload, ensure_ascii=False)
 

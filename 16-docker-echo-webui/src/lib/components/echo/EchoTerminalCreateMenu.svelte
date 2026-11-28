@@ -19,6 +19,7 @@
 	export let clickable = true;
 	export let disabledReason = '';
 	export let onCreate: (opts?: EchoTerminalCreateOpts) => void = () => {};
+	export let onConfigureSsh: (() => void) | null = null;
 
 	const formatTarget = (item: EchoSshTargetItem): string =>
 		`${item.user}@${item.host}:${item.port}`;
@@ -49,23 +50,34 @@
 			on:click={() => onCreate({ mode: 'local' })}
 		>
 			<Icon name="terminal" size={14} />
-			<span>Terminal Sandbox</span>
+			<span>Terminal local</span>
 		</button>
-		{#each $echoSshTargets as targetItem (targetItem.account_id)}
-			<Tooltip
-				content="{formatTarget(targetItem)}{targetItem.description ? ` — ${targetItem.description}` : ''}"
-				className="inline-flex"
-			>
-				<button
-					type="button"
-					class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-500/20 dark:border-amber-500/25 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-900/40"
-					on:click={() => onCreate(createSshPayload(targetItem))}
+		{#if $echoSshTargets.length > 0}
+			{#each $echoSshTargets as targetItem (targetItem.account_id)}
+				<Tooltip
+					content="{formatTarget(targetItem)}{targetItem.description ? ` — ${targetItem.description}` : ''}"
+					className="inline-flex"
 				>
-					<Icon name="terminal" size={14} />
-					<span>SSH · {targetItem.account_id}</span>
-				</button>
-			</Tooltip>
-		{/each}
+					<button
+						type="button"
+						class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-500/20 dark:border-amber-500/25 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-900/40"
+						on:click={() => onCreate(createSshPayload(targetItem))}
+					>
+						<Icon name="terminal" size={14} />
+						<span>SSH · {targetItem.account_id}</span>
+					</button>
+				</Tooltip>
+			{/each}
+		{:else if onConfigureSsh}
+			<button
+				type="button"
+				class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-500/20 dark:border-amber-500/25 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-900/40"
+				on:click={onConfigureSsh}
+			>
+				<Icon name="terminal" size={14} />
+				<span>Terminal SSH…</span>
+			</button>
+		{/if}
 	{/if}
 {:else if clickable}
 	<button
@@ -73,7 +85,7 @@
 		on:click={() => onCreate({ mode: 'local' })}
 	>
 		<Icon name="terminal" size={14} />
-		<span class="flex-1 text-start">Nouveau terminal (Sandbox)</span>
+		<span class="flex-1 text-start">Nouveau terminal local</span>
 		<HotkeyHint name="newTerminal" className="ms-auto" />
 	</button>
 	{#if $echoSshTargets.length > 0}
@@ -84,12 +96,31 @@
 				on:click={() => onCreate(createSshPayload(targetItem))}
 			>
 				<Icon name="terminal" size={14} />
-				<span class="truncate text-start">SSH · {targetItem.account_id}</span>
+				<span class="truncate text-start">Terminal SSH · {targetItem.account_id}</span>
 				<span class="text-[11px] text-gray-400 ms-auto truncate max-w-28">
 					{targetItem.user}@{targetItem.host}
 				</span>
 			</button>
 		{/each}
+		{#if onConfigureSsh}
+			<button
+				type="button"
+				on:click={onConfigureSsh}
+			>
+				<Icon name="terminal" size={14} />
+				<span class="flex-1 text-start">Configurer un hôte SSH…</span>
+				<span class="text-[11px] text-gray-400 ms-auto">Coffre</span>
+			</button>
+		{/if}
+	{:else if onConfigureSsh}
+		<button
+			type="button"
+			on:click={onConfigureSsh}
+		>
+			<Icon name="terminal" size={14} />
+			<span class="flex-1 text-start">Nouveau terminal SSH…</span>
+			<span class="text-[11px] text-amber-500 ms-auto">Configurer</span>
+		</button>
 	{/if}
 {:else}
 	<Tooltip
@@ -105,7 +136,7 @@
 			on:click|preventDefault|stopPropagation
 		>
 			<Icon name="terminal" size={14} />
-			<span class="flex-1 text-start">Nouveau terminal (Sandbox)</span>
+			<span class="flex-1 text-start">Nouveau terminal local</span>
 			<HotkeyHint name="newTerminal" className="ms-auto" />
 		</button>
 	</Tooltip>

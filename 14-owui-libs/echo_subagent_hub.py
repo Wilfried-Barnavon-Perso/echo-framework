@@ -4,16 +4,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.23.3.1
+version: 6.25.1.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.25.1.1: Déduplication de la clé racine "error" dans _invoke_single_tool après _is_tool_response_error lorsque "text" et "status" dict sont présents.
 # 6.23.3.1: Factorisation de _list_known_sub_sids unifiant cognitive_threads et subagent_meta:* dans _expand_descendant_sids et resolve_target_sub_sids (visibilité status/resume/close après rollback du step 0).
 # 6.23.2.1: Diagnostic agnostique des blocages/réponses vides via describe_empty_llm_response/PromptBlockedError et rollback du step user non répondu dans run_or_resume/run_cognitive_step.
 # 6.23.1.1: Extension plafond sub_sid (96 car.), préservation quota nominal (15/300s) sur resume, helper factorisé compute_subagent_excluded_tools, consommation gabarits PAS echo_prompts et libellé status outils/synthèse statique.
 # 6.23.0.1: Enveloppe <ECHO_MESSAGE>, séparation subagent_sys:<sid>, allowed_tools dynamique (resolve_updated_allowed_tools/refresh_allowed_tools), déblocage DELEGATE_HIERARCHICAL_SPECIALIST_TOOLS, wake_box pair sans deadlock et ré-export echo_browser_lib.
-# 6.21.9.1: Migration de _SUBAGENT_LOCKS vers weakref.WeakValueDictionary et déclenchement de notify_cognition_update dans bump_cognition_seq.
 
 from __future__ import annotations
 
@@ -1811,6 +1811,8 @@ class StandardToolDispatcher:
         if isinstance(result, dict):
             _resp = dict(result)
             _resp.pop("echo_tool_multiparts", None)
+            if "text" in _resp and isinstance(_resp.get("status"), dict):
+                _resp.pop("error", None)
             _resp = apply_tool_spillover(
                 _resp,
                 uid=self.user_id,
